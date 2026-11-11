@@ -1,0 +1,10 @@
+import fs from 'fs';
+const b = fs.readFileSync(process.argv[2]);
+const len = b.readUInt32LE(12), j = JSON.parse(b.slice(20, 20 + len).toString());
+console.log('meshes', j.meshes?.map(m => m.name + ':' + m.primitives.length).join(', '));
+console.log('materials', j.materials?.map(m => m.name).join(', '));
+console.log('images', j.images?.map(i => i.name || i.uri || i.mimeType).join(', '));
+console.log('skins', j.skins?.map(s => s.name + ':' + s.joints.length).join(', '));
+console.log('anims', j.animations?.length, j.animations?.map(a => a.name).join(', '));
+if (process.argv[3]) console.log('bones', j.skins?.[0].joints.map(i => j.nodes[i].name).join(', '));
+console.log('scene roots', j.scenes[0].nodes.map(i => j.nodes[i].name + JSON.stringify(j.nodes[i].scale||'')).join(', '));
