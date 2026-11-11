@@ -1,9 +1,12 @@
 import * as THREE from 'three';
 import { ImprovedNoise } from 'three/addons/math/ImprovedNoise.js';
 import { Sky } from 'three/addons/objects/Sky.js';
-import { Water } from 'three/addons/objects/Water.js';
-import { rng, lerp, clamp, smooth, mat, part, merge, lumpy, canvasTex } from './util.js';
-import { NAT, wind } from './nature.js';
+import { rng, lerp, clamp, smooth, part, merge, lumpy, canvasTex } from './util.js';
+import { NAT, wind, windShader } from './nature.js';
+import { makeTerrainMaterial } from './terrain.js';
+import { createRiver } from './water.js';
+import { createAtmosphere } from './sky.js';
+import { PRESETS } from './quality.js';
 
 export const SIZE = 640, SEG = 256, CELL = SIZE / SEG, LIMIT = SIZE / 2 - 40;
 const perlin = new ImprovedNoise();
@@ -61,8 +64,8 @@ export function collide(p, rad) {
 const _m = new THREE.Matrix4(), _q = new THREE.Quaternion(), _s = new THREE.Vector3(), _p = new THREE.Vector3(), _e = new THREE.Euler();
 export class Field {
   // parts: [{ geo, mat }] drawn together per node. Nodes are grouped into grid cells so off-screen cells are skipped.
-  constructor(scene, kind, parts, nodes, { shadow = true, tint = 0, cell = 0, layer = 1 } = {}) {
-    this.kind = kind; this.nodes = nodes;
+  constructor(scene, kind, parts, nodes, { shadow = true, tint = 0, cell = 0, layer = 1, cull = null } = {}) {
+    this.kind = kind; this.nodes = nodes; this.cells = [];
     const groups = new Map();
     for (const n of nodes) {
       const k = cell ? Math.floor(n.x / cell) + ',' + Math.floor(n.z / cell) : '0';
@@ -77,12 +80,14 @@ export class Field {
         scene.add(m);
         return m;
       });
+      let cx = 0, cz = 0;
       list.forEach((n, j) => {
-        n.alive = true; n.field = this; n.ms = meshes; n.j = j;
+        n.alive = true; n.field = this; n.ms = meshes; n.j = j; cx += n.x; cz += n.z;
         this.write(n);
         if (tint) { const v = 1 - tint + n.t * tint * 2; c.setRGB(v, v * (0.96 + n.t * 0.08), v * 0.96); for (const m of meshes) m.setColorAt(j, c); }
       });
       for (const m of meshes) m.computeBoundingSphere();
+      if (cull) cull.push({ meshes, x: cx / list.length, z: cz / list.length });
     }
   }
   write(n) {
@@ -93,7 +98,8 @@ export class Field {
   set(n, alive) { n.alive = alive; if (n.col) n.col.off = !alive; this.write(n); }
 }
 
-export function createWorld(scene, renderer) {
+export function createWorld(scene, renderer, quality = 'medium') {
+  let Q = PRESETS[quality] || PRESETS.medium;
   const R = rng(20261111);
 
   // ---------- terrain ----------
@@ -102,40 +108,37 @@ export function createWorld(scene, renderer) {
   const pos = geo.attributes.position;
   for (let i = 0; i < pos.count; i++) { const h = rawHeight(pos.getX(i), pos.getZ(i)); pos.setY(i, h); H[i] = h; }
   geo.computeVertexNormals();
-  const nor = geo.attributes.normal, col = new Float32Array(pos.count * 3), c = new THREE.Color(), c2 = new THREE.Color();
+  const nor = geo.attributes.normal, col = new Float32Array(pos.count * 3), splat = new Float32Array(pos.count * 3);
   for (let i = 0; i < pos.count; i++) {
     const x = pos.getX(i), z = pos.getZ(i), h = pos.getY(i), ny = nor.getY(i);
     const n = fbm(x * 0.02, z * 0.02, 3) * 0.5 + 0.5, n2 = fbm(x * 0.11 + 40, z * 0.11, 2) * 0.5 + 0.5;
-    c.setRGB(0.2, 0.33, 0.09).lerp(c2.setRGB(0.36, 0.44, 0.14), n).lerp(c2.setRGB(0.5, 0.46, 0.2), smooth(0.55, 0.85, n2) * 0.7);
-    c.lerp(c2.setRGB(0.55, 0.49, 0.33), smooth(1.5, 0.5, h));               // sandy bank
-    c.lerp(c2.setRGB(0.2, 0.18, 0.13), smooth(0.3, -0.8, h));                // wet river bed
-    c.lerp(c2.setRGB(0.36, 0.34, 0.31), smooth(0.86, 0.68, ny));             // rock on slopes
-    c.lerp(c2.setRGB(0.48, 0.47, 0.45), smooth(30, 46, h));                  // high ground
-    col[i * 3] = c.r; col[i * 3 + 1] = c.g; col[i * 3 + 2] = c.b;
+    const rock = clamp(smooth(0.86, 0.7, ny) + smooth(30, 46, h) * 0.75, 0, 1);
+    const dirt = clamp(smooth(1.0, 0.35, h) * 0.9 + smooth(0.66, 0.9, n2) * 0.5 * (1 - rock) + smooth(0.94, 0.86, ny) * 0.3, 0, 1 - rock);
+    splat.set([Math.max(0, 1 - rock - dirt), dirt, rock], i * 3);
+    // vertex colour is a tint over the textures: patchy brightness, wet riverbed, pale high ground
+    let v = 0.86 + (n - 0.5) * 0.36 + (n2 - 0.5) * 0.12;
+    v = lerp(v, 0.45, smooth(0.25, -0.9, h));
+    v = lerp(v, 1.2, smooth(36, 50, h));
+    col.set([v, v * (1 + (n - 0.5) * 0.12), v * (0.94 + (n2 - 0.5) * 0.1)], i * 3);
   }
   geo.setAttribute('color', new THREE.BufferAttribute(col, 3));
-  const grain = canvasTex(256, (g, S) => {
-    const im = g.createImageData(S, S), r = rng(5);
-    for (let i = 0; i < S * S; i++) { const v = 150 + r() * 105; im.data.set([v, v, v * 0.97, 255], i * 4); }
-    g.putImageData(im, 0, 0);
-  }, SIZE / 3);
-  const terrain = new THREE.Mesh(geo, new THREE.MeshStandardMaterial({ vertexColors: true, map: grain, bumpMap: grain, bumpScale: 0.6, roughness: 0.95 }));
+  geo.setAttribute('aSplat', new THREE.BufferAttribute(splat, 3));
+  const terrain = new THREE.Mesh(geo, makeTerrainMaterial(Q.anisotropy));
   terrain.receiveShadow = true;
   scene.add(terrain);
 
   // ---------- sky, sun, fog ----------
   const sky = new Sky();
   sky.scale.setScalar(10000);
-  Object.assign(sky.material.uniforms.turbidity, { value: 5 });
-  sky.material.uniforms.rayleigh.value = 1.6;
+  sky.material.uniforms.turbidity.value = 4;
+  sky.material.uniforms.rayleigh.value = 1.8;
   sky.material.uniforms.mieCoefficient.value = 0.004;
-  sky.material.uniforms.mieDirectionalG.value = 0.82;
+  sky.material.uniforms.mieDirectionalG.value = 0.85;
   scene.add(sky);
   const sun = new THREE.DirectionalLight(0xffffff, 4);
   sun.castShadow = true;
-  sun.shadow.mapSize.set(2048, 2048);
-  Object.assign(sun.shadow.camera, { left: -48, right: 48, top: 48, bottom: -48, near: 1, far: 260 });
-  sun.shadow.bias = -0.0005; sun.shadow.normalBias = 0.35;
+  sun.shadow.bias = -0.0004; sun.shadow.normalBias = 0.4;
+  Object.assign(sun.shadow.camera, { near: 60, far: 180 });     // a shallow slab around the player: far trees never enter the shadow pass
   scene.add(sun, sun.target);
   const hemi = new THREE.HemisphereLight(0xbcd4f0, 0x6a644c, 1);
   scene.add(hemi);
@@ -154,29 +157,9 @@ export function createWorld(scene, renderer) {
   overcast.frustumCulled = false; overcast.renderOrder = 1;
   scene.add(overcast);
 
-  // ---------- river ----------
-  const wn = canvasTex(256, (g, S) => {
-    const r = rng(9), waves = [];
-    for (let i = 0; i < 9; i++) waves.push([((r() * 7) | 0) + 1, ((r() * 7) | 0) + 1, r() * 6.28, 0.4 + r()]);
-    const im = g.createImageData(S, S), k = (Math.PI * 2) / S;
-    for (let y = 0; y < S; y++) for (let x = 0; x < S; x++) {
-      let dx = 0, dy = 0;
-      for (const [a, b, ph, am] of waves) { const cs = Math.cos((a * x + b * y) * k + ph) * am; dx += cs * a; dy += cs * b; }
-      const l = Math.hypot(dx * 0.18, dy * 0.18, 1);
-      im.data.set([(-dx * 0.18 / l * 0.5 + 0.5) * 255, (-dy * 0.18 / l * 0.5 + 0.5) * 255, (1 / l * 0.5 + 0.5) * 255, 255], (y * S + x) * 4);
-    }
-    g.putImageData(im, 0, 0);
-  });
-  wn.colorSpace = THREE.NoColorSpace;
-  const water = new Water(new THREE.PlaneGeometry(SIZE, SIZE), {
-    textureWidth: 512, textureHeight: 512, waterNormals: wn, sunDirection: new THREE.Vector3(0, 1, 0),
-    sunColor: 0xffffff, waterColor: 0x16332e, distortionScale: 0.55, fog: true,
-  });
-  water.rotation.x = -Math.PI / 2;
-  water.material.uniforms.size.value = 16;
-  water.material.uniforms.alpha.value = 0.9;
-  water.material.transparent = true;
-  scene.add(water);
+  // ---------- river and atmosphere ----------
+  const river = createRiver(scene, { SIZE, riverX, heights: H, N1 });
+  const atmosphere = createAtmosphere(scene, R, getHeight);
 
   // ---------- vegetation and resources ----------
   const pmat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.92 });
@@ -191,7 +174,7 @@ export function createWorld(scene, renderer) {
     }
     return out;
   };
-  const river = (n, band, zmax, ok, smin, smax, gap = 0) => {
+  const river_ = (n, band, zmax, ok, smin, smax, gap = 0) => {
     const out = [];
     for (let t = 0; out.length < n && t < n * 80; t++) {
       const z = (R() * 2 - 1) * zmax, x = riverX(z) + (R() < 0.6 ? -1 : 1) * (band + R() * 9), h = getHeight(x, z);
@@ -201,15 +184,20 @@ export function createWorld(scene, renderer) {
   };
   const forest = (x, z) => fbm(x * 0.012 + 9, z * 0.012 - 4, 3);
   const split = (list, k) => Array.from({ length: k }, (_, i) => list.filter((_, j) => j % k === i));
+  const decorCells = [];
 
-  const treeNodes = scatter(400, (x, z, h, ny, d) => h > 1.6 && h < 24 && ny > 0.86 && d > 17 && forest(x, z) > -0.12 - (d < 70 ? 0.25 : 0), LIMIT, 0.75, 1.25);
-  const pineNodes = scatter(270, (x, z, h, ny, d) => h > 8 && h < 40 && ny > 0.74 && d > 60, LIMIT + 25, 0.8, 1.4);
+  const treeNodes = scatter(440, (x, z, h, ny, d) => h > 1.6 && h < 24 && ny > 0.86 && d > 17 && forest(x, z) > -0.12 - (d < 70 ? 0.25 : 0), LIMIT, 0.75, 1.3);
+  const pineNodes = scatter(300, (x, z, h, ny, d) => h > 8 && h < 40 && ny > 0.74 && d > 60, LIMIT + 25, 0.8, 1.45);
+  const twistNodes = scatter(32, (x, z, h, ny, d) => h > 3 && h < 30 && ny > 0.8 && d > 45 && forest(x + 200, z - 80) > 0.1, LIMIT, 0.8, 1.2);
+  const deadNodes = scatter(45, (x, z, h, ny, d) => h > 2 && h < 30 && ny > 0.8 && d > 40, LIMIT, 0.8, 1.2);
   const woods = [];
-  split(treeNodes, 3).forEach((nodes, i) => woods.push(new Field(scene, 'tree', NAT[['commontree_3', 'commontree_4', 'commontree_5'][i]], nodes, { tint: 0.1, cell: 80 })));
-  split(pineNodes, 3).forEach((nodes, i) => woods.push(new Field(scene, 'tree', NAT[['pine_2', 'pine_4', 'pine_5'][i]], nodes, { tint: 0.1, cell: 80 })));
+  split(treeNodes, 5).forEach((nodes, i) => woods.push(new Field(scene, 'tree', NAT['commontree_' + (i + 1)], nodes, { tint: 0.1, cell: 160 })));
+  split(pineNodes, 5).forEach((nodes, i) => woods.push(new Field(scene, 'tree', NAT['pine_' + (i + 1)], nodes, { tint: 0.1, cell: 160 })));
+  split(twistNodes, 2).forEach((nodes, i) => woods.push(new Field(scene, 'tree', NAT[['twistedtree_2', 'twistedtree_4'][i]], nodes, { tint: 0.1, cell: 120 })));
+  split(deadNodes, 2).forEach((nodes, i) => woods.push(new Field(scene, 'tree', NAT[['deadtree_2', 'deadtree_4'][i]], nodes, { tint: 0.1, cell: 120 })));
   for (const f of woods) for (const n of f.nodes) { n.hp = 4; n.col = addCollider({ x: n.x, z: n.z, r: 0.42 * n.s }); n.y -= 0.12; f.write(n); }
 
-  split(scatter(170, (x, z, h, ny, d) => h > 0.2 && d > 14 && (ny < 0.9 || R() < 0.08), LIMIT + 25, 0.3, 1.3), 3).forEach((nodes, i) => {
+  split(scatter(180, (x, z, h, ny, d) => h > 0.2 && d > 14 && (ny < 0.9 || R() < 0.08), LIMIT + 25, 0.3, 1.3), 3).forEach((nodes, i) => {
     new Field(scene, 'boulder', NAT['rock_medium_' + (i + 1)], nodes, { tint: 0.1, cell: 160 });
     for (const n of nodes) addCollider({ x: n.x, z: n.z, r: 1.25 * n.s });
   });
@@ -223,24 +211,25 @@ export function createWorld(scene, renderer) {
   const sticks = new Field(scene, 'stick', one(stickGeo), [
     ...scatter(26, (x, z, h, ny, d) => land(x, z, h, ny, d) && d < 34, 34),
     ...scatter(260, (x, z, h, ny, d) => land(x, z, h, ny, d) && nearTree(x, z)),
-  ]);
+  ], { cell: 128 });
   const stoneGeo = flat(part(lumpy(ico(0.17, 1), 0.22, 11), 0x85817a, 0, 0.07, 0, 0, 0, 0, 1, 0.65, 1));
   const stones = new Field(scene, 'stone', one(stoneGeo), [
     ...scatter(26, (x, z, h, ny, d) => land(x, z, h, ny, d) && d < 36, 36),
     ...scatter(240, (x, z, h, ny, d) => h > 0.3 && d > 30 && (h < 2 || ny < 0.93)),
-  ], { tint: 0.15 });
+  ], { tint: 0.15, cell: 128 });
 
   const br = rng(41), berryParts = [];
   for (let i = 0; i < 22; i++) {
     const a = br() * 6.283, e = 0.25 + br() * 1.15, r = 0.82;
-    berryParts.push(part(ico(0.05, 1), br() > 0.3 ? 0xb01c34 : 0x6d1238, Math.cos(a) * Math.sin(e) * r, 0.4 + Math.cos(e) * r * 0.85, Math.sin(a) * Math.sin(e) * r));
+    berryParts.push(part(ico(0.05, 0), br() > 0.3 ? 0xb01c34 : 0x6d1238, Math.cos(a) * Math.sin(e) * r, 0.4 + Math.cos(e) * r * 0.85, Math.sin(a) * Math.sin(e) * r));
   }
   const bushNodes = [
     ...scatter(5, (x, z, h, ny, d) => land(x, z, h, ny, d) && d > 9 && d < 30, 30, 0.7, 1),
     ...scatter(90, (x, z, h, ny, d) => land(x, z, h, ny, d) && d > 30 && h < 20, LIMIT, 0.7, 1),
   ];
-  new Field(scene, 'bush', NAT.bush_common, bushNodes.map((n) => ({ ...n })), { tint: 0.08, cell: 160 }).nodes.forEach((n) => addCollider({ x: n.x, z: n.z, r: 0.5 * n.s }));
-  const berries = new Field(scene, 'berry', one(merge(berryParts)), bushNodes, { shadow: false });
+  split(bushNodes.map((n) => ({ ...n })), 2).forEach((nodes, i) =>
+    new Field(scene, 'bush', NAT[i ? 'bush_common_flowers' : 'bush_common'], nodes, { tint: 0.08, cell: 160 }).nodes.forEach((n) => addCollider({ x: n.x, z: n.z, r: 0.5 * n.s })));
+  const berries = new Field(scene, 'berry', one(merge(berryParts)), bushNodes, { shadow: false, cell: 128 });
 
   const rr = rng(8), reedParts = [];
   for (let i = 0; i < 11; i++) {
@@ -248,12 +237,12 @@ export function createWorld(scene, renderer) {
     reedParts.push(part(new THREE.ConeGeometry(0.028, h, 4), rr() > 0.4 ? 0x6f8040 : 0x8c8a4c, x, h / 2, z, tx, 0, tz));
     if (i % 3 === 0) reedParts.push(part(new THREE.CapsuleGeometry(0.035, 0.16, 2, 6), 0x4e3421, x - tz * h * 0.8, h * 0.82, z + tx * h * 0.8, tx, 0, tz));
   }
-  const reeds = new Field(scene, 'reed', one(merge(reedParts)), river(170, 10, LIMIT, (h) => h > -0.25 && h < 0.75, 0.8, 1.25), { tint: 0.12 });
+  const reeds = new Field(scene, 'reed', one(merge(reedParts)), river_(190, 10, LIMIT, (h) => h > -0.25 && h < 0.75, 0.8, 1.25), { tint: 0.12, cell: 128 });
   const clayGeo = flat(merge([
     part(lumpy(ico(1, 2), 0.14, 2.4), 0x96573a, 0, 0.05, 0, 0, 0, 0, 1.1, 0.32, 1.1),
     part(lumpy(ico(0.3, 1), 0.2, 6), 0xa7623f, 0.5, 0.25, 0.2), part(lumpy(ico(0.24, 1), 0.2, 6), 0x8a4e33, -0.4, 0.24, -0.3),
   ]));
-  const clay = new Field(scene, 'clay', one(clayGeo), river(30, 12, 200, (h) => h > 0.3 && h < 1.2, 0.8, 1.2, 6));
+  const clay = new Field(scene, 'clay', one(clayGeo), river_(30, 12, 200, (h) => h > 0.3 && h < 1.2, 0.8, 1.2, 6));
   const gr = rng(12), grainParts = [];
   for (let i = 0; i < 16; i++) {
     const x = gr() * 0.9 - 0.45, z = gr() * 0.9 - 0.45, h = 0.7 + gr() * 0.35, t = gr() * 0.3 - 0.15;
@@ -264,43 +253,64 @@ export function createWorld(scene, renderer) {
     scatter(70, (x, z, h, ny, d) => land(x, z, h, ny, d) && d > 22 && h < 14 && forest(x, z) < 0.05, 230), { shadow: false });
   const fields = [sticks, stones, berries, reeds, clay, grainF, ...woods];
 
-  // Flowers, ferns and mushrooms: decoration only.
+  // Flowers, ferns, pebbles and mushrooms: decoration only, hidden beyond the quality preset's decor distance.
   const meadow = (x, z, h, ny, d) => land(x, z, h, ny, d) && h < 26;
-  const decor = (name, n, smin, smax, ok = meadow) => new Field(scene, 'decor', NAT[name], scatter(n, ok, LIMIT, smin, smax), { shadow: false, cell: 80, tint: 0.08 });
+  const decor = (name, n, smin, smax, ok = meadow, max = LIMIT) => new Field(scene, 'decor', NAT[name], scatter(n, ok, max, smin, smax), { shadow: false, cell: 60, tint: 0.08, cull: decorCells });
   decor('flower_3_single', 420, 0.3, 0.5, (x, z, h, ny, d) => meadow(x, z, h, ny, d) && forest(x, z) < 0.1);
   decor('flower_4_single', 320, 0.28, 0.45, (x, z, h, ny, d) => meadow(x, z, h, ny, d) && forest(x + 50, z) < 0);
-  decor('fern_1', 380, 0.14, 0.24, (x, z, h, ny, d) => meadow(x, z, h, ny, d) && nearTree(x, z));
+  decor('flower_3_group', 160, 0.3, 0.5, (x, z, h, ny, d) => meadow(x, z, h, ny, d) && forest(x, z) < 0 && forest(x * 3, z * 3) > 0.15);
+  decor('flower_4_group', 140, 0.3, 0.45, (x, z, h, ny, d) => meadow(x, z, h, ny, d) && forest(x - 70, z + 30) < 0 && forest(x * 3 + 9, z * 3) > 0.15);
+  decor('fern_1', 420, 0.14, 0.26, (x, z, h, ny, d) => meadow(x, z, h, ny, d) && nearTree(x, z));
   decor('clover_1', 300, 0.4, 0.7);
   decor('plant_1', 320, 0.5, 0.9);
+  decor('plant_1_big', 120, 0.6, 1, (x, z, h, ny, d) => meadow(x, z, h, ny, d) && nearTree(x, z));
   decor('plant_7_big', 260, 0.7, 1.2);
   decor('mushroom_common', 140, 0.8, 1.4, (x, z, h, ny, d) => meadow(x, z, h, ny, d) && nearTree(x, z));
+  for (const name of ['pebble_round_1', 'pebble_round_2', 'pebble_round_3'])
+    new Field(scene, 'decor', NAT[name], river_(120, 6, LIMIT, (h) => h > -0.3 && h < 1.6, 0.5, 1.6), { shadow: false, cell: 80, tint: 0.1, cull: decorCells });
 
   // ---------- grass that follows the player ----------
-  const bladeTex = canvasTex(128, (g, S) => {
+  const bladeTex = canvasTex(256, (g, S) => {
     const r = rng(2);
-    for (let i = 0; i < 46; i++) {
-      const x = 8 + r() * (S - 16), h = 40 + r() * 80, lean = r() * 30 - 15, w = 2.5 + r() * 3;
-      g.fillStyle = `hsl(${78 + r() * 24},${42 + r() * 16}%,${24 + r() * 15}%)`;
-      g.beginPath(); g.moveTo(x - w, S); g.quadraticCurveTo(x, S - h * 0.6, x + lean, S - h); g.quadraticCurveTo(x + w, S - h * 0.5, x + w, S); g.fill();
+    for (let i = 0; i < 110; i++) {
+      const x = 6 + r() * (S - 12), h = 70 + r() * 150, lean = r() * 50 - 25, w = 3 + r() * 5, hue = 74 + r() * 30, sat = 40 + r() * 20;
+      const gr = g.createLinearGradient(0, S, 0, S - h);
+      gr.addColorStop(0, `hsl(${hue + 10},${sat}%,${24 + r() * 6}%)`);
+      gr.addColorStop(0.6, `hsl(${hue},${sat}%,${32 + r() * 8}%)`);
+      gr.addColorStop(1, `hsl(${hue - 8},${sat + 8}%,${46 + r() * 12}%)`);
+      g.fillStyle = gr;
+      g.beginPath(); g.moveTo(x - w, S); g.quadraticCurveTo(x + lean * 0.25, S - h * 0.55, x + lean, S - h); g.quadraticCurveTo(x + w * 0.6 + lean * 0.3, S - h * 0.5, x + w, S); g.fill();
     }
   });
+  bladeTex.anisotropy = Q.anisotropy;
   const q = [];
-  for (let i = 0; i < 6; i++) { const p = new THREE.PlaneGeometry(1, 0.5); p.translate(0, 0.25, 0); p.rotateY((i * Math.PI) / 3); q.push(p); }
+  for (let i = 0; i < 3; i++) { const p = new THREE.PlaneGeometry(1.1, 0.55); p.translate(0, 0.27, 0); p.rotateY((i * Math.PI) / 3); q.push(p); }
   const tuft = merge(q);
   for (let i = 0; i < tuft.attributes.normal.count; i++) tuft.attributes.normal.setXYZ(i, 0, 1, 0);
-  const gmat = new THREE.MeshStandardMaterial({ map: bladeTex, alphaTest: 0.5, roughness: 1 });
+  const gmat = new THREE.MeshLambertMaterial({ map: bladeTex, alphaTest: 0.5, side: THREE.DoubleSide });
+  const fadeU = { value: new THREE.Vector2(36, 45) };
   gmat.onBeforeCompile = (sh) => {
-    sh.uniforms.uTime = wind;
-    sh.vertexShader = 'uniform float uTime;\n' + sh.vertexShader.replace('#include <begin_vertex>',
+    sh.uniforms.uTime = wind; sh.uniforms.uFade = fadeU;
+    sh.vertexShader = 'uniform float uTime; uniform vec2 uFade;\n' + sh.vertexShader.replace('#include <begin_vertex>',
       `#include <begin_vertex>
        float ph = instanceMatrix[3].x * 0.35 + instanceMatrix[3].z * 0.27;
-       transformed.x += (sin(uTime * 1.7 + ph) + sin(uTime * 0.6 + ph * 0.4) * 0.7) * 0.1 * uv.y;
-       transformed.z += cos(uTime * 1.3 + ph) * 0.06 * uv.y;`);
+       float gust = sin(uTime * 0.8 + instanceMatrix[3].x * 0.06 + instanceMatrix[3].z * 0.09) * 0.5 + 0.5;
+       transformed.x += (sin(uTime * 1.7 + ph) + sin(uTime * 0.6 + ph * 0.4) * 0.7 + gust * 1.6) * 0.09 * uv.y;
+       transformed.z += cos(uTime * 1.3 + ph) * 0.06 * uv.y;
+       float dcam = distance(instanceMatrix[3].xz, cameraPosition.xz);
+       transformed.y *= 1.0 - smoothstep(uFade.x, uFade.y, dcam);`);
+    sh.fragmentShader = sh.fragmentShader.replace('#include <normal_fragment_begin>',
+      '#include <normal_fragment_begin>\n normal = normalize((viewMatrix * vec4(0.0, 1.0, 0.0, 0.0)).xyz);');
   };
+  gmat.customProgramCacheKey = () => 'hearthborn-grass';
+  const natFade = { value: new THREE.Vector2(26, 33) };
+  for (const n of ['grass_common_short', 'grass_wispy_short', 'grass_common_tall', 'grass_wispy_tall']) {
+    for (const p of NAT[n]) { p.mat = p.mat.clone(); p.mat.onBeforeCompile = windShader(0.085, natFade); p.mat.customProgramCacheKey = () => 'hearthborn-natgrass'; }
+  }
   const clearings = [], carpets = [];
   const clear = (x, z, r) => { clearings.push({ x, z, r }); for (const c of carpets) c.gw.fill(1e9); };
   // A patch of instances that wraps around the player, so grass is only ever drawn nearby.
-  function carpet(parts, NG, L, smin, smax, tintLo) {
+  function carpet(parts, NG, L, smin, smax, tintLo, fade) {
     const meshes = parts.map((p) => {
       const m = new THREE.InstancedMesh(p.geo, p.mat, NG);
       m.frustumCulled = false; m.receiveShadow = true; m.layers.set(1); scene.add(m);
@@ -309,13 +319,13 @@ export function createWorld(scene, renderer) {
     const gx = new Float32Array(NG), gz = new Float32Array(NG), gw = new Float32Array(NG * 2).fill(1e9), gs = new Float32Array(NG), gcol = new THREE.Color();
     for (let i = 0; i < NG; i++) {
       gx[i] = R() * L; gz[i] = R() * L; gs[i] = lerp(smin, smax, R());
-      const v = tintLo + R() * (1 - tintLo) * 1.6; gcol.setRGB(v, v, v * 0.82);
+      const v = tintLo + R() * (1 - tintLo) * 1.5, y = R(); gcol.setRGB(v * (0.92 + y * 0.16), v, v * (0.78 + y * 0.1));
       for (const m of meshes) m.setColorAt(i, gcol);
     }
-    const mod = (a) => ((a % L) + L) % L;
-    carpets.push({ gw, update(px, pz) {
+    const c = { gw, count: NG, L, update(px, pz) {
+      const L = c.L, mod = (a) => ((a % L) + L) % L;
       let dirty = false;
-      for (let i = 0; i < NG; i++) {
+      for (let i = 0; i < c.count; i++) {
         const x = px + mod(gx[i] - px) - L / 2, z = pz + mod(gz[i] - pz) - L / 2;
         if (Math.abs(x - gw[i * 2]) < 1 && Math.abs(z - gw[i * 2 + 1]) < 1) continue;
         gw[i * 2] = x; gw[i * 2 + 1] = z; dirty = true;
@@ -325,16 +335,35 @@ export function createWorld(scene, renderer) {
         for (const m of meshes) m.setMatrixAt(i, _m);
       }
       if (dirty) for (const m of meshes) m.instanceMatrix.needsUpdate = true;
-    } });
+    }, setDensity(k) {
+      c.count = Math.round(NG * k); c.L = L * Math.sqrt(k);
+      for (const m of meshes) m.count = c.count;
+      gw.fill(1e9);
+      if (fade) fade.value.set(c.L * 0.4, c.L * 0.5);
+    } };
+    carpets.push(c);
   }
-  carpet([{ geo: tuft, mat: gmat }], 9000, 90, 0.6, 1.4, 0.75);
-  carpet(NAT.grass_common_short, 2400, 64, 0.4, 0.75, 0.8);
-  carpet(NAT.grass_wispy_short, 450, 56, 0.5, 0.9, 0.8);
+  carpet([{ geo: tuft, mat: gmat }], 9000, 90, 0.7, 1.5, 0.72, fadeU);
+  carpet(NAT.grass_common_short, 1500, 60, 0.4, 0.75, 0.8, natFade);
+  carpet(NAT.grass_wispy_short, 500, 56, 0.5, 0.9, 0.8);
+  carpet(NAT.grass_common_tall, 320, 60, 0.45, 0.8, 0.78);
+  carpet(NAT.grass_wispy_tall, 180, 60, 0.5, 0.85, 0.8);
   const updateGrass = (px, pz) => { for (const c of carpets) c.update(px, pz); };
+
+  function setQuality(name) {
+    Q = PRESETS[name] || PRESETS.medium;
+    sun.shadow.mapSize.set(Q.shadow, Q.shadow);
+    if (sun.shadow.map) { sun.shadow.map.dispose(); sun.shadow.map = null; }
+    Object.assign(sun.shadow.camera, { left: -Q.shadowRange, right: Q.shadowRange, top: Q.shadowRange, bottom: -Q.shadowRange });
+    sun.shadow.camera.updateProjectionMatrix();
+    for (const c of carpets) c.setDensity(Q.grass);
+  }
+  setQuality(quality);
+
   // ---------- time of day ----------
   const sunDir = new THREE.Vector3(), tmp = new THREE.Color();
   const C = (h) => new THREE.Color(h);
-  const cDay = C(0xfff1dc), cLow = C(0xff9550), cMoon = C(0x8ea6d6), skyD = C(0xbcd4f0), skyN = C(0x1a2a4a);
+  const cDay = C(0xfff3e0), cLow = C(0xff9550), cMoon = C(0x8ea6d6), skyD = C(0xbcd4f0), skyN = C(0x1a2a4a);
   const fogD = C(0xb4c8d6), fogN = C(0x04070d), fogS = C(0xd49468);
   const env = { day: 1, night: 0, storm: 0, sunDir };
   const fogStorm = C(0x5d6870);
@@ -350,34 +379,40 @@ export function createWorld(scene, renderer) {
       sun.position.copy(focus).addScaledVector(sunDir, 120);
     } else {
       sun.color.copy(cMoon);
-      sun.intensity = 1.3 * smooth(-0.06, -0.2, y);
+      sun.intensity = 1.9 * smooth(-0.06, -0.2, y);
       sun.position.copy(focus).add(_p.set(-sunDir.x, Math.max(0.35, -sunDir.y), -sunDir.z).normalize().multiplyScalar(120));
     }
     const st = env.storm;
     sun.intensity *= 1 - st * 0.75;
     sun.target.position.copy(focus);
     hemi.color.copy(skyN).lerp(skyD, day);
-    hemi.intensity = lerp(0.75, 1.25, day) * (1 - st * 0.35);
-    scene.fog.color.copy(fogN).lerp(fogD, day).lerp(tmp.copy(fogS).multiplyScalar(0.35 + day * 0.65), clamp(1 - Math.abs(y - 0.03) / 0.2, 0, 1) * 0.6);
+    hemi.groundColor.setRGB(0.3, 0.32, 0.2).multiplyScalar(lerp(0.25, 1, day));
+    hemi.intensity = lerp(0.95, 1.3, day) * (1 - st * 0.35);
+    const dusk = clamp(1 - Math.abs(y - 0.03) / 0.2, 0, 1) * 0.6;
+    scene.fog.color.copy(fogN).lerp(fogD, day).lerp(tmp.copy(fogS).multiplyScalar(0.35 + day * 0.65), dusk);
     scene.fog.color.lerp(tmp.copy(fogStorm).multiplyScalar(0.25 + day * 0.75), st * 0.85);
-    scene.fog.density = lerp(0.0055, 0.0032, day) + st * 0.007;
-    sky.material.uniforms.turbidity.value = 5 + st * 15;
-    sky.material.uniforms.rayleigh.value = 1.6 - st * 1.2;
-    stars.material.opacity = 1 - smooth(-0.2, 0.02, y);
+    scene.fog.density = lerp(0.0055, 0.003, day) + st * 0.007;
+    sky.material.uniforms.turbidity.value = 4 + st * 16;
+    sky.material.uniforms.rayleigh.value = 1.8 - st * 1.3;
+    stars.material.opacity = (1 - smooth(-0.2, 0.02, y)) * (1 - st);
     stars.position.copy(camera.position);
-    stars.material.opacity *= 1 - st;
     overcast.position.copy(camera.position);
     overcast.visible = st > 0.01;
     overcast.material.opacity = Math.min(1, st * 1.15);
     overcast.material.color.setRGB(0.03, 0.04, 0.055).lerp(tmp.setRGB(0.36, 0.4, 0.44), day);
-    water.material.uniforms.sunDirection.value.copy(sunDir);
-    water.material.uniforms.sunColor.value.copy(sun.color).multiplyScalar(day * (1 - st));
-    renderer.toneMappingExposure = lerp(0.8, 0.66, day);
+    const u = river.uniforms;
+    u.uSun.value.copy(sunDir);
+    u.uSunColor.value.copy(sun.color).multiplyScalar((1 - st) * smooth(-0.05, 0.1, y));
+    u.uSky.value.copy(scene.fog.color).lerp(tmp.copy(hemi.color), 0.5).multiplyScalar(lerp(0.4, 1, day));
+    u.uLight.value = lerp(0.12, 1, day) * (1 - st * 0.45);
+    renderer.toneMappingExposure = lerp(0.8, 0.68, day);
   }
-  function update(dt, px, pz) {
+  function update(dt, px, pz, camera) {
     wind.value += dt;
-    water.material.uniforms.time.value += dt * 0.5;
+    river.update(dt);
     updateGrass(px, pz);
+    atmosphere.update(dt, camera, env, px, pz, sunDir);
+    for (const c of decorCells) { const on = Math.hypot(c.x - px, c.z - pz) < Q.decor; for (const m of c.meshes) m.visible = on; }
   }
-  return { fields, env, setTime, update, water, clear };
+  return { fields, env, setTime, update, clear, setQuality, river, atmosphere, water: river.mesh };
 }

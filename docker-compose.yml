@@ -1,0 +1,19 @@
+# Local save database for Hearthborn.
+#   docker compose up -d      start MongoDB (data persists in the "hearthborn-mongo" volume)
+#   docker compose down       stop it (data is kept); add -v to wipe the saves
+services:
+  mongo:
+    image: mongo:7
+    container_name: hearthborn-mongo
+    restart: unless-stopped
+    ports:
+      - "27018:27017"        # 27018 on this machine: 27017 is used by another project
+    volumes:
+      - hearthborn-mongo:/data/db
+    healthcheck:
+      test: ["CMD", "mongosh", "--quiet", "--eval", "db.runCommand({ ping: 1 }).ok"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+volumes:
+  hearthborn-mongo:

@@ -4,6 +4,7 @@
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>Hearthborn</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ccircle cx='16' cy='16' r='15' fill='%23241c14'/%3E%3Cpath d='M16 5c3 5 7 7 7 13a7 7 0 0 1-14 0c0-4 2-5 3-8 1 3 3 4 4 3 0-3-1-5 0-8z' fill='%23e0b56a'/%3E%3C/svg%3E" />
 <style>
   :root { --ink: #f3ead9; --dim: #c9bda6; --gold: #e0b56a; --panel: rgba(18, 14, 10, 0.62); --line: rgba(243, 234, 217, 0.16); }
   * { box-sizing: border-box; }
@@ -61,6 +62,22 @@
   #event.on { opacity: 1; }
   #event b { display: block; font-size: 38px; font-weight: normal; color: var(--gold); letter-spacing: 0.08em; }
   #lockhint { position: fixed; top: 64px; right: 18px; padding: 6px 12px; font-size: 12px; color: var(--gold); display: none; pointer-events: none; }
+  #savechip { position: fixed; top: 100px; right: 18px; padding: 5px 11px; font-size: 12px; opacity: 0; pointer-events: none; transition: opacity 0.4s; }
+  #savechip.ok { color: #a9cf8e; } #savechip.warn { color: #e58a6f; }
+  #fps { position: fixed; right: 18px; bottom: 150px; font-size: 11px; color: rgba(243, 234, 217, 0.45); pointer-events: none; text-shadow: 0 1px 2px #000; }
+  #vignette { position: fixed; inset: 0; pointer-events: none; background: radial-gradient(ellipse at center, transparent 55%, rgba(0, 0, 0, 0.42) 100%); }
+  #pause { position: fixed; inset: 0; display: none; place-content: center; background: rgba(0, 0, 0, 0.5); backdrop-filter: blur(3px); }
+  #pause.on { display: grid; }
+  #pause .box { width: min(460px, 92vw); padding: 22px 26px; }
+  #pause h3 { margin: 0 0 14px; font-size: 28px; font-weight: normal; color: var(--gold); letter-spacing: 0.06em; text-align: center; }
+  #pause .row { display: grid; grid-template-columns: 1fr auto; align-items: center; gap: 12px; padding: 7px 0; border-top: 1px solid var(--line); font-size: 13px; }
+  #pause .row small { display: block; color: var(--dim); font-size: 11px; }
+  #pause input[type=range] { width: 150px; accent-color: var(--gold); }
+  #pause select { font: inherit; color: var(--ink); background: #241c14; border: 1px solid var(--line); border-radius: 4px; padding: 3px 6px; }
+  #pause .btns { display: flex; gap: 8px; justify-content: center; margin-top: 16px; flex-wrap: wrap; }
+  #pause button { font: 14px Georgia, serif; letter-spacing: 0.08em; color: var(--ink); background: rgba(18, 14, 10, 0.7); border: 1px solid var(--gold); border-radius: 4px; padding: 9px 18px; cursor: pointer; }
+  #pause button:hover { background: var(--gold); color: #1c140a; }
+  #savenote { font-size: 12px; color: var(--dim); margin-top: 6px; text-shadow: 0 1px 4px #000; }
   #mini { display: block; width: 196px; height: 196px; margin: 0 auto 4px; }
   #pinlabel { text-align: center; font-size: 12px; color: #d2a8ff; min-height: 17px; margin-bottom: 2px; }
   #map { position: fixed; inset: 0; display: none; place-content: center; background: rgba(0, 0, 0, 0.6); }
@@ -100,15 +117,29 @@
   <div id="inv" class="panel"></div>
   <div id="help" class="panel">
     <kbd>W A S D</kbd> move &nbsp;<kbd>Shift</kbd> sprint &nbsp;<kbd>Space</kbd> jump<br />
-    <kbd>C</kbd> sneak &nbsp;<kbd>V</kbd> first / third person<br />
+    <kbd>C</kbd> / hold <kbd>Ctrl</kbd> sneak &nbsp;<kbd>V</kbd> first / third person<br />
     <kbd>E</kbd> use &nbsp;<kbd>F</kbd> eat &nbsp;<kbd>Tab</kbd> craft &amp; build<br />
     <kbd>M</kbd> map &nbsp;<kbd>G</kbd> auto-walk to pin<br />
-    <kbd>Click</kbd> punch &nbsp;<kbd>Right-click</kbd> throw spear
+    <kbd>Click</kbd> punch &nbsp;<kbd>Right-click</kbd> throw spear<br />
+    <kbd>Esc</kbd> menu · settings · save
   </div>
+  <div id="fps"></div>
 </div>
+<div id="vignette"></div>
 <div id="hurt"></div>
 <div id="event" class="serif"></div>
-<div id="lockhint" class="panel">Click the game to control the camera</div>
+<div id="lockhint" class="panel">Click the game to capture the mouse</div>
+<div id="savechip" class="panel"></div>
+<div id="pause"><div class="box panel">
+  <h3 class="serif">Paused</h3>
+  <div class="row"><span>Mouse sensitivity<small>How far the camera turns per mouse movement</small></span><span><input id="opt-sens" type="range" min="0.3" max="3" step="0.05" /> <b id="opt-sens-v"></b></span></div>
+  <div class="row"><span>Invert mouse Y</span><input id="opt-inv" type="checkbox" /></div>
+  <div class="row"><span>Graphics quality<small>Lower is faster; auto picks by graphics card <b id="opt-qual-v"></b></small></span>
+    <select id="opt-qual"><option value="auto">Auto</option><option value="low">Low</option><option value="medium">Medium</option><option value="high">High</option></select></div>
+  <div class="row"><span>Fullscreen<small>Keeps Ctrl, Tab, Alt and Esc inside the game</small></span><input id="opt-full" type="checkbox" /></div>
+  <div class="row"><span>Volume</span><input id="opt-vol" type="range" min="0" max="1" step="0.05" /></div>
+  <div class="btns"><button id="btn-resume">Resume</button><button id="btn-save">Save now</button><button id="btn-quit">Save &amp; quit to title</button></div>
+</div></div>
 <div id="map"><div class="box panel">
   <h3 class="serif">The Valley</h3>
   <canvas id="mapcanvas" width="820" height="820"></canvas>
@@ -124,7 +155,8 @@
     <p class="serif">Two people, an empty valley, and bare hands. Hunt, make fire, raise a roof, bake the first bricks — and begin everything that comes after.</p>
     <button id="btn-continue" style="display:none">Continue</button>
     <button id="btn-new">Loading…</button>
-    <div class="keys">Mouse to look · WASD to move · E to gather · Tab to craft</div>
+    <div id="savenote"></div>
+    <div class="keys">Mouse to look · WASD to move · E to gather · Tab to craft · Esc for the menu</div>
   </div>
 </div>
 <script type="module" src="/src/main.js"></script>

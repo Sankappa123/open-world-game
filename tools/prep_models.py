@@ -63,9 +63,11 @@ open(f'{OUT}/CREDITS.txt', 'w').write('Character models, hair and animations by 
 NAT = '_assets_src/nature/glTF'
 os.makedirs(f'{OUT}/nature', exist_ok=True)
 os.makedirs(f'{OUT}/animals', exist_ok=True)
-NATURE = ['CommonTree_3', 'CommonTree_4', 'CommonTree_5', 'Pine_2', 'Pine_4', 'Pine_5', 'Rock_Medium_1', 'Rock_Medium_2', 'Rock_Medium_3',
-          'Pebble_Round_1', 'Pebble_Round_3', 'Bush_Common', 'Grass_Common_Short', 'Grass_Wispy_Short', 'Flower_3_Single', 'Flower_4_Single',
-          'Fern_1', 'Clover_1', 'Plant_1', 'Plant_7_Big', 'Mushroom_Common']
+NATURE = ['CommonTree_1', 'CommonTree_2', 'CommonTree_3', 'CommonTree_4', 'CommonTree_5', 'Pine_1', 'Pine_2', 'Pine_3', 'Pine_4', 'Pine_5',
+          'TwistedTree_2', 'TwistedTree_4', 'DeadTree_2', 'DeadTree_4', 'Rock_Medium_1', 'Rock_Medium_2', 'Rock_Medium_3',
+          'Pebble_Round_1', 'Pebble_Round_2', 'Pebble_Round_3', 'Bush_Common', 'Bush_Common_Flowers', 'Grass_Common_Short', 'Grass_Wispy_Short',
+          'Grass_Common_Tall', 'Grass_Wispy_Tall', 'Flower_3_Single', 'Flower_4_Single', 'Flower_3_Group', 'Flower_4_Group',
+          'Fern_1', 'Clover_1', 'Plant_1', 'Plant_1_Big', 'Plant_7_Big', 'Mushroom_Common']
 for n in NATURE:
     j = json.load(open(f'{NAT}/{n}.gltf'))
     for im in j.get('images', []):

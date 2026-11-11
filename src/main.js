@@ -1,22 +1,25 @@
 import * as THREE from 'three';
 import { createWorld, getHeight, slopeY, collide, addCollider, LIMIT, SIZE, riverX } from './world.js';
-import { loadNature } from './nature.js';
+import { loadNature, NAT, DEBUG } from './nature.js';
 import { loadAnimals, makeAnimal } from './animals.js';
 import { makeSpear, makeStructure, glowM } from './entities.js';
 import { loadPeople, makeHuman } from './people.js';
 import { clamp, lerp, mat } from './util.js';
+import { loadGame, saveGame, deleteGame, saveState, settings, saveSettings } from './save.js';
+import { PRESETS, detectQuality } from './quality.js';
 
 const $ = (id) => document.getElementById(id);
 const rand = Math.random;
-const SAVE = 'hearthborn-save-v1';
 
 // ---------- renderer ----------
 const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
-let pixelRatio = Math.min(devicePixelRatio, 1.5);
+const quality = () => (settings.quality === 'auto' ? detectQuality(renderer) : settings.quality);
+let Q = PRESETS[quality()], pixelRatio = Math.min(devicePixelRatio, Q.pr);
 renderer.setPixelRatio(pixelRatio);
 renderer.setSize(innerWidth, innerHeight);
 renderer.shadowMap.enabled = true;
-renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+renderer.shadowMap.type = THREE.PCFShadowMap;
+renderer.shadowMap.autoUpdate = false;        // refreshed from the frame loop: every frame on high, every other frame otherwise
 renderer.toneMapping = THREE.ACESFilmicToneMapping;
 document.body.prepend(renderer.domElement);
 const canvas = renderer.domElement;
@@ -27,8 +30,8 @@ addEventListener('resize', () => {
   renderer.setSize(innerWidth, innerHeight);
 });
 camera.layers.enable(1);
-await Promise.all([loadNature(), loadPeople(), loadAnimals()]);
-const world = createWorld(scene, renderer);
+const [, , , found] = await Promise.all([loadNature(), loadPeople(), loadAnimals(), loadGame()]);
+const world = createWorld(scene, renderer, quality());
 const SWIM_Y = -0.1;
 
 // ---------- state ----------
@@ -42,7 +45,7 @@ const cnt = (k) => S.c[k] || 0;
 const bump = (k, n = 1) => { S.c[k] = cnt(k) + n; };
 const structs = [];
 const has = (kind) => structs.some((s) => s.kind === kind && s.rise >= 1);
-let playing = false, menuOpen = false, busy = false, clock = 0;
+let playing = false, menuOpen = false, busy = false, clock = 0, paused = false;
 
 // ---------- story ----------
 const CH = [
@@ -81,7 +84,7 @@ const A = {
     if (A.ctx) return;
     try {
       const c = (A.ctx = new AudioContext());
-      A.out = c.createGain(); A.out.gain.value = 0.7; A.out.connect(c.destination);
+      A.out = c.createGain(); A.out.gain.value = settings.volume; A.out.connect(c.destination);
       A.buf = c.createBuffer(1, c.sampleRate * 2, c.sampleRate);
       const d = A.buf.getChannelData(0);
       for (let i = 0; i < d.length; i++) d[i] = rand() * 2 - 1;
@@ -99,7 +102,22 @@ const A = {
       const rs = c.createBufferSource(), hp = c.createBiquadFilter(); rs.buffer = A.buf; rs.loop = true; hp.type = 'highpass'; hp.frequency.value = 1700;
       A.rain = c.createGain(); A.rain.gain.value = 0;
       rs.connect(hp).connect(A.rain).connect(A.out); rs.start(0, 0.7);
+      // the river: filtered noise that gets louder near the water
+      const ws = c.createBufferSource(), wb = c.createBiquadFilter(); ws.buffer = A.buf; ws.loop = true; wb.type = 'bandpass'; wb.frequency.value = 900; wb.Q.value = 0.5;
+      A.river = c.createGain(); A.river.gain.value = 0;
+      ws.connect(wb).connect(A.river).connect(A.out); ws.start(0, 1.3);
     } catch { A.ctx = null; }
+  },
+  // a short two-note bird call, slightly different every time
+  chirp(vol = 0.05) {
+    if (!A.ctx) return;
+    const c = A.ctx, t = c.currentTime, base = 2200 + rand() * 1800;
+    for (let i = 0; i < 2 + (rand() * 3 | 0); i++) {
+      const o = c.createOscillator(), g = c.createGain(), t0 = t + i * (0.09 + rand() * 0.08);
+      o.frequency.setValueAtTime(base * (1 + rand() * 0.3), t0); o.frequency.exponentialRampToValueAtTime(base * (0.7 + rand() * 0.2), t0 + 0.07);
+      g.gain.setValueAtTime(0, t0); g.gain.linearRampToValueAtTime(vol, t0 + 0.015); g.gain.exponentialRampToValueAtTime(0.001, t0 + 0.09);
+      o.connect(g).connect(A.out); o.start(t0); o.stop(t0 + 0.1);
+    }
   },
   hit(freq, dur, vol) {
     if (!A.ctx) return;
@@ -171,11 +189,26 @@ function fadeTo(text, mid, hold = 2600) {
   $('fade-text').textContent = text; $('fade').classList.add('on');
   setTimeout(() => { mid(); setTimeout(() => { $('fade').classList.remove('on'); busy = false; }, hold); }, 1300);
 }
-function save() {
+let saveFlash = 0;
+function save(opts = {}) {
+  if (!playing) return;
   S.structs = structs.map((s) => ({ k: s.kind, x: s.x, z: s.z, r: s.rot, g: s.grow }));
-  S.px = P.pos.x; S.pz = P.pos.z;
-  try { localStorage.setItem(SAVE, JSON.stringify(S)); } catch {}
+  S.px = P.pos.x; S.pz = P.pos.z; S.nx = N.pos.x; S.nz = N.pos.z;
+  S.yaw = camYaw; S.pitch = camPitch; S.view = view; S.evNext = EV.next; S.storm = EV.storm;
+  S.felled = [];
+  world.fields.forEach((f, fi) => { if (f.kind === 'tree') f.nodes.forEach((n, ni) => { if (!n.alive && !n.gone) S.felled.push([fi, ni]); }); });
+  saveGame(S, opts);
+  saveFlash = 2.5; $('savechip').textContent = 'Saving…'; $('savechip').className = 'panel';
 }
+saveState.listeners.push((st) => {
+  const el = $('savechip');
+  el.textContent = st.where === 'db' ? 'Saved to database' : 'Saved in browser only (server unreachable)';
+  el.className = 'panel ' + (st.where === 'db' ? 'ok' : 'warn');
+});
+// Save when the tab is hidden or closed, so nothing is lost when the machine is switched off.
+addEventListener('visibilitychange', () => { if (document.hidden) save({ beacon: true }); });
+addEventListener('pagehide', () => save({ beacon: true }));
+addEventListener('beforeunload', () => save({ beacon: true }));
 
 // ---------- characters ----------
 const P = { pos: new THREE.Vector3(0, 0, 4), face: Math.PI, h: makeHuman({ hairColor: 0x3d2f26 }), sneak: false, speed: 0, cool: 0, step: 0, vx: 0, vz: 0, vy: 0, jy: 0, air: false, auto: false, tired: false };
@@ -499,7 +532,7 @@ function craft(r) {
   for (const k in r.cost) S.inv[k] -= r.cost[k];
   S.tools[r.id] = true;
   toast(`Crafted: ${r.name}`); A.hit(900, 0.2, 0.4);
-  drawInv(); drawQuest();
+  drawInv(); drawQuest(); save();
 }
 function toggleMenu(on = !menuOpen) {
   if (!playing || busy || mapOpen) return;
@@ -614,6 +647,7 @@ function die(why) {
     N.pos.set(P.pos.x + 1.2, 0, P.pos.z + 0.8); N.node = null;
     for (const o of animals.filter((o) => o.kind === 'wolf')) remove(o);
     Object.assign(S, { hp: 60, food: 55, water: 60, warm: 100, time: 7, day: S.day + 1 });
+    save();
   }, 3800);
 }
 
@@ -754,48 +788,135 @@ function updateMap() {
 
 // ---------- input ----------
 const keys = {};
-let tapE = false;
+let tapE = false, lockedAt = 0, unlockTime = 0, mouseX = -1, mouseY = -1;
 const locked = () => document.pointerLockElement === canvas;
-const lock = () => { if (locked()) return; try { canvas.requestPointerLock()?.catch?.(() => {}); } catch {} };
-const lockHint = () => { $('lockhint').style.display = playing && !menuOpen && !busy && !locked() ? 'block' : 'none'; };
-document.addEventListener('pointerlockchange', lockHint);
+function lock() {
+  if (locked() || !playing || menuOpen || paused || busy) return;
+  try {
+    // unadjustedMovement switches off the OS mouse acceleration, so aiming is consistent
+    const r = canvas.requestPointerLock({ unadjustedMovement: true });
+    r?.catch?.(() => { try { canvas.requestPointerLock()?.catch?.(() => {}); } catch {} });
+  } catch { try { canvas.requestPointerLock(); } catch {} }
+}
+const lockHint = () => { $('lockhint').style.display = playing && !menuOpen && !paused && !busy && !locked() ? 'block' : 'none'; };
+document.addEventListener('pointerlockchange', () => {
+  if (locked()) { lockedAt = performance.now(); lockBroken = false; }
+  else {
+    unlockTime = performance.now();
+    // Esc released the mouse while playing: that is the pause menu. (Chrome swallows the Esc key itself.)
+    if (playing && !menuOpen && !busy && !paused && performance.now() - lockedAt > 300) pause(true);
+  }
+  lockHint();
+});
+let lockBroken = false;                 // pointer lock refused (embedded preview, some browsers): clicks act straight away
+document.addEventListener('pointerlockerror', () => { lockBroken = true; lockHint(); });
+// In fullscreen the browser hands every key to the game, so Ctrl+W, Tab, Alt and Esc cannot hit the browser.
+async function fullscreen(on) {
+  try {
+    if (on && !document.fullscreenElement) { await document.documentElement.requestFullscreen({ navigationUI: 'hide' }); await navigator.keyboard?.lock?.(); setTimeout(lock, 150); }
+    else if (!on && document.fullscreenElement) { navigator.keyboard?.unlock?.(); await document.exitFullscreen(); }
+  } catch {}
+  $('opt-full').checked = !!document.fullscreenElement;
+}
+document.addEventListener('fullscreenchange', () => { $('opt-full').checked = !!document.fullscreenElement; });
+const GAME_KEYS = /^(Key[WASDEFCVGMQB]|Space|ShiftLeft|ShiftRight|ControlLeft|ControlRight|Tab|Escape|Arrow(Up|Down|Left|Right))$/;
 addEventListener('keydown', (e) => {
-  if (e.code === 'Tab') e.preventDefault();
-  if (!playing || (e.repeat && e.code !== 'KeyE')) return;
+  if (!playing) return;
+  if (GAME_KEYS.test(e.code) && !(e.ctrlKey && /^Key[RL]$/.test(e.code))) e.preventDefault();   // keep browser shortcuts out of the game (reload stays)
+  if (e.code === 'Escape') {
+    if (e.repeat) return;
+    if (paused) pause(false); else if (mapOpen) toggleMap(false); else if (menuOpen) toggleMenu(false); else if (!busy) pause(true);
+    return;
+  }
+  if (paused || (e.repeat && e.code !== 'KeyE')) return;
   keys[e.code] = true;
   if (e.code === 'KeyE') tapE = true;
-  if (e.code === 'KeyM' || (e.code === 'Escape' && mapOpen)) { toggleMap(); return; }
+  if (e.code === 'KeyM') { toggleMap(); return; }
   if (mapOpen) return;
   if (e.code === 'Tab' || e.code === 'KeyB') { toggleMenu(); return; }
   if (menuOpen || busy) return;
-  if (/^(Key[WASD]|Space|ShiftLeft)$/.test(e.code)) lock();      // moving always re-captures the mouse
+  if (/^(Key[WASD]|Space|ShiftLeft|ControlLeft)$/.test(e.code)) lock();      // moving always re-captures the mouse
   if (e.code === 'KeyF') eat();
-  if (e.code === 'Space') { e.preventDefault(); jumpTap = true; }
+  if (e.code === 'Space') jumpTap = true;
   if (e.code === 'KeyV') { view = view === 'fpp' ? 'tpp' : 'fpp'; camPitch = clamp(camPitch, pitchMin(), 1.25); toast(view === 'fpp' ? 'First person' : 'Third person'); }
   if (e.code === 'KeyG') { if (S.pin) { P.auto = !P.auto; toast(P.auto ? 'Auto-walking to your pin' : 'Auto-walk stopped'); } else toast('Open the map (M) and drop a pin first'); }
   if (e.code === 'KeyC') P.sneak = !P.sneak;
+  if (e.code === 'ControlLeft' || e.code === 'ControlRight') P.sneak = true;        // hold Ctrl to sneak, C toggles it
   if (e.code === 'KeyQ' && placing) { placing = null; ghost.visible = false; }
 });
-addEventListener('keyup', (e) => { keys[e.code] = false; });
+addEventListener('keyup', (e) => {
+  keys[e.code] = false;
+  if ((e.code === 'ControlLeft' || e.code === 'ControlRight') && !keys.ControlLeft && !keys.ControlRight) P.sneak = false;
+});
 addEventListener('blur', () => { for (const k in keys) keys[k] = false; });
 canvas.addEventListener('mousedown', (e) => {
-  if (!playing || menuOpen || busy) return;
-  lock();
+  if (!playing || menuOpen || busy || paused) return;
+  if (!locked()) { lock(); if (!lockBroken) return; }   // the first click only captures the mouse
   if (e.button === 0) placing ? confirmPlace() : attack();
   if (e.button === 2) { if (placing) { placing = null; ghost.visible = false; } else throwSpear(); }
 });
 addEventListener('contextmenu', (e) => e.preventDefault());
+// Mouse look. Coalesced events are summed so nothing is lost at low frame rates; the first event after the
+// pointer is captured is dropped because browsers report a huge jump there.
+let lookX = 0, lookY = 0;
 addEventListener('mousemove', (e) => {
-  if (!playing || menuOpen) return;                 // works with or without the mouse captured
-  const mx = clamp(e.movementX, -120, 120), my = clamp(e.movementY, -120, 120);
-  camYaw -= mx * 0.0026;
-  camPitch = clamp(camPitch + my * 0.0022, pitchMin(), 1.25);
+  mouseX = e.clientX; mouseY = e.clientY;
+  if (!playing || menuOpen || paused) return;
+  let mx = 0, my = 0;
+  const list = e.getCoalescedEvents?.() || [];
+  if (list.length) for (const c of list) { mx += c.movementX; my += c.movementY; }
+  else { mx = e.movementX; my = e.movementY; }
+  if (locked() && performance.now() - lockedAt < 80) return;
+  if (Math.abs(mx) > 600 || Math.abs(my) > 600) return;
+  lookX += mx; lookY += my;
 });
-addEventListener('wheel', (e) => { if (playing && !menuOpen) camDist = clamp(camDist + Math.sign(e.deltaY) * 0.5, 2.6, 9); }, { passive: true });
+addEventListener('wheel', (e) => { if (playing && !menuOpen && !paused) camDist = clamp(camDist + Math.sign(e.deltaY) * 0.5, 2.6, 9); }, { passive: true });
+function applyLook(dt) {
+  const k = 0.0024 * settings.sens, inv = settings.invertY ? -1 : 1;
+  // Without the mouse captured the cursor hits the window edge: keep turning while it rests near an edge.
+  if (!locked() && mouseX >= 0 && !menuOpen && !paused) {
+    const ex = mouseX < 40 ? -1 : mouseX > innerWidth - 40 ? 1 : 0, ey = mouseY < 40 ? -1 : mouseY > innerHeight - 40 ? 1 : 0;
+    lookX += ex * dt * 700; lookY += ey * dt * 500;
+  }
+  camYaw -= lookX * k;
+  camPitch = clamp(camPitch + lookY * k * 0.9 * inv, pitchMin(), 1.25);
+  lookX = lookY = 0;
+}
+
+// ---------- pause menu and settings ----------
+function pause(on) {
+  if (!playing || (on && (busy || menuOpen))) return;
+  paused = on;
+  $('pause').classList.toggle('on', on);
+  if (on) { document.exitPointerLock?.(); save(); for (const k in keys) keys[k] = false; }
+  else lock();
+  lockHint();
+}
+function bindSettings() {
+  const sens = $('opt-sens'), inv = $('opt-inv'), qual = $('opt-qual'), full = $('opt-full'), vol = $('opt-vol');
+  sens.value = settings.sens; $('opt-sens-v').textContent = settings.sens.toFixed(2) + '×';
+  inv.checked = settings.invertY; qual.value = settings.quality; full.checked = settings.fullscreen; vol.value = settings.volume;
+  sens.oninput = () => { settings.sens = +sens.value; $('opt-sens-v').textContent = settings.sens.toFixed(2) + '×'; saveSettings(); };
+  inv.onchange = () => { settings.invertY = inv.checked; saveSettings(); };
+  vol.oninput = () => { settings.volume = +vol.value; if (A.out) A.out.gain.value = settings.volume; saveSettings(); };
+  qual.onchange = () => { settings.quality = qual.value; saveSettings(); applyQuality(); };
+  full.onchange = () => { settings.fullscreen = full.checked; saveSettings(); fullscreen(full.checked); };
+  $('btn-resume').onclick = () => pause(false);
+  $('btn-save').onclick = () => { save({ now: true }); toast('Game saved'); };
+  $('btn-quit').onclick = () => { save({ now: true }); location.reload(); };
+}
+function applyQuality() {
+  Q = PRESETS[quality()];
+  pixelRatio = Math.min(devicePixelRatio, Q.pr); renderer.setPixelRatio(pixelRatio);
+  world.setQuality(quality());
+  $('opt-qual-v').textContent = settings.quality === 'auto' ? `auto → ${quality()}` : '';
+}
+bindSettings();
 
 // ---------- per-frame updates ----------
 let target = null, useCool = 0, tick = 0, saveT = 0;
 function updatePlayer(dt) {
+  applyLook(dt);
   const mx = (keys.KeyD ? 1 : 0) - (keys.KeyA ? 1 : 0), mz = (keys.KeyW ? 1 : 0) - (keys.KeyS ? 1 : 0);
   camYaw += ((keys.ArrowLeft ? 1 : 0) - (keys.ArrowRight ? 1 : 0)) * dt * 1.8;
   camPitch = clamp(camPitch + ((keys.ArrowDown ? 1 : 0) - (keys.ArrowUp ? 1 : 0)) * dt, pitchMin(), 1.25);
@@ -819,7 +940,7 @@ function updatePlayer(dt) {
   if (P.swim) P.sneak = false;
   // Sprinting costs stamina; run dry and you have to catch your breath.
   if (S.stam <= 0) P.tired = true; else if (S.stam > 25) P.tired = false;
-  const run = (keys.ShiftLeft || P.auto) && !P.sneak && moving && !P.tired;
+  const run = (keys.ShiftLeft || keys.ShiftRight || P.auto) && !P.sneak && moving && !P.tired;
   S.stam = clamp(S.stam + dt * (run ? (P.swim ? -8 : -10) : P.speed < 0.5 ? 18 : 10), 0, 100);
   let sp = !moving ? 0 : P.swim ? (run ? 3 : 2.1) : P.sneak ? 1.7 : run ? 6.6 : 3.3;
   if (!P.swim && !P.air && P.pos.y < 0.15) sp *= 0.6;
@@ -942,7 +1063,14 @@ function updateWorldThings(dt) {
     if (Math.hypot(r.n.x - P.pos.x, r.n.z - P.pos.z) > 30) { r.n.field.set(r.n, true); respawns.splice(i, 1); }
   }
   glowM.emissiveIntensity = world.env.night * 1.8;
-  if (A.ctx) A.cricket.gain.value = world.env.night * 0.012;
+  if (A.ctx) {
+    const E = world.env;
+    A.cricket.gain.value = E.night * 0.012;
+    A.river.gain.value = clamp(1 - Math.abs(P.pos.x - riverX(P.pos.z)) / 40, 0, 1) ** 2 * 0.16;
+    if (E.day > 0.5 && E.storm < 0.4 && rand() < dt * 0.35) A.chirp(0.012 + rand() * 0.03);
+  }
+  saveFlash = Math.max(0, saveFlash - dt);
+  $('savechip').style.opacity = Math.min(1, saveFlash);
 }
 const camPos = new THREE.Vector3(0, 8, 14), look = new THREE.Vector3();
 function updateCamera(dt, title) {
@@ -977,28 +1105,49 @@ function updateCamera(dt, title) {
 // ---------- start ----------
 function start(loadSave) {
   A.init();
-  if (loadSave) {
-    try { S = Object.assign(fresh(), JSON.parse(localStorage.getItem(SAVE))); } catch { S = fresh(); }
+  if (loadSave && found) {
+    S = Object.assign(fresh(), found.data);
     for (const s of S.structs) placeStruct(s.k, s.x, s.z, s.r, true, s.g);
-    P.pos.set(S.px, 0, S.pz); N.pos.set(S.px + 1.5, 0, S.pz + 1);
+    for (const [fi, ni] of S.felled || []) { const n = world.fields[fi]?.nodes[ni]; if (n && n.alive) { world.fields[fi].set(n, false); respawns.push({ n, at: clock + 300 }); } }
+    P.pos.set(S.px, 0, S.pz); N.pos.set(S.nx ?? S.px + 1.5, 0, S.nz ?? S.pz + 1);
+    if (S.yaw != null) camYaw = S.yaw; if (S.pitch != null) camPitch = S.pitch; if (S.view) view = S.view;
+    if (S.evNext) EV.next = S.evNext; if (S.storm) EV.storm = S.storm;
     if (S.village) spawnVillagers();
-    drawQuest(); toast('Welcome back');
-  } else { localStorage.removeItem(SAVE); showChapter(); }
+    drawQuest(); toast(`Welcome back · day ${S.day} (loaded from ${found.from})`);
+  } else { deleteGame(); showChapter(); }
   playing = true;
   $('title').classList.add('off'); $('hud').classList.add('on');
-  drawInv(); lock();
+  drawInv(); applyQuality();
+  if (settings.fullscreen) fullscreen(true);
+  lock();
+  setTimeout(() => toast('Esc opens the menu · settings, save and quit'), 1500);
 }
 $('btn-new').textContent = 'Begin the story';
-$('btn-new').onclick = () => start(false);
-if (localStorage.getItem(SAVE)) { $('btn-continue').style.display = ''; $('btn-continue').onclick = () => start(true); $('btn-new').textContent = 'New story'; }
+$('btn-new').onclick = () => { if (!found || confirm('Start over? The saved story will be deleted.')) start(false); };
+if (found) {
+  const d = found.data, when = d.savedAt ? new Date(d.savedAt).toLocaleString() : '';
+  $('btn-continue').style.display = ''; $('btn-continue').onclick = () => start(true); $('btn-new').textContent = 'New story';
+  $('btn-continue').textContent = `Continue · day ${d.day || 1}`;
+  $('savenote').textContent = `Saved ${when} · ${found.from === 'database' ? 'from the save database' : 'from this browser'}`;
+}
 
-let last = performance.now(), slow = 0, frames = 0;
+let last = performance.now(), frames = 0, ftAcc = 0, ftN = 0, fpsShown = 0;
 function frame(now) {
   requestAnimationFrame(frame);
-  const raw = (now - last) / 1000, dt = Math.min(0.05, raw);
+  const raw = (now - last) / 1000, dt = paused ? 0 : Math.min(0.05, raw);
   last = now; clock += dt;
-  if (++frames > 30) { slow = raw > 0.034 ? slow + 1 : 0; if (slow > 90 && pixelRatio > 0.7) { pixelRatio -= 0.25; renderer.setPixelRatio(pixelRatio); slow = 0; } }
-  if (playing) {
+  // Adaptive resolution: nudge the internal render size inside the preset's range to hold a smooth frame rate.
+  if (++frames > 60 && !paused && !document.hidden) {
+    ftAcc += raw; ftN++;
+    if (ftN >= 45) {
+      const avg = ftAcc / ftN; ftAcc = ftN = 0; fpsShown = 1 / avg;
+      if (avg > 0.03 && pixelRatio > Q.prMin + 0.01) { pixelRatio = Math.max(Q.prMin, pixelRatio - 0.1); renderer.setPixelRatio(pixelRatio); }
+      else if (avg < 0.014 && pixelRatio < Math.min(Q.prMax, devicePixelRatio) - 0.01) { pixelRatio = Math.min(Q.prMax, devicePixelRatio, pixelRatio + 0.05); renderer.setPixelRatio(pixelRatio); }
+      $('fps').textContent = `${fpsShown.toFixed(0)} fps · ${Math.round(pixelRatio * 100)}%`;
+    }
+  }
+  renderer.shadowMap.needsUpdate = Q === PRESETS.high || frames % 2 === 0;
+  if (playing && !paused) {
     updatePlayer(dt); updateSena(dt); updateVillagers(dt); updateSpear(dt); updateStats(dt); updateSubs(dt); updateEvents(dt); updateMap(); lockHint();
     tick -= dt;
     if (tick <= 0) {
@@ -1009,14 +1158,15 @@ function frame(now) {
         if (CH[S.ch].epilogue) { epilogue(); setTimeout(showChapter, 5200); } else showChapter();
       }
     }
-    saveT += dt; if (saveT > 30 && !busy) { saveT = 0; save(); }
-  } else { settle(P, dt, false); settle(N, dt, false); }
+    saveT += dt; if (saveT > 20 && !busy) { saveT = 0; save(); }
+  } else if (!playing) { settle(P, dt, false); settle(N, dt, false); }
   for (const o of [...animals]) updateAnimal(o, dt);
   updateWorldThings(dt);
   updateCamera(dt, !playing);
   world.setTime(S.time, P.pos, camera);
-  world.update(dt, P.pos.x, P.pos.z);
+  world.update(dt, P.pos.x, P.pos.z, camera);
   renderer.render(scene, camera);
 }
 requestAnimationFrame(frame);
-window.G = { throwSpear, sleep, attack, EVENTS, EV, animals, herds, spawn, hurt, get S() { return S; }, P, N, structs, world, placeStruct, give, camera, renderer, scene, set yaw(v) { camYaw = v; }, set pitch(v) { camPitch = v; } };
+window.THREE = THREE; window.NAT = NAT; window.DEBUG = DEBUG;
+window.G = { throwSpear, sleep, attack, EVENTS, EV, animals, herds, spawn, hurt, get S() { return S; }, P, N, structs, world, placeStruct, give, camera, renderer, scene, save, pause, set yaw(v) { camYaw = v; }, set pitch(v) { camPitch = v; }, get fps() { return fpsShown; }, get pr() { return pixelRatio; } };
