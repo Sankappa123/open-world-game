@@ -22,7 +22,7 @@
   #goals div.done::before { background: var(--gold); border-color: var(--gold); }
   #clock { position: absolute; top: 18px; right: 18px; padding: 7px 12px; font-variant-numeric: tabular-nums; }
   #bars { position: absolute; left: 18px; bottom: 18px; width: 222px; padding: 10px 12px 8px; }
-  .bar { display: grid; grid-template-columns: 58px 1fr; align-items: center; gap: 8px; margin: 3px 0; font-size: 12px; color: var(--dim); }
+  .bar { display: grid; grid-template-columns: 66px 1fr; align-items: center; gap: 8px; margin: 3px 0; font-size: 12px; color: var(--dim); }
   .bar i { display: block; height: 7px; background: rgba(255, 255, 255, 0.12); border-radius: 4px; overflow: hidden; }
   .bar b { display: block; height: 100%; width: 100%; border-radius: 4px; transition: width 0.3s; }
   #inv { position: absolute; left: 50%; bottom: 18px; transform: translateX(-50%); display: flex; gap: 6px; padding: 6px; max-width: 60vw; flex-wrap: wrap; justify-content: center; }
@@ -88,6 +88,9 @@
   #map .legend { display: flex; gap: 14px; justify-content: center; margin: 8px 0 4px; font-size: 12px; color: var(--dim); }
   #map .legend i { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 5px; border: 1px solid #000; }
   #map small { display: block; color: var(--dim); }
+  #map .legend { flex-wrap: wrap; row-gap: 4px; }   /* WP5 */
+  #mapcanvas { box-shadow: inset 0 0 40px rgba(90,60,20,0.5), 0 2px 12px rgba(0,0,0,0.5); border-color: #8a7350; }
+  #mapinfo .journal { color: var(--gold); font-style: italic; font-family: Georgia, serif; margin-bottom: 3px; max-width: min(74vh, 86vw); margin-inline: auto; }
   #title { position: fixed; inset: 0; display: grid; place-content: center; text-align: center; background: linear-gradient(rgba(0, 0, 0, 0.15), rgba(0, 0, 0, 0.6)); transition: opacity 1.5s; padding: 20px; }
   #title.off { opacity: 0; pointer-events: none; }
   #title h1 { font-size: clamp(48px, 9vw, 96px); font-weight: normal; margin: 0; letter-spacing: 0.08em; text-shadow: 0 4px 30px #000; }
@@ -113,13 +116,19 @@
     <div class="bar">Hunger<i><b id="b-food" style="background:#d39a4a"></b></i></div>
     <div class="bar">Thirst<i><b id="b-water" style="background:#5fa3c9"></b></i></div>
     <div class="bar">Warmth<i><b id="b-warm" style="background:#e07a3c"></b></i></div>
+    <div class="bar" id="bar-close">Closeness<i><b id="b-close" style="background:#d77a8a"></b></i></div>
+    <div class="bar" id="bar-horse" style="display:none">Horse<i><b id="b-horse" style="background:#c08850"></b></i></div>
+    <div class="bar" id="bar-calm" style="display:none">Calm<i><b id="b-calm" style="background:#8fc4e0;width:0%"></b></i></div>
   </div>
   <div id="inv" class="panel"></div>
   <div id="help" class="panel">
     <kbd>W A S D</kbd> move &nbsp;<kbd>Shift</kbd> sprint &nbsp;<kbd>Space</kbd> jump<br />
     <kbd>C</kbd> / hold <kbd>Ctrl</kbd> sneak &nbsp;<kbd>V</kbd> first / third person<br />
-    <kbd>E</kbd> use &nbsp;<kbd>F</kbd> eat &nbsp;<kbd>Tab</kbd> craft &amp; build<br />
+    <kbd>E</kbd> use · sit with Sena &nbsp;<kbd>F</kbd> eat &nbsp;<kbd>Tab</kbd> craft &amp; build<br />
+    hold <kbd>E</kbd> at a site to build together · rest in the hut or house<br />
+    <kbd>T</kbd> torch &nbsp;<kbd>R</kbd> waterskin &nbsp;<kbd>H</kbd> heal<br />
     <kbd>M</kbd> map &nbsp;<kbd>G</kbd> auto-walk to pin<br />
+    <kbd>E</kbd> ride / dismount · <kbd>W</kbd>/<kbd>Shift</kbd> trot / gallop · <kbd>Space</kbd> jump · <kbd>X</kbd> call horse<br />
     <kbd>Click</kbd> punch &nbsp;<kbd>Right-click</kbd> throw spear<br />
     <kbd>Esc</kbd> menu · settings · save
   </div>
@@ -143,7 +152,7 @@
 <div id="map"><div class="box panel">
   <h3 class="serif">The Valley</h3>
   <canvas id="mapcanvas" width="820" height="820"></canvas>
-  <div class="legend"><span><i style="background:#fff"></i>You</span><span><i style="background:#ffd27a"></i>Sena</span><span><i style="background:#c98f55"></i>Deer</span><span><i style="background:#ff4a3c"></i>Wolves</span><span><i style="background:#b05cff"></i>Pin</span><span><i style="background:#e8dcc0;border-radius:0"></i>Buildings</span></div>
+  <div class="legend"><span><i style="background:#fff"></i>You</span><span><i style="background:#ff8fb8"></i>Sena</span><span><i style="background:#c08850"></i>Horse</span><span><i style="background:#e8b830;border-radius:0;transform:rotate(45deg) scale(.8)"></i>Quest</span><span><i style="background:#4a4550;border-radius:5px 5px 0 0"></i>Cave</span><span><i style="background:#7a6a5a;border-radius:0"></i>Landmark</span><span><i style="background:#6fb0c8"></i>Ford</span><span><i style="background:#c98f55"></i>Deer</span><span><i style="background:#ff4a3c"></i>Wolves</span><span><i style="background:#b05cff"></i>Pin</span><span><i style="background:#e8dcc0;border-radius:0"></i>Buildings</span></div>
   <small id="mapinfo"></small><small>Press <kbd>M</kbd> to close</small>
 </div></div>
 <div id="card"><div><p id="card-sub"></p><h2 id="card-title" class="serif"></h2></div></div>
@@ -152,11 +161,11 @@
 <div id="title">
   <div>
     <h1 class="serif">Hearthborn</h1>
-    <p class="serif">Two people, an empty valley, and bare hands. Hunt, make fire, raise a roof, bake the first bricks — and begin everything that comes after.</p>
+    <p class="serif">Two people, an empty valley, and bare hands. Hunt, make fire, raise a roof, explore the caves, tame a horse, build a home together — and begin everything that comes after.</p>
     <button id="btn-continue" style="display:none">Continue</button>
     <button id="btn-new">Loading…</button>
     <div id="savenote"></div>
-    <div class="keys">Mouse to look · WASD to move · E to gather · Tab to craft · Esc for the menu</div>
+    <div class="keys">Mouse to look · WASD to move · E to gather, sit or ride · Tab to craft · M for the map · Esc for the menu</div>
   </div>
 </div>
 <script type="module" src="/src/main.js"></script>

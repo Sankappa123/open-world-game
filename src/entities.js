@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { rng, mat, part, merge, lumpy, canvasTex, streakTex, brickTex, boxM } from './util.js';
+import { NAT } from './nature.js';
 
 const cap = (r, l) => new THREE.CapsuleGeometry(r, l, 5, 12);
 const cyl = (a, b, h, n = 10) => new THREE.CylinderGeometry(a, b, h, n);
@@ -26,6 +27,24 @@ export function makeAxe() {
   mesh(g, cyl(0.018, 0.022, 0.6, 6), woodM, 0, 0, 0.2).rotation.x = Math.PI / 2;
   mesh(g, new THREE.BoxGeometry(0.04, 0.2, 0.11), stoneM, 0, -0.04, 0.46);
   return g;
+}
+
+// A hand torch: a stick with a resin-soaked fibre head. Held like the spear (along +z). The light is not a
+// child of the torch: the caller keeps it in the scene and only dims it, so it still shines in first person
+// (when the body is hidden) and lighting it never forces every material to recompile.
+export function makeTorch() {
+  const g = new THREE.Group();
+  mesh(g, cyl(0.02, 0.026, 0.62, 6), woodM, 0, 0, 0.16).rotation.x = Math.PI / 2;
+  mesh(g, cyl(0.045, 0.035, 0.12, 7), mat(0x3a2a1a, 1), 0, 0, 0.46).rotation.x = Math.PI / 2;
+  const fl = new THREE.Group(); fl.position.z = 0.56; g.add(fl);
+  const flames = [0, 1].map((i) => {
+    const f = new THREE.Mesh(new THREE.SphereGeometry(0.075 - i * 0.025, 8, 6), new THREE.MeshBasicMaterial({ color: i ? 0xffd66a : 0xff8a2a, transparent: true, opacity: 0.85, blending: THREE.AdditiveBlending, depthWrite: false, fog: false }));
+    f.scale.set(1, 1, 1.9); f.position.z = 0.03 + i * 0.03; fl.add(f); return f;
+  });
+  const light = new THREE.PointLight(0xff8f40, 0, 16, 1.6);
+  let t = 0;
+  return { root: g, light, flame: fl, set lit(on) { fl.visible = on; light.intensity = on ? 9 : 0; },
+    update(dt) { t += dt; flames.forEach((f, i) => f.scale.set(1 + Math.sin(t * 12 + i) * 0.2, 1 + Math.cos(t * 9 + i) * 0.2, 1.9 + Math.sin(t * 15 + i * 2) * 0.5)); if (fl.visible) light.intensity = 8.5 + Math.sin(t * 13) * 1.5 + Math.sin(t * 29) * 1; } };
 }
 
 // ---------- people ----------
@@ -169,6 +188,11 @@ const smokeT = canvasTex(64, (g, S) => {
 });
 const flameM = new THREE.MeshBasicMaterial({ color: 0xff8a2a, transparent: true, opacity: 0.85, blending: THREE.AdditiveBlending, depthWrite: false, fog: false });
 const flameM2 = flameM.clone(); flameM2.color.set(0xffd66a);
+// WP2 materials: open hut wall/roof seen from inside, bedding, embers, woven basket
+const plankDM = plankM.clone(); plankDM.side = THREE.DoubleSide;
+const thatchDM = thatchM.clone(); thatchDM.side = THREE.DoubleSide;
+const reedM = mat(0xb8a46a, 1), hideM = mat(0x7a5236, 0.95), linenM = mat(0xd8ccb0, 1), fiberM = mat(0xb89a5e, 1), hayM = mat(0xd9bf5a, 1), meatM = mat(0x6e2f22, 0.8), driedM = mat(0x4a2618, 0.9);
+const emberM = new THREE.MeshStandardMaterial({ color: 0x2a140a, emissive: 0xff6a20, emissiveIntensity: 1.6, roughness: 1 });
 
 function smoke(g, y, n = 8, spread = 1) {
   const list = [];
@@ -198,6 +222,11 @@ export const BUILD = {
       l.position.set(Math.sin((i / 5) * 6.283) * 0.2, 0.26, Math.cos((i / 5) * 6.283) * 0.2);
     }
     mesh(g, cyl(0.5, 0.5, 0.04, 12), mat(0x161310, 1), 0, 0.02, 0).castShadow = false;
+    // Two log benches at local x = ±1.6 (main.js fireSeats sits Aro and Sena here), top at 0.45 m, on stone chocks.
+    for (const sx of [-1.6, 1.6]) {
+      mesh(g, cyl(0.18, 0.18, 1.3, 8), woodM, sx, 0.27, 0).rotation.x = Math.PI / 2;
+      for (const sz of [-0.42, 0.42]) mesh(g, rockGeo, stoneM, sx, 0.06, sz).scale.set(0.16, 0.1, 0.13);
+    }
     const flames = [0, 1, 2, 3].map((i) => {
       const f = new THREE.Mesh(new THREE.ConeGeometry(0.2 - i * 0.03, 0.75 - i * 0.1, 7, 1, true), i % 2 ? flameM2 : flameM);
       f.position.set(Math.sin(i * 2) * 0.1, 0.55, Math.cos(i * 2) * 0.1); g.add(f); return f;
@@ -213,13 +242,18 @@ export const BUILD = {
     } };
   },
   hut(g) {
-    mesh(g, cyl(2, 2.05, 1.6, 18), plankM, 0, 0.6, 0);
-    mesh(g, new THREE.ConeGeometry(2.75, 2.5, 18), thatchM, 0, 2.6, 0);
+    // WP2: open doorway (a 50° gap in the wall facing +Z) and a reed sleeping mat inside.
+    mesh(g, new THREE.CylinderGeometry(2, 2.05, 1.6, 18, 1, true, 0.436, 6.283 - 0.873), plankDM, 0, 0.6, 0);
+    mesh(g, new THREE.ConeGeometry(2.75, 2.5, 18, 1, true), thatchDM, 0, 2.6, 0);   // open base: seen from inside
     mesh(g, new THREE.ConeGeometry(0.5, 0.5, 8), plankM, 0, 3.95, 0);
-    mesh(g, new THREE.BoxGeometry(0.95, 1.5, 0.5), darkM, 0, 0.55, 1.83).castShadow = false;
-    for (const s of [-1, 1]) mesh(g, cyl(0.07, 0.08, 1.7, 6), woodM, s * 0.55, 0.65, 2.05);
-    mesh(g, cyl(0.07, 0.07, 1.3, 6), woodM, 0, 1.48, 2.05).rotation.z = Math.PI / 2;
-    return { radius: 2.3, label: 'Thatch hut' };
+    for (const s of [-1, 1]) mesh(g, cyl(0.07, 0.08, 1.7, 6), woodM, s * 0.82, 0.65, 1.8);
+    mesh(g, cyl(0.07, 0.07, 1.8, 6), woodM, 0, 1.48, 1.8).rotation.z = Math.PI / 2;
+    mesh(g, cyl(1.97, 1.97, 0.06, 18), soilM, 0, 0.01, 0).castShadow = false;                 // packed earth floor
+    mesh(g, new THREE.BoxGeometry(1.4, 0.06, 2), reedM, 0, 0.05, -0.4).castShadow = false;
+    mesh(g, new THREE.BoxGeometry(1.36, 0.07, 1.2), hideM, 0, 0.1, 0.0);
+    for (const x of [-0.35, 0.35]) mesh(g, new THREE.BoxGeometry(0.42, 0.1, 0.26), reedM, x, 0.12, -1.22);
+    // bedPts: where each sleeper's feet go (local); heads point to -Z. camPt/lookPt: the cinematic rest shot.
+    return { radius: 2.3, label: 'Thatch hut', bedPts: [[-0.35, 0.14, 0.42], [0.35, 0.14, 0.42]], camPt: [0, 1.45, 2.55], lookPt: [0, 0.2, -0.5] };
   },
   kiln(g) {
     mesh(g, new THREE.SphereGeometry(1.15, 18, 12, 0, 6.283, 0, Math.PI / 2), clayM, 0, 0.35, 0).scale.y = 1.25;
@@ -234,15 +268,47 @@ export const BUILD = {
   house(g) {
     const w = 6.4, d = 5.2, hh = 2.7, t = 0.28;
     mesh(g, new THREE.BoxGeometry(w + 0.5, 1.6, d + 0.5), stoneM, 0, -0.65, 0);
-    const wall = (ww, h, dd, x, y, z) => mesh(g, boxM(ww, h, dd), brickM, x, y, z);
+    // WP2: walls/roof are staged while the house is built (stage(p)); interior groups toggled by setHome(home).
+    const wallsG = pivot(g, 0, 0, 0), roofG = pivot(g, 0, 0, 0);
+    const wall = (ww, h, dd, x, y, z, p = wallsG) => mesh(p, boxM(ww, h, dd), brickM, x, y, z);
     wall(w, hh, t, 0, hh / 2 + 0.15, -d / 2 + t / 2);
-    wall(t, hh, d, -w / 2 + t / 2, hh / 2 + 0.15, 0);
+    const wallW = wall(t, hh, d, -w / 2 + t / 2, hh / 2 + 0.15, 0);       // replaced by a doorway when the nursery exists
+    const doorW = pivot(wallsG, 0, 0, 0);
+    wall(t, hh, 1.6, -w / 2 + t / 2, hh / 2 + 0.15, -1.8, doorW); wall(t, hh, 1.6, -w / 2 + t / 2, hh / 2 + 0.15, 1.8, doorW);
+    wall(t, 0.6, 2.0, -w / 2 + t / 2, hh - 0.15, 0, doorW);
+    doorW.visible = false;
     wall(t, hh, d, w / 2 - t / 2, hh / 2 + 0.15, 0);
     const z = d / 2 - t / 2;
     wall(2.3, hh, t, -2.05, hh / 2 + 0.15, z);
     wall(2.3, hh, t, 2.05, hh / 2 + 0.15, z);
     wall(1.8, 0.6, t, 0, hh - 0.15, z);
-    mesh(g, new THREE.BoxGeometry(1.8, 2.1, 0.1), darkM, 0, 1.2, z - 0.25).castShadow = false;
+    mesh(g, new THREE.BoxGeometry(w - 2 * t, 0.04, d - 2 * t), plankM, 0, 0.17, 0).castShadow = false;   // interior floor
+    // hearth: stone ring with an ember disc, under the chimney
+    const hearthG = pivot(g, 1.9, 0.15, -1.2);
+    for (let i = 0; i < 8; i++) { const a = (i / 8) * 6.283; mesh(hearthG, rockGeo, stoneM, Math.cos(a) * 0.45, 0.1, Math.sin(a) * 0.45).scale.set(0.15, 0.12, 0.14); }
+    mesh(hearthG, cyl(0.36, 0.38, 0.05, 12), emberM, 0, 0.06, 0).castShadow = false;
+    for (let i = 0; i < 3; i++) mesh(hearthG, cyl(0.04, 0.05, 0.6, 6), woodM, 0, 0.14, 0).rotation.set(Math.PI / 2, i * 1.05, 0, 'YXZ');
+    // double bed: frame 1.6 x 2.1, mattress top at y 0.55, two pillows, hide blanket over the lower 70%
+    const bedG = pivot(g, -0.9, 0.15, -1.25);
+    mesh(bedG, new THREE.BoxGeometry(1.6, 0.25, 2.1), plankM, 0, 0.125, 0);
+    mesh(bedG, new THREE.BoxGeometry(1.5, 0.15, 2.0), reedM, 0, 0.325, 0);
+    for (const x of [-0.38, 0.38]) mesh(bedG, new THREE.BoxGeometry(0.55, 0.1, 0.3), linenM, x, 0.45, -0.8);
+    mesh(bedG, new THREE.BoxGeometry(1.56, 0.06, 1.45), hideM, 0, 0.43, 0.3);
+    mesh(bedG, new THREE.BoxGeometry(1.6, 0.6, 0.08), plankM, 0, 0.3, -1.05);
+    // cradle: a little rocking box
+    const cradleG = pivot(g, 1.8, 0.15, 1.2);
+    mesh(cradleG, new THREE.BoxGeometry(0.5, 0.28, 0.8), plankM, 0, 0.3, 0);
+    mesh(cradleG, new THREE.BoxGeometry(0.42, 0.06, 0.72), hideM, 0, 0.42, 0);
+    for (const z2 of [-0.35, 0.35]) mesh(cradleG, new THREE.TorusGeometry(0.3, 0.025, 4, 10, Math.PI), woodM, 0, 0.32, z2).rotation.set(0, Math.PI / 2, Math.PI);
+    // nursery: a 3.2 x 3.2 brick annex on local -X with its own lean-to roof
+    const nurseryG = pivot(g, -w / 2 - 1.6, 0, 0), aw = 3.2;
+    mesh(nurseryG, new THREE.BoxGeometry(aw + 0.3, 1.6, aw + 0.3), stoneM, 0, -0.65, 0);
+    mesh(nurseryG, boxM(t, 2.2, aw), brickM, -aw / 2 + t / 2, 1.25, 0);
+    for (const s of [-1, 1]) mesh(nurseryG, boxM(aw, 2.2, t), brickM, 0, 1.25, s * (aw / 2 - t / 2));
+    mesh(nurseryG, new THREE.BoxGeometry(aw - 0.3, 0.04, aw - 0.3), plankM, 0, 0.17, 0).castShadow = false;
+    const nr = mesh(nurseryG, new THREE.BoxGeometry(aw + 0.6, 0.14, aw + 0.6), tileM, 0, 2.62, 0); nr.rotation.z = 0.22;
+    for (const o of [hearthG, bedG, cradleG, nurseryG]) o.visible = false;
+    const setHome = (h = {}) => { hearthG.visible = !!h.hearth; bedG.visible = !!h.bed; cradleG.visible = !!h.cradle; nurseryG.visible = !!h.nursery; wallW.visible = !h.nursery; doorW.visible = !!h.nursery; };
     const door = mesh(g, new THREE.BoxGeometry(0.95, 2.05, 0.07), plankM, -0.85, 1.2, z + 0.5);
     door.rotation.y = -1.25;
     for (const x of [-2.05, 2.05]) {
@@ -252,11 +318,15 @@ export const BUILD = {
       mesh(g, new THREE.BoxGeometry(0.06, 0.9, t + 0.1), plankM, x, 1.75, z);
     }
     const shape = new THREE.Shape([new THREE.Vector2(-w / 2 - 0.45, 0), new THREE.Vector2(w / 2 + 0.45, 0), new THREE.Vector2(0, 2.1)]);
-    const roof = mesh(g, new THREE.ExtrudeGeometry(shape, { depth: d + 0.8, bevelEnabled: false }), tileM, 0, hh + 0.13, -d / 2 - 0.4);
+    const roof = mesh(roofG, new THREE.ExtrudeGeometry(shape, { depth: d + 0.8, bevelEnabled: false }), tileM, 0, hh + 0.13, -d / 2 - 0.4);
     roof.geometry.attributes.uv.array.forEach((v, i, a) => { a[i] = v * 0.5; });
-    mesh(g, boxM(0.7, 1.9, 0.7), brickM, 2, hh + 1.3, -1.2);
+    mesh(roofG, boxM(0.7, 1.9, 0.7), brickM, 2, hh + 1.3, -1.2);
     const sm = smoke(g, hh + 2.3, 6, 0.9);
-    return { radius: 4.4, label: 'Brick house', update(dt) { sm(dt, 0.8); } };
+    let built = 1;
+    return { radius: 4.4, label: 'Brick house', setHome, hearthPt: [1.9, 0.7, -1.2],
+      bedPts: [[-1.3, 0.62, -0.32], [-0.5, 0.62, -0.32]], camPt: [0.6, 2.15, 2.1], lookPt: [-0.9, 0.5, -1.2],
+      stage(p) { built = p; wallsG.visible = p >= 0.3; roofG.visible = p >= 0.8; door.visible = p >= 0.8; },
+      update(dt) { sm(dt, built >= 1 ? 0.8 : 0); } };
   },
   farm(g) {
     mesh(g, new THREE.BoxGeometry(5.4, 0.5, 4.4), soilM, 0, -0.14, 0).castShadow = false;
@@ -300,7 +370,71 @@ export const BUILD = {
     mesh(g, cyl(0.16, 0.13, 0.26, 10), plankM, 0, 1.05, 0);
     return { radius: 1.3, label: 'Well' };
   },
+  // ---------- WP2 placeables ----------
+  // cols: local [x, z, r] colliders added by main.placeStruct instead of one solid circle.
+  rack(g) {
+    for (const x of [-0.8, 0.8]) mesh(g, cyl(0.05, 0.06, 1.5, 6), woodM, x, 0.75, 0);
+    for (const y of [0.75, 1.1, 1.42]) mesh(g, cyl(0.03, 0.03, 1.7, 5), woodM, 0, y, 0).rotation.z = Math.PI / 2;
+    const strips = [0, 1, 2, 3].map((i) => { const m = mesh(g, new THREE.BoxGeometry(0.16, 0.42, 0.05), meatM, -0.54 + i * 0.36, 1.18, 0); m.visible = false; return m; });
+    const o = { radius: 0.9, solid: false, label: 'Drying rack', hang: [], update(dt) {
+      strips.forEach((m, i) => { const h = o.hang[i]; m.visible = !!h; if (h) { h[1] += dt; m.material = h[1] >= 90 ? driedM : meatM; m.scale.y = h[1] >= 90 ? 0.8 : 1; } });
+    } };
+    return o;
+  },
+  stable(g) {
+    const W = 5, D = 4;
+    for (const [x, z, h] of [[-W / 2, -D / 2, 2.3], [W / 2, -D / 2, 2.3], [-W / 2, D / 2, 2.9], [W / 2, D / 2, 2.9]]) mesh(g, cyl(0.1, 0.12, h, 6), woodM, x, h / 2, z);
+    const roof = mesh(g, new THREE.BoxGeometry(W + 0.6, 0.12, D + 0.9), thatchM, 0, 2.65, 0); roof.rotation.x = -0.15;
+    for (const y of [0.45, 0.95]) {
+      mesh(g, cyl(0.045, 0.045, W, 5), woodM, 0, y, -D / 2).rotation.z = Math.PI / 2;
+      for (const s of [-1, 1]) mesh(g, cyl(0.045, 0.045, D, 5), woodM, s * W / 2, y, 0).rotation.x = Math.PI / 2;
+    }
+    mesh(g, new THREE.BoxGeometry(1.6, 0.4, 0.5), plankM, -1.1, 0.3, -D / 2 + 0.45);
+    mesh(g, new THREE.BoxGeometry(1.4, 0.06, 0.38), mat(0x24383a, 0.2), -1.1, 0.48, -D / 2 + 0.45).castShadow = false;
+    mesh(g, new THREE.BoxGeometry(1.2, 0.7, 0.9), hayM, 1.4, 0.35, -D / 2 + 0.6);
+    return { radius: 2.8, solid: false, label: 'Stable', cols: [[-1.7, -D / 2, 0.6], [0, -D / 2, 0.6], [1.7, -D / 2, 0.6]] };
+  },
+  fence(g) {
+    for (const x of [-1.15, 1.15]) mesh(g, cyl(0.06, 0.07, 1.1, 6), woodM, x, 0.55, 0);
+    for (const y of [0.45, 0.85]) mesh(g, cyl(0.035, 0.035, 2.4, 5), woodM, 0, y, 0).rotation.z = Math.PI / 2;
+    return { radius: 1.3, solid: false, label: 'Fence', cols: [[-0.8, 0, 0.25], [0, 0, 0.25], [0.8, 0, 0.25]] };
+  },
+  path(g) {
+    if (NAT.RockPath_Round_Wide) { for (const p of NAT.RockPath_Round_Wide) mesh(g, p.geo, p.mat, 0, 0.02, 0).castShadow = false; }
+    else for (let i = 0; i < 5; i++) {
+      const a = i * 2.4, r = i ? 0.75 : 0, m = mesh(g, rockGeo, stoneM, Math.cos(a) * r, 0.02, Math.sin(a) * r);
+      m.scale.set(0.42, 0.06, 0.36); m.rotation.y = i; m.castShadow = false;
+    }
+    return { radius: 1.2, solid: false, label: 'Stone path' };
+  },
+  flowers(g) {
+    for (let i = 0; i < 10; i++) { const a = (i / 10) * 6.283; mesh(g, rockGeo, stoneM, Math.cos(a) * 0.8, 0.05, Math.sin(a) * 0.8).scale.set(0.12, 0.08, 0.1); }
+    mesh(g, cyl(0.75, 0.78, 0.08, 14), mat(0x3a2a1c, 1), 0, 0.03, 0).castShadow = false;
+    const kinds = ['flower_3_group', 'flower_4_group'];
+    for (let i = 0; i < 5; i++) {
+      const parts = NAT[kinds[i % 2]], a = i * 1.3, r = i ? 0.42 : 0;
+      if (parts) { const fg = pivot(g, Math.cos(a) * r, 0.05, Math.sin(a) * r); fg.rotation.y = i * 2; fg.scale.setScalar(0.4); for (const p of parts) mesh(fg, p.geo, p.mat); }
+      else mesh(g, sph(0.12, 8, 6), mat(i % 2 ? 0xd77ab0 : 0xf2d24a, 0.8), Math.cos(a) * r, 0.2, Math.sin(a) * r);
+    }
+    return { radius: 0.9, solid: false, label: 'Flower bed' };
+  },
+  basket(g) {
+    mesh(g, new THREE.CylinderGeometry(0.36, 0.3, 0.55, 14), fiberM, 0, 0.28, 0);
+    mesh(g, new THREE.TorusGeometry(0.36, 0.03, 5, 14), woodM, 0, 0.55, 0).rotation.x = Math.PI / 2;
+    mesh(g, new THREE.CylinderGeometry(0.38, 0.38, 0.06, 14), fiberM, 0, 0.6, 0);
+    mesh(g, sph(0.05, 6, 5), woodM, 0, 0.66, 0);
+    return { radius: 0.5, solid: false, label: 'Storage basket', cols: [[0, 0, 0.4]] };
+  },
 };
+
+// WP2: a building scaffold (4 stick posts + 2 cross bars) around a construction site, shown while rise < 1.
+export function makeScaffold(r) {
+  const g = new THREE.Group(), h = Math.min(4.2, 1.6 + r * 0.6), q = r * 0.78;
+  for (const [x, z] of [[-q, -q], [q, -q], [-q, q], [q, q]]) mesh(g, cyl(0.05, 0.06, h, 5), woodM, x, h / 2, z);
+  mesh(g, cyl(0.04, 0.04, q * 2.1, 5), woodM, 0, h * 0.85, -q).rotation.z = Math.PI / 2;
+  mesh(g, cyl(0.04, 0.04, q * 2.1, 5), woodM, 0, h * 0.6, q).rotation.z = Math.PI / 2;
+  return g;
+}
 
 export function makeStructure(kind) {
   const g = new THREE.Group();

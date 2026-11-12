@@ -7,6 +7,9 @@ import { makeTerrainMaterial } from './terrain.js';
 import { createRiver } from './water.js';
 import { createAtmosphere } from './sky.js';
 import { PRESETS } from './quality.js';
+import { CAVES, initCaves, caveCarve, inCave, depthAt, createCaves } from './caves.js';   // WP3
+import { LM, FORDS, KEEP, POIS, initPOIS, createLandmarks } from './landmarks.js';     // WP3
+import { rockTexture } from './terrain.js';
 
 export const SIZE = 640, SEG = 256, CELL = SIZE / SEG, LIMIT = SIZE / 2 - 40;
 const perlin = new ImprovedNoise();
@@ -17,15 +20,54 @@ const fbm = (x, z, oct = 5) => {
 };
 export const riverX = (z) => 62 + Math.sin(z * 0.012) * 30 + Math.sin(z * 0.031 + 1.3) * 10;
 
-function rawHeight(x, z) {
+// WP3 world v2: land() is the old terrain; features() adds the landmark hills, meadow, lake, hot spring and caves;
+// river() cuts the river with two shallow fords.
+export function land(x, z) {
   let h = 7 + fbm(x * 0.006, z * 0.006) * 26 + fbm(x * 0.03, z * 0.03, 3) * 2.2;
   const d = Math.hypot(x, z);
   h = lerp(h, 3.4 + fbm(x * 0.02, z * 0.02, 3) * 0.9, smooth(90, 20, d));
   h += smooth(SIZE * 0.36, SIZE * 0.5, Math.max(Math.abs(x), Math.abs(z))) * 45;
-  h = Math.max(h, 1.3 + fbm(x * 0.05, z * 0.05, 2) * 0.4);
-  const r = 1 - smooth(5, 24, Math.abs(x - riverX(z)));
-  return lerp(h, -2.4, r);
+  return Math.max(h, 1.3 + fbm(x * 0.05, z * 0.05, 2) * 0.4);
 }
+// [x, z, r, height, flat-top radius]: cone-like hills (h * (1 - smooth(0, r, d))^1.6, the "triangle rule")
+const HILLS = [[...LM.echoHill, 55, 30, 0], [...LM.flintHill, 60, 36, 0], [...LM.peak, 60, 42, 6], [...LM.tree, 18, 4, 5], [...LM.stones, 14, 2.2, 6]];
+const dist = (x, z, p) => Math.hypot(x - p[0], z - p[1]);
+const meadowMask = (x, z) => 1 - smooth(45, 75, dist(x, z, LM.meadow));
+function features(h, x, z) {
+  const base = h;
+  for (const [hx, hz, r, hh, top] of HILLS) {
+    const d = Math.max(top, Math.hypot(x - hx, z - hz));
+    if (d < r) h += hh * Math.pow(1 - smooth(0, r, d), 1.6) * (0.85 + 0.3 * (fbm(x * 0.035, z * 0.035, 3) * 0.5 + 0.5));
+  }
+  const mm = meadowMask(x, z);
+  if (mm > 0) h = lerp(h, 4.5 + fbm(x * 0.02, z * 0.02, 2) * 1.2, 0.85 * mm);
+  const dl = dist(x, z, LM.lake);
+  if (dl < 40) h = lerp(h, -1.8, 1 - smooth(26, 40, dl));
+  const ds = dist(x, z, LM.spring);
+  if (ds < 8) h = lerp(h, base - 0.9, 1 - smooth(5, 8, ds));
+  return caveCarve(h, x, z);
+}
+function river(h, x, z) {
+  const r = 1 - smooth(5, 24, Math.abs(x - riverX(z)));
+  if (r <= 0) return h;
+  let ford = 0;
+  for (const zf of FORDS) ford = Math.max(ford, 1 - smooth(5, 16, Math.abs(z - zf)));
+  return lerp(h, lerp(-2.4, -0.6, ford), r);
+}
+export function rawHeight(x, z) { return river(features(land(x, z), x, z), x, z); }
+initCaves(land);
+initPOIS(riverX, CAVES);
+const forest = (x, z) => fbm(x * 0.012 + 9, z * 0.012 - 4, 3);
+export { forest, CAVES, POIS, depthAt };
+export function biome(x, z) {
+  if (meadowMask(x, z) > 0.5) return 'meadow';
+  if (dist(x, z, LM.lake) < 45) return 'lake';
+  if (Math.max(Math.abs(x), Math.abs(z)) > 215 || dist(x, z, LM.echoHill) < 50 || dist(x, z, LM.flintHill) < 50) return 'high';
+  if (forest(x, z) > 0.55) return 'pine';
+  return 'valley';
+}
+// Scatter keeps out of cave footprints and landmark spots.
+const keepOut = (x, z) => inCave(x, z) || KEEP.some(([kx, kz, r]) => Math.abs(x - kx) < r && Math.abs(z - kz) < r && Math.hypot(x - kx, z - kz) < r);
 
 const N1 = SEG + 1;
 const H = new Float32Array(N1 * N1);
@@ -119,7 +161,8 @@ export function createWorld(scene, renderer, quality = 'medium') {
     let v = 0.86 + (n - 0.5) * 0.36 + (n2 - 0.5) * 0.12;
     v = lerp(v, 0.45, smooth(0.25, -0.9, h));
     v = lerp(v, 1.2, smooth(36, 50, h));
-    col.set([v, v * (1 + (n - 0.5) * 0.12), v * (0.94 + (n2 - 0.5) * 0.1)], i * 3);
+    const mt = meadowMask(x, z) * 0.12;                            // WP3: the meadow is a lighter yellow-green
+    col.set([v * (1 + mt), v * (1 + (n - 0.5) * 0.12 + mt * 0.9), v * (0.94 + (n2 - 0.5) * 0.1)], i * 3);
   }
   geo.setAttribute('color', new THREE.BufferAttribute(col, 3));
   geo.setAttribute('aSplat', new THREE.BufferAttribute(splat, 3));
@@ -170,7 +213,7 @@ export function createWorld(scene, renderer, quality = 'medium') {
     const out = [];
     for (let t = 0; out.length < n && t < n * 60; t++) {
       const x = (R() * 2 - 1) * max, z = (R() * 2 - 1) * max, h = getHeight(x, z);
-      if (ok(x, z, h, slopeY(x, z), Math.hypot(x, z))) out.push({ x, y: h, z, s: lerp(smin, smax, R()), r: R() * 6.283, t: R() });
+      if (ok(x, z, h, slopeY(x, z), Math.hypot(x, z)) && !keepOut(x, z)) out.push({ x, y: h, z, s: lerp(smin, smax, R()), r: R() * 6.283, t: R() });
     }
     return out;
   };
@@ -178,13 +221,14 @@ export function createWorld(scene, renderer, quality = 'medium') {
     const out = [];
     for (let t = 0; out.length < n && t < n * 80; t++) {
       const z = (R() * 2 - 1) * zmax, x = riverX(z) + (R() < 0.6 ? -1 : 1) * (band + R() * 9), h = getHeight(x, z);
-      if (ok(h) && !(gap && out.some((o) => Math.hypot(o.x - x, o.z - z) < gap))) out.push({ x, y: h, z, s: lerp(smin, smax, R()), r: R() * 6.283, t: R() });
+      if (ok(h) && !keepOut(x, z) && !(gap && out.some((o) => Math.hypot(o.x - x, o.z - z) < gap))) out.push({ x, y: h, z, s: lerp(smin, smax, R()), r: R() * 6.283, t: R() });
     }
     return out;
   };
-  const forest = (x, z) => fbm(x * 0.012 + 9, z * 0.012 - 4, 3);
   const split = (list, k) => Array.from({ length: k }, (_, i) => list.filter((_, j) => j % k === i));
   const decorCells = [];
+  const clearings = [], carpets = [];
+  const clear = (x, z, r) => { clearings.push({ x, z, r }); for (const c of carpets) c.gw.fill(1e9); };
 
   const treeNodes = scatter(440, (x, z, h, ny, d) => h > 1.6 && h < 24 && ny > 0.86 && d > 17 && forest(x, z) > -0.12 - (d < 70 ? 0.25 : 0), LIMIT, 0.75, 1.3);
   const pineNodes = scatter(300, (x, z, h, ny, d) => h > 8 && h < 40 && ny > 0.74 && d > 60, LIMIT + 25, 0.8, 1.45);
@@ -252,6 +296,9 @@ export function createWorld(scene, renderer, quality = 'medium') {
   const grainF = new Field(scene, 'grain', one(merge(grainParts)),
     scatter(70, (x, z, h, ny, d) => land(x, z, h, ny, d) && d > 22 && h < 14 && forest(x, z) < 0.05, 230), { shadow: false });
   const fields = [sticks, stones, berries, reeds, clay, grainF, ...woods];
+  // WP3: the caves (flint and ochre fields go after all the others so saved tree indices stay valid), landmarks, Mirror Lake
+  const caves = createCaves(scene, { NAT, rockTex: rockTexture(), addCollider, clear: (x, z, r) => clear(x, z, r), Field, pmat });
+  fields.push(caves.flintF, caves.ochreF);
 
   // Flowers, ferns, pebbles and mushrooms: decoration only, hidden beyond the quality preset's decor distance.
   const meadow = (x, z, h, ny, d) => land(x, z, h, ny, d) && h < 26;
@@ -307,8 +354,6 @@ export function createWorld(scene, renderer, quality = 'medium') {
   for (const n of ['grass_common_short', 'grass_wispy_short', 'grass_common_tall', 'grass_wispy_tall']) {
     for (const p of NAT[n]) { p.mat = p.mat.clone(); p.mat.onBeforeCompile = windShader(0.085, natFade); p.mat.customProgramCacheKey = () => 'hearthborn-natgrass'; }
   }
-  const clearings = [], carpets = [];
-  const clear = (x, z, r) => { clearings.push({ x, z, r }); for (const c of carpets) c.gw.fill(1e9); };
   // A patch of instances that wraps around the player, so grass is only ever drawn nearby.
   function carpet(parts, NG, L, smin, smax, tintLo, fade) {
     const meshes = parts.map((p) => {
@@ -350,6 +395,14 @@ export function createWorld(scene, renderer, quality = 'medium') {
   carpet(NAT.grass_wispy_tall, 180, 60, 0.5, 0.85, 0.8);
   const updateGrass = (px, pz) => { for (const c of carpets) c.update(px, pz); };
 
+  const landmarks = createLandmarks(scene, NAT, getHeight, addCollider, { clear, riverX });
+  const lakeGeo = new THREE.CircleGeometry(44, 48).rotateX(-Math.PI / 2), lp = lakeGeo.attributes.position, lriv = new Float32Array(lp.count * 2);
+  for (let i = 0; i < lp.count; i++) { lriv[i * 2] = lp.getX(i); lriv[i * 2 + 1] = lp.getZ(i); }
+  lakeGeo.setAttribute('riv', new THREE.BufferAttribute(lriv, 2));
+  const lake = new THREE.Mesh(lakeGeo, river.mesh.material);
+  lake.position.set(LM.lake[0], 0, LM.lake[1]); lake.renderOrder = 2;
+  scene.add(lake);
+
   function setQuality(name) {
     Q = PRESETS[name] || PRESETS.medium;
     sun.shadow.mapSize.set(Q.shadow, Q.shadow);
@@ -365,7 +418,7 @@ export function createWorld(scene, renderer, quality = 'medium') {
   const C = (h) => new THREE.Color(h);
   const cDay = C(0xfff3e0), cLow = C(0xff9550), cMoon = C(0x8ea6d6), skyD = C(0xbcd4f0), skyN = C(0x1a2a4a);
   const fogD = C(0xb4c8d6), fogN = C(0x04070d), fogS = C(0xd49468);
-  const env = { day: 1, night: 0, storm: 0, sunDir };
+  const env = { day: 1, night: 0, storm: 0, cave: 0, sunDir };
   const fogStorm = C(0x5d6870);
   function setTime(t, focus, camera) {
     const a = ((t - 6) / 12) * Math.PI;
@@ -406,13 +459,23 @@ export function createWorld(scene, renderer, quality = 'medium') {
     u.uSky.value.copy(scene.fog.color).lerp(tmp.copy(hemi.color), 0.5).multiplyScalar(lerp(0.4, 1, day));
     u.uLight.value = lerp(0.12, 1, day) * (1 - st * 0.45);
     renderer.toneMappingExposure = lerp(0.8, 0.68, day);
+    const cave = env.cave || 0;                     // WP3: inside a cave the sky light fades out
+    if (cave > 0) {
+      sun.intensity *= 1 - cave;
+      hemi.intensity *= 1 - 0.92 * cave;
+      scene.fog.color.lerp(tmp.setHex(0x050403), cave);
+      scene.fog.density += cave * 0.02;
+      renderer.toneMappingExposure *= 1 + 0.25 * cave;
+      u.uLight.value *= 1 - cave;
+    }
   }
   function update(dt, px, pz, camera) {
     wind.value += dt;
     river.update(dt);
     updateGrass(px, pz);
     atmosphere.update(dt, camera, env, px, pz, sunDir);
+    caves.update(dt, px, pz); landmarks.update(dt, px, pz);
     for (const c of decorCells) { const on = Math.hypot(c.x - px, c.z - pz) < Q.decor; for (const m of c.meshes) m.visible = on; }
   }
-  return { fields, env, setTime, update, clear, setQuality, river, atmosphere, water: river.mesh };
+  return { fields, env, setTime, update, clear, setQuality, river, atmosphere, water: river.mesh, caves, landmarks, lake };
 }

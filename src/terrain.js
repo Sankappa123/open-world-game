@@ -58,7 +58,7 @@ function dirtTexture() {
     }
   });
 }
-function rockTexture() {
+export function rockTexture() {
   return canvasTex(512, (g, S) => {
     const r = rng(51), n = tileNoise(S, r, 5), n2 = tileNoise(S, rng(52), 2);
     const im = g.createImageData(S, S);
