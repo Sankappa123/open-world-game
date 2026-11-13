@@ -83,7 +83,7 @@ When the user says "I'm back, continue" (or similar), do this:
      - Two testers did not finish: weapons and horses, and save and performance.
      - So: skip the 3 finished lenses and feed their issues straight to the fixers. Re-run only the weapons-horse and save-perf testers, then fix, then retest.
 
-### What is done (all committed on `expansion`)
+### What is done (all committed on `main`; the old `expansion` branch was merged and deleted)
 - **Expansion:** the 12-chapter story with old-save migration, co-op building and home, landmarks and caves, horses, the parchment map with fog of war, the family arc, torch, poultice, cloak, waterskin and fishing.
 - **WPN, Assassin's Creed–style weapons:**
   - spear on the back, axe at the hip;

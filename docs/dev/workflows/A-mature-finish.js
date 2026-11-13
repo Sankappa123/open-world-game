@@ -12,7 +12,7 @@ export const meta = {
 const ROOT = '/home/ashish/Desktop/game'
 const SP = 'SCRATCHPAD'
 const rules = (vp, cp) => `
-PROJECT: ${ROOT} — Hearthborn, browser 3D survival story game (Three.js r187, Vite, plain JS), branch 'expansion'. The user wants a professional, complete, polished result and "don't miss anything", and wants it as fast as possible.
+PROJECT: ${ROOT} — Hearthborn, browser 3D survival story game (Three.js r187, Vite, plain JS), branch 'main'. The user wants a professional, complete, polished result and "don't miss anything", and wants it as fast as possible.
 READ FIRST: ${ROOT}/CLAUDE.md and ${SP}/progress.md (bottom entries explain today's interruptions). Specs: ${SP}/spec_mature.md (incl. §12 user decisions), ${SP}/spec_ws.md, ${SP}/spec.md. Research: ${SP}/mature_research.json. ${SP}/where_stopped.txt = what each interrupted builder was doing.
 STATE: committed WIP checkpoint 8e37add (pushed). Done: WPN weapons, RST sleep, FPP first person, M1 MAT foundation. Partial: M2 GORE, M3 SURV, M4 CMB, M5 ARC, M6 ROM+MUS.
 CONTENT LIMITS (absolute): no sexual content or nudity (romance = kiss/embrace then fade to black); children never harmed/targeted/endangered/shown dead; no torture mechanics. Otherwise full 21+ intensity per §12.

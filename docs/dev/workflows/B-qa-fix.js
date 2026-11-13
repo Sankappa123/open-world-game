@@ -10,7 +10,7 @@ export const meta = {
 const ROOT = '/home/ashish/Desktop/game'
 const SP = 'SCRATCHPAD'
 const rules = (vp, cp) => `
-PROJECT: ${ROOT} — Hearthborn, browser 3D survival story game (Three.js r187, Vite, plain JS), branch 'expansion'. The user wants a professional, polished result, "don't miss anything", as fast as possible.
+PROJECT: ${ROOT} — Hearthborn, browser 3D survival story game (Three.js r187, Vite, plain JS), branch 'main'. The user wants a professional, polished result, "don't miss anything", as fast as possible.
 READ FIRST: ${ROOT}/CLAUDE.md and ${SP}/progress.md. Specs: ${SP}/spec_ws.md (weapons WPN + rest RST), ${SP}/spec.md (expansion), ${SP}/spec_mature.md (mature; being finished by workflow A). Research: ${SP}/ws_research.json.
 STATE: committed WIP checkpoint 8e37add. Done and builder-tested but NOT yet QA'd: WPN weapons (AC-style holster/draw/aim), RST cinematic sleep, FPP first person. Workflow A is finishing the mature packages (gore/survival/combat v2/story/romance/music) RIGHT NOW in the same tree — do NOT report their unfinished state and do NOT edit their sections (GORE, SURV, CMB, ARC, ROM, MUS, MAT, and files gore.js, survival.js, combat.js, enemies.js, tribe.js, arc_data.js, romance.js, music.js, mature.js) except a one-line fix if a regression they cause breaks your area (tag it).
 CONTENT LIMITS (absolute): no sexual content or nudity; children never harmed; no torture.
