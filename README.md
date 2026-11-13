@@ -77,8 +77,10 @@ Old saves are migrated to the new chapter list automatically.
 
 ## Credits
 
-All models are by Quaternius (quaternius.com), CC0 1.0 Public Domain: Universal Base Characters,
+All models except the cave bear are by Quaternius (quaternius.com), CC0 1.0 Public Domain: Universal Base Characters,
 Universal Animation Library, Stylized Nature MegaKit and Ultimate Animated Animals. The game-ready copies live in `public/models`;
 `tools/prep_models.py` rebuilds them from the original packs in `_assets_src/`.
 The horse, white horse and donkey are from Quaternius' Ultimate Animated Animals (CC0 1.0), via poly.pizza.
+Universal Animation Library 2 and Bull by Quaternius, CC0 1.0 (combat clips in `anims2.glb`; the bull is the aurochs).
+Running Brown Bear by Google Data Arts Team, CC-BY 3.0, via poly.pizza (https://poly.pizza/m/Coppphok4P) (the cave bear).
 See `public/models/CREDITS.txt` for the full list.

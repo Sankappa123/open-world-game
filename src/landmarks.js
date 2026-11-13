@@ -27,6 +27,14 @@ export function initPOIS(riverX, caves) {
   Object.assign(P('nford'), { x: riverX(FORDS[1]), z: FORDS[1] });
   for (const k of caves) Object.assign(P(k.id), { x: k.mouth[0], z: k.mouth[1] });
 }
+// ARC: the Ash People's winter camp is a dynamic POI (S.arc.campPos, chosen once east of Horse Meadow and saved).
+export function setCampPOI(pos) {
+  let p = POIS.find((q) => q.id === 'camp');
+  if (!pos) { if (p) POIS.splice(POIS.indexOf(p), 1); return null; }
+  if (!p) POIS.push((p = { id: 'camp', name: 'Ash Camp', r: 22, icon: 'ruins' }));
+  p.x = pos[0]; p.z = pos[1];
+  return p;
+}
 // Spots kept free of scattered trees, boulders and grass: [x, z, r]
 export const KEEP = [[...LM.tree, 14], [...LM.stones, 13], [...LM.ruins, 11], [...LM.spring, 9], [...LM.peak, 8]];
 

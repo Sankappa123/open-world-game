@@ -50,12 +50,26 @@ function flush() {
     .finally(() => { saveState.pending--; notify(); });
 }
 export function deleteGame() {
+  clearTimeout(timer); timer = 0; queued = null;   // MAT: a pending save must not resurrect a deleted (permadeath) game
   try { localStorage.removeItem(KEY); localStorage.removeItem(OLD_KEY); } catch {}
   fetch('/api/save', { method: 'DELETE' }).catch(() => {});
 }
 
 // ---------- settings ----------
-const DEFAULTS = { sens: 1, invertY: false, quality: 'auto', fullscreen: true, volume: 0.7 };
+const DEFAULTS = { sens: 1, invertY: false, quality: 'auto', fullscreen: true, volume: 0.7,
+  // MAT content and difficulty-adjacent settings (spec §3.1, defaults per §12: full intensity, the notice shows once)
+  ageOk: 0,              // CONTENT_V once the 21+ notice is accepted; the title gate shows while below it
+  blood: 'on',           // 'on' | 'off' (off swaps every blood visual for dust and scuffs, mechanics unchanged)
+  gore: 'high',          // 'low' | 'med' | 'high' (high: dismemberment on heavy and finisher kills)
+  screenBlood: true,     // directional screen splatter and the bleeding edge pulse
+  finisherCam: true,     // finisher / kill-cam camera cut and slow-motion
+  romance: 'full',       // 'full' | 'fade' (cut at the embrace) | 'off' (no kiss/embrace/hand-holding/night options)
+  matureStory: true,     // dark chapters and hard choices
+  choiceTimer: true,     // timed choices; off = untimed
+  reduceFlash: false,    // halves screen flashes
+  music: 0.6, sfx: 1, amb: 1,   // volume buses under the master `volume`
+};
 export const settings = { ...DEFAULTS };
+export const SETTING_DEFAULTS = DEFAULTS;          // MAT: the pause menu's reset/compare
 try { Object.assign(settings, JSON.parse(localStorage.getItem(SETTINGS_KEY) || '{}')); } catch {}
 export function saveSettings() { try { localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings)); } catch {} }

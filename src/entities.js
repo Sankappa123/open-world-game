@@ -15,17 +15,27 @@ function pivot(parent, x, y, z) { const g = new THREE.Group(); g.position.set(x,
 
 const woodM = mat(0x6a4a2c, 0.9), stoneM = mat(0x8a867e, 0.95), darkM = mat(0x0c0a08, 1);
 
-export function makeSpear() {
+// WPN: both tools have a flint variant (darker, keener head). userData.setFlint(on) swaps it on an existing mesh.
+const flintM = mat(0x3b3e45, 0.55), lashM = mat(0x8a6a44, 1), wrapM = mat(0x4a3424, 1);
+const spearTip = new THREE.ConeGeometry(0.035, 0.2, 5), flintTip = new THREE.ConeGeometry(0.04, 0.24, 6);
+export function makeSpear({ flint = false } = {}) {
   const g = new THREE.Group();
   mesh(g, cyl(0.016, 0.02, 1.9, 6), woodM).rotation.x = Math.PI / 2;
-  const tip = mesh(g, new THREE.ConeGeometry(0.035, 0.2, 5), stoneM, 0, 0, 1.03);
+  const tip = mesh(g, spearTip, stoneM, 0, 0, 1.03);
   tip.rotation.x = Math.PI / 2;
+  mesh(g, cyl(0.024, 0.024, 0.07, 7), lashM, 0, 0, 0.9).rotation.x = Math.PI / 2;    // lashing under the head
+  mesh(g, cyl(0.023, 0.023, 0.16, 7), wrapM, 0, 0, -0.35).rotation.x = Math.PI / 2;  // hide grip where the fist goes
+  g.userData.setFlint = (on) => { tip.geometry = on ? flintTip : spearTip; tip.material = on ? flintM : stoneM; tip.position.z = on ? 1.05 : 1.03; g.userData.flint = !!on; };
+  g.userData.setFlint(flint);
   return g;
 }
-export function makeAxe() {
+export function makeAxe({ flint = false } = {}) {
   const g = new THREE.Group();
   mesh(g, cyl(0.018, 0.022, 0.6, 6), woodM, 0, 0, 0.2).rotation.x = Math.PI / 2;
-  mesh(g, new THREE.BoxGeometry(0.04, 0.2, 0.11), stoneM, 0, -0.04, 0.46);
+  const head = mesh(g, new THREE.BoxGeometry(0.04, 0.2, 0.11), stoneM, 0, -0.04, 0.46);
+  mesh(g, cyl(0.026, 0.026, 0.05, 7), lashM, 0, 0, 0.385).rotation.x = Math.PI / 2;
+  g.userData.setFlint = (on) => { head.material = on ? flintM : stoneM; head.scale.set(on ? 0.85 : 1, on ? 1.12 : 1, 1); g.userData.flint = !!on; };
+  g.userData.setFlint(flint);
   return g;
 }
 
@@ -45,6 +55,23 @@ export function makeTorch() {
   let t = 0;
   return { root: g, light, flame: fl, set lit(on) { fl.visible = on; light.intensity = on ? 9 : 0; },
     update(dt) { t += dt; flames.forEach((f, i) => f.scale.set(1 + Math.sin(t * 12 + i) * 0.2, 1 + Math.cos(t * 9 + i) * 0.2, 1.9 + Math.sin(t * 15 + i * 2) * 0.5)); if (fl.visible) light.intensity = 8.5 + Math.sin(t * 13) * 1.5 + Math.sin(t * 29) * 1; } };
+}
+
+// WPN: Sena's woven carry basket (worn on the back). Origin at its centre; the open top is +y, straps on the -z side
+// (against the back) run up and forward over the shoulders.
+export function makeCarryBasket() {
+  const g = new THREE.Group();
+  const wall = new THREE.Mesh(new THREE.CylinderGeometry(0.17, 0.14, 0.32, 14, 1, true), reedM.clone());
+  wall.material.side = THREE.DoubleSide;
+  wall.castShadow = true; g.add(wall);
+  mesh(g, cyl(0.14, 0.14, 0.02, 14), reedM, 0, -0.15, 0);
+  for (const y of [-0.1, 0, 0.1]) mesh(g, new THREE.TorusGeometry(0.155 + y * 0.09, 0.008, 4, 18), lashM, 0, y, 0).rotation.x = Math.PI / 2;   // woven bands
+  mesh(g, new THREE.TorusGeometry(0.172, 0.014, 5, 18), lashM, 0, 0.16, 0).rotation.x = Math.PI / 2;                                             // rim
+  for (let i = 0; i < 5; i++) { const s = mesh(g, cyl(0.008, 0.008, 0.3, 4), woodM, -0.08 + i * 0.04, 0.2, -0.03 + (i % 2) * 0.05); s.rotation.z = (i - 2) * 0.12; }   // sticks poking out
+  for (const x of [-0.08, 0.08]) {                                   // straps: up the side against the back, then over the shoulders
+    const st = mesh(g, new THREE.BoxGeometry(0.035, 0.42, 0.012), wrapM, x, 0.12, 0.17); st.rotation.x = 0.3;
+  }
+  return g;
 }
 
 // ---------- people ----------
@@ -250,10 +277,10 @@ export const BUILD = {
     mesh(g, cyl(0.07, 0.07, 1.8, 6), woodM, 0, 1.48, 1.8).rotation.z = Math.PI / 2;
     mesh(g, cyl(1.97, 1.97, 0.06, 18), soilM, 0, 0.01, 0).castShadow = false;                 // packed earth floor
     mesh(g, new THREE.BoxGeometry(1.4, 0.06, 2), reedM, 0, 0.05, -0.4).castShadow = false;
-    mesh(g, new THREE.BoxGeometry(1.36, 0.07, 1.2), hideM, 0, 0.1, 0.0);
+    const bedHide = mesh(g, new THREE.BoxGeometry(1.36, 0.07, 1.2), hideM, 0, 0.1, 0.0);   // RST: becomes the blanket while they sleep
     for (const x of [-0.35, 0.35]) mesh(g, new THREE.BoxGeometry(0.42, 0.1, 0.26), reedM, x, 0.12, -1.22);
     // bedPts: where each sleeper's feet go (local); heads point to -Z. camPt/lookPt: the cinematic rest shot.
-    return { radius: 2.3, label: 'Thatch hut', bedPts: [[-0.35, 0.14, 0.42], [0.35, 0.14, 0.42]], camPt: [0, 1.45, 2.55], lookPt: [0, 0.2, -0.5] };
+    return { radius: 2.3, label: 'Thatch hut', bedPts: [[-0.35, 0.14, 0.42], [0.35, 0.14, 0.42]], camPt: [0, 1.45, 2.55], lookPt: [0, 0.2, -0.5], bedHide };   // RST bedHide
   },
   kiln(g) {
     mesh(g, new THREE.SphereGeometry(1.15, 18, 12, 0, 6.283, 0, Math.PI / 2), clayM, 0, 0.35, 0).scale.y = 1.25;
@@ -293,7 +320,7 @@ export const BUILD = {
     mesh(bedG, new THREE.BoxGeometry(1.6, 0.25, 2.1), plankM, 0, 0.125, 0);
     mesh(bedG, new THREE.BoxGeometry(1.5, 0.15, 2.0), reedM, 0, 0.325, 0);
     for (const x of [-0.38, 0.38]) mesh(bedG, new THREE.BoxGeometry(0.55, 0.1, 0.3), linenM, x, 0.45, -0.8);
-    mesh(bedG, new THREE.BoxGeometry(1.56, 0.06, 1.45), hideM, 0, 0.43, 0.3);
+    const bedHide = mesh(bedG, new THREE.BoxGeometry(1.56, 0.06, 1.45), hideM, 0, 0.43, 0.3);   // RST: becomes the blanket while they sleep
     mesh(bedG, new THREE.BoxGeometry(1.6, 0.6, 0.08), plankM, 0, 0.3, -1.05);
     // cradle: a little rocking box
     const cradleG = pivot(g, 1.8, 0.15, 1.2);
@@ -323,7 +350,7 @@ export const BUILD = {
     mesh(roofG, boxM(0.7, 1.9, 0.7), brickM, 2, hh + 1.3, -1.2);
     const sm = smoke(g, hh + 2.3, 6, 0.9);
     let built = 1;
-    return { radius: 4.4, label: 'Brick house', setHome, hearthPt: [1.9, 0.7, -1.2],
+    return { radius: 4.4, label: 'Brick house', setHome, hearthPt: [1.9, 0.7, -1.2], bedHide,   // RST bedHide
       bedPts: [[-1.3, 0.62, -0.32], [-0.5, 0.62, -0.32]], camPt: [0.6, 2.15, 2.1], lookPt: [-0.9, 0.5, -1.2],
       stage(p) { built = p; wallsG.visible = p >= 0.3; roofG.visible = p >= 0.8; door.visible = p >= 0.8; },
       update(dt) { sm(dt, built >= 1 ? 0.8 : 0); } };
@@ -425,7 +452,51 @@ export const BUILD = {
     mesh(g, sph(0.05, 6, 5), woodM, 0, 0.66, 0);
     return { radius: 0.5, solid: false, label: 'Storage basket', cols: [[0, 0, 0.4]] };
   },
+  // ARC: a grave cairn: river stones stacked knee-high, a flat stone leaning on it with an ochre handprint.
+  cairn(g) {
+    const R = rng(4141);
+    const stack = [[0.55, 0.26, 0.5], [0.46, 0.22, 0.42], [0.36, 0.2, 0.33], [0.27, 0.17, 0.25], [0.17, 0.13, 0.16]];
+    let y = 0.02;
+    stack.forEach(([sx, sy, sz], i) => {
+      for (let k = 0; k < (i < 2 ? 3 : 1); k++) {
+        const a = (k / 3) * 6.283 + i, r = i < 2 ? sx * 0.42 : 0;
+        const m = mesh(g, rockGeo, stoneM, Math.cos(a) * r, y + sy * 0.6, Math.sin(a) * r);
+        m.scale.set(sx * (i < 2 ? 0.55 : 1), sy, sz * (i < 2 ? 0.55 : 1)); m.rotation.set(R() * 0.3, R() * 6, R() * 0.3);
+      }
+      y += sy * 1.05;
+    });
+    const slab = mesh(g, new THREE.BoxGeometry(0.42, 0.56, 0.07), stoneM, 0, 0.3, 0.62);
+    slab.rotation.x = -0.32;
+    const print = new THREE.Mesh(new THREE.PlaneGeometry(0.3, 0.38), new THREE.MeshStandardMaterial({ map: handTex, transparent: true, roughness: 1, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -2 }));
+    print.position.set(0, 0, 0.037); slab.add(print);
+    return { radius: 0.75, label: 'Cairn' };
+  },
+  // ARC: a brazier: a stone fire bowl on a short post. Lights itself at dusk (reads glowM, which main drives by the night);
+  // emissive flames only, no PointLight (spec §5.9 budget).
+  brazier(g) {
+    mesh(g, cyl(0.07, 0.09, 1.0, 7), woodM, 0, 0.5, 0);
+    for (let i = 0; i < 3; i++) { const a = (i / 3) * 6.283; const l = mesh(g, cyl(0.035, 0.045, 0.75, 6), woodM, Math.cos(a) * 0.2, 0.3, Math.sin(a) * 0.2); l.rotation.set(Math.sin(a) * 0.45, 0, -Math.cos(a) * 0.45); }
+    mesh(g, new THREE.SphereGeometry(0.34, 14, 8, 0, 6.283, Math.PI / 2, Math.PI / 2), stoneM, 0, 1.2, 0).scale.y = 0.55;
+    const coals = mesh(g, cyl(0.28, 0.28, 0.05, 12), emberM, 0, 1.12, 0); coals.castShadow = false;
+    const flames = [0, 1, 2].map((i) => { const f = new THREE.Mesh(new THREE.ConeGeometry(0.16 - i * 0.03, 0.55 - i * 0.08, 7, 1, true), i % 2 ? flameM2 : flameM); f.position.set(Math.sin(i * 2.1) * 0.07, 1.4, Math.cos(i * 2.1) * 0.07); g.add(f); return f; });
+    const sm = smoke(g, 1.6, 5, 0.6);
+    let t = rng(77)() * 9, lit = 0;
+    return { radius: 0.5, label: 'Brazier', update(dt) {
+      t += dt; lit += ((glowM.emissiveIntensity > 0.45 ? 1 : 0) - lit) * Math.min(1, dt * 1.5);
+      flames.forEach((f, i) => { f.visible = lit > 0.05; f.scale.set(lit * (1 + Math.sin(t * 9 + i * 2) * 0.2), lit * (1 + Math.sin(t * 13 + i) * 0.3), lit * (1 + Math.cos(t * 8 + i) * 0.2)); f.rotation.y = t * (i + 1); });
+      coals.visible = lit > 0.05; sm(dt, lit);
+    } };
+  },
 };
+// ARC: the ochre handprint on a cairn's slab
+const handTex = canvasTex(128, (g, S) => {
+  g.clearRect(0, 0, S, S); g.fillStyle = 'rgba(176, 72, 40, 0.92)';
+  g.translate(S / 2, S * 0.62); g.scale(1.6, 1.6);
+  g.beginPath(); g.ellipse(0, 0, 13, 15, 0, 0, 6.3); g.fill();
+  for (const [fx, len, a] of [[-11, 17, -0.5], [-5, 24, -0.15], [2, 26, 0], [9, 23, 0.15]]) { g.save(); g.translate(fx, -10); g.rotate(a); g.fillRect(-2.6, -len, 5.2, len); g.restore(); }
+  g.save(); g.translate(12, 2); g.rotate(1.0); g.fillRect(-2.6, -16, 5.2, 16); g.restore();
+});
+handTex.wrapS = handTex.wrapT = THREE.ClampToEdgeWrapping;
 
 // WP2: a building scaffold (4 stick posts + 2 cross bars) around a construction site, shown while rise < 1.
 export function makeScaffold(r) {
@@ -440,4 +511,46 @@ export function makeStructure(kind) {
   const g = new THREE.Group();
   const info = BUILD[kind](g);
   return Object.assign(info, { kind, group: g, solid: info.solid ?? true, rise: 0 });
+}
+
+// RST: the blanket pulled over the sleepers: a soft, mottled hide plane (1 x 1, scaled to the bed), with a darker
+// stitched border. userData.drape(heightAt) re-shapes it: heightAt(localX, localZ) returns the local height.
+const blanketT = canvasTex(256, (g, S) => {
+  g.fillStyle = '#8a6a4a'; g.fillRect(0, 0, S, S);
+  const r = rng(77);
+  for (let i = 0; i < 2600; i++) { const l = 30 + r() * 26; g.fillStyle = `hsla(28, 32%, ${l}%, 0.16)`; g.fillRect(r() * S, r() * S, 1 + r() * 2, 4 + r() * 7); }
+  g.strokeStyle = 'rgba(52, 34, 20, 0.85)'; g.lineWidth = 10; g.strokeRect(5, 5, S - 10, S - 10);
+  g.strokeStyle = 'rgba(214, 190, 150, 0.55)'; g.lineWidth = 2; g.setLineDash([7, 6]); g.strokeRect(17, 17, S - 34, S - 34);
+});
+export function makeBlanket(w = 1, l = 1) {
+  const geo = new THREE.PlaneGeometry(w, l, 22, 18); geo.rotateX(-Math.PI / 2);
+  const m = new THREE.Mesh(geo, new THREE.MeshStandardMaterial({ map: blanketT, color: 0xffffff, roughness: 1, side: THREE.DoubleSide }));
+  m.castShadow = true; m.receiveShadow = true; m.frustumCulled = false;
+  const pos = geo.attributes.position, base = pos.array.slice(), C = 23, Rw = 19, hs = new Float32Array(pos.count), tmp = new Float32Array(pos.count);
+  // heights from heightAt, then a few smoothing passes so it falls like cloth rather than a tent of peaks
+  m.userData.drape = (heightAt, passes = 2) => {
+    for (let i = 0; i < pos.count; i++) hs[i] = heightAt(base[i * 3], base[i * 3 + 2]);
+    for (let k = 0; k < passes; k++) {
+      for (let r = 0; r < Rw; r++) for (let c = 0; c < C; c++) {
+        const i = r * C + c;
+        if (r === 0 || c === 0 || r === Rw - 1 || c === C - 1) { tmp[i] = hs[i]; continue; }
+        tmp[i] = hs[i] * 0.5 + (hs[i - 1] + hs[i + 1] + hs[i - C] + hs[i + C]) * 0.125;
+      }
+      hs.set(tmp);
+    }
+    for (let i = 0; i < pos.count; i++) pos.setY(i, hs[i]);
+    pos.needsUpdate = true; geo.computeVertexNormals();
+  };
+  return m;
+}
+// RST: a bedroll for a bare floor (a hide mat and two rolled-hide pillows) or just the pillows (the cave's hide bed).
+// Origin on the floor at the middle of the mat; the pillows are positioned by the caller (userData.pillows).
+export function makeBedroll(withMat = true) {
+  const g = new THREE.Group(), m2 = hideM.clone(); m2.color.set(0x6a4a30);
+  if (withMat) {
+    mesh(g, new THREE.BoxGeometry(1.7, 0.03, 2.1), hideM, 0, 0.015, 0).castShadow = false;
+    mesh(g, new THREE.BoxGeometry(1.5, 0.012, 1.9), reedM, 0, 0.031, 0).castShadow = false;
+  }
+  g.userData.pillows = [0, 1].map(() => { const p = mesh(g, cyl(0.075, 0.075, 0.44, 10), m2); p.rotation.z = Math.PI / 2; p.scale.set(0.7, 1, 1); return p; });
+  return g;
 }

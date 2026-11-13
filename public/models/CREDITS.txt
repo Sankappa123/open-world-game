@@ -1,3 +1,6 @@
-All models by Quaternius (quaternius.com), CC0 1.0 Public Domain:
+All models except the cave bear by Quaternius (quaternius.com), CC0 1.0 Public Domain:
 Universal Base Characters, Universal Animation Library, Stylized Nature MegaKit, Ultimate Animated Animals.
 Horse, White Horse, Donkey - Quaternius (Ultimate Animated Animals), CC0 1.0, via poly.pizza
+Universal Animation Library 2 and Bull by Quaternius, CC0 1.0 (anims2.glb: combat clips stripped to the skeleton; animals/bull.glb: the aurochs)
+Running Brown Bear by Google Data Arts Team, CC-BY 3.0, via poly.pizza (https://poly.pizza/m/Coppphok4P) (animals/bear.glb: the cave bear)
+  Licence: https://creativecommons.org/licenses/by/3.0/ . Changes: none to the file; scaled and animated procedurally in game.

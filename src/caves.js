@@ -322,6 +322,28 @@ export function createCaves(scene, { NAT, rockTex, addCollider, clear, Field, pm
       g.save(); g.scale(1, 2); hand(g, 205, 130, 2.3, -0.2); hand(g, 300, 140, 1.8, 0.25); g.restore();
       p.tex.needsUpdate = true; p.printed = true;
     },
+    // ARC: the Ash People's mark on your handprints. 'ash': grey ash smeared across them (smoke chapter);
+    // 'together': grey hands pressed beside the red ones (the "Ash and Hearth" epilogue). Idempotent per mode.
+    smearHands(p, mode = 'ash') {
+      if (!p || (p.smear || []).includes(mode)) return false;
+      const c = p.tex.image, g = c.getContext('2d'), R = rng(mode === 'ash' ? 61 : 62);
+      g.save(); g.scale(1, 2);
+      if (mode === 'ash') {
+        g.globalAlpha = 0.7; g.strokeStyle = g.fillStyle = 'rgb(118, 116, 112)'; g.lineCap = 'round';
+        for (let i = 0; i < 7; i++) {                // four-finger drags across the prints
+          const x0 = 150 + R() * 60, y0 = 70 + R() * 90, dx = 120 + R() * 80, dy = (R() - 0.5) * 50;
+          g.lineWidth = 5 + R() * 4;
+          for (let f = 0; f < 4; f++) { g.beginPath(); g.moveTo(x0, y0 + f * 9); g.quadraticCurveTo(x0 + dx * 0.5, y0 + f * 9 + dy - 10, x0 + dx, y0 + f * 9 + dy); g.stroke(); }
+        }
+        g.globalAlpha = 0.8; hand(g, 395, 120, 1.9, 0.5); hand(g, 120, 168, 1.5, -0.6);
+      } else {
+        g.globalAlpha = 0.82; g.fillStyle = 'rgb(128, 126, 122)';
+        hand(g, 110, 120, 2.0, -0.35); hand(g, 405, 135, 1.6, 0.4); hand(g, 255, 60, 1.2, 0);
+      }
+      g.restore();
+      p.tex.needsUpdate = true; (p.smear ||= []).push(mode);
+      return true;
+    },
     byId,
   };
 }

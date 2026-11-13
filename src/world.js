@@ -299,6 +299,61 @@ export function createWorld(scene, renderer, quality = 'medium') {
   // WP3: the caves (flint and ochre fields go after all the others so saved tree indices stay valid), landmarks, Mirror Lake
   const caves = createCaves(scene, { NAT, rockTex: rockTexture(), addCollider, clear: (x, z, r) => clear(x, z, r), Field, pmat });
   fields.push(caves.flintF, caves.ochreF);
+  // SURV: medicinal herbs (yarrow in the meadow and valley, mint at the water's edge, willow on the banks). Appended after
+  // flint/ochre so saved tree field indices stay valid; their own seed, so nothing else in the world moves.
+  fields.push(...herbFields());
+  function herbFields() {
+    const HR = rng(5150), out = [];
+    const spot = (n, gen, ok, gap = 0) => {
+      for (let t = 0; out.length < n && t < n * 120; t++) {
+        const [x, z] = gen(), h = getHeight(x, z);
+        if (Math.abs(x) > LIMIT || Math.abs(z) > LIMIT || !ok(x, z, h, slopeY(x, z)) || keepOut(x, z)) continue;
+        if (gap && out.some((o) => Math.hypot(o.x - x, o.z - z) < gap)) continue;
+        out.push({ x, y: h, z, s: lerp(0.85, 1.2, HR()), r: HR() * 6.283, t: HR() });
+      }
+      return out.splice(0);
+    };
+    const open = (x, z, h, ny) => h > 1 && h < 20 && ny > 0.86 && forest(x, z) < 0.25;
+    const bank = (lo, hi) => () => { const z = (HR() * 2 - 1) * LIMIT; return [riverX(z) + (HR() < 0.5 ? -1 : 1) * lerp(lo, hi, HR()), z]; };
+    // yarrow: feathery stems with flat cream flower heads
+    const yr = rng(51), yParts = [];
+    for (let i = 0; i < 7; i++) {
+      const a = yr() * 6.283, d = yr() * 0.16, x = Math.cos(a) * d, z = Math.sin(a) * d, h = 0.42 + yr() * 0.2, tx = (yr() - 0.5) * 0.25, tz = (yr() - 0.5) * 0.25;
+      yParts.push(part(new THREE.CylinderGeometry(0.006, 0.01, h, 3), 0x5d7838, x, h / 2, z, tx, 0, tz));
+      const cx = x - tz * h * 0.5, cz = z + tx * h * 0.5;
+      for (let k = 0; k < 7; k++) { const b = (k / 7) * 6.283, rr = k ? 0.045 : 0; yParts.push(part(ico(0.024, 0), yr() < 0.25 ? 0xe9cfd0 : 0xf0ead4, cx + Math.cos(b) * rr, h + 0.01, cz + Math.sin(b) * rr, 0, 0, 0, 1, 0.55, 1)); }
+      for (let k = 0; k < 3; k++) { const b = yr() * 6.283; yParts.push(part(new THREE.ConeGeometry(0.018, 0.2, 3), 0x6c8c42, x + Math.cos(b) * 0.06, 0.1 + k * 0.08, z + Math.sin(b) * 0.06, Math.cos(b) * 0.9, 0, Math.sin(b) * 0.9, 1, 1, 0.3)); }
+    }
+    const yarrow = spot(70, () => [(HR() * 2 - 1) * LIMIT, (HR() * 2 - 1) * LIMIT], (x, z, h, ny) => open(x, z, h, ny) && Math.hypot(x, z) > 8);
+    yarrow.push(...spot(5, () => [(HR() * 2 - 1) * 34, (HR() * 2 - 1) * 34], (x, z, h, ny) => open(x, z, h, ny) && Math.hypot(x, z) > 8));
+    // mint: a low clump of bright paired leaves with lilac spikes, right at the water's edge (within about 6 m)
+    const mr = rng(52), mParts = [];
+    for (let i = 0; i < 9; i++) {
+      const a = mr() * 6.283, d = mr() * 0.2, x = Math.cos(a) * d, z = Math.sin(a) * d, h = 0.14 + mr() * 0.14;
+      mParts.push(part(new THREE.CylinderGeometry(0.006, 0.008, h, 3), 0x3f6a2c, x, h / 2, z));
+      for (let k = 0; k < 3; k++) { const y = h * (0.35 + k * 0.3), b = mr() * 3.14 + k * 1.57; for (const sd of [-1, 1]) mParts.push(part(ico(0.05, 0), k === 2 ? 0x5bb04a : 0x4a9a3c, x + Math.cos(b) * 0.045 * sd, y, z + Math.sin(b) * 0.045 * sd, 0, b, 0, 1.25, 0.28, 0.8)); }
+      if (i % 3 === 0) mParts.push(part(new THREE.CapsuleGeometry(0.016, 0.06, 2, 5), 0xb497d6, x, h + 0.05, z));
+    }
+    const mint = spot(64, bank(1.5, 6), (x, z, h) => h > -0.25 && h < 1.4);
+    mint.push(...spot(6, () => { const z = (HR() * 2 - 1) * 50; return [riverX(z) + (HR() < 0.6 ? -1 : 1) * lerp(1.5, 5.5, HR()), z]; }, (x, z, h) => h > -0.25 && h < 1.4));
+    // willow: a riverbank shrub of slender grey stems and narrow silver-green leaves (the bark is the medicine)
+    const wr = rng(53), wParts = [];
+    for (let i = 0; i < 6; i++) {
+      const a = (i / 6) * 6.283 + wr() * 0.6, lean = 0.12 + wr() * 0.22, h = 1.3 + wr() * 0.8, tx = Math.cos(a) * lean, tz = Math.sin(a) * lean;
+      wParts.push(part(new THREE.CylinderGeometry(0.016, 0.034, h, 5), 0x7d6e5c, Math.sin(tz) * h * 0.5, h / 2, -Math.sin(tx) * h * 0.5, tx, 0, tz));
+      for (let k = 0; k < 9; k++) {
+        const u = 0.45 + (k / 9) * 0.55, px = Math.sin(tz) * h * u, pz = -Math.sin(tx) * h * u, b = wr() * 6.283;
+        wParts.push(part(new THREE.ConeGeometry(0.022, 0.24, 3), wr() < 0.5 ? 0x9cb07a : 0x8aa070, px + Math.cos(b) * 0.07, h * u * Math.cos(lean) - 0.06, pz + Math.sin(b) * 0.07, Math.PI + Math.cos(b) * 0.5, b, Math.sin(b) * 0.5, 1, 1, 0.3));
+      }
+    }
+    const willow = spot(28, bank(3, 9), (x, z, h, ny) => h > 0.15 && h < 2.2 && ny > 0.8, 7);
+    willow.push(...spot(3, () => { const z = (HR() * 2 - 1) * 45; return [riverX(z) + (HR() < 0.6 ? -1 : 1) * lerp(3, 8, HR()), z]; }, (x, z, h, ny) => h > 0.15 && h < 2.2 && ny > 0.8, 7));
+    return [
+      new Field(scene, 'yarrow', one(flat(merge(yParts))), yarrow, { shadow: false, tint: 0.1, cell: 128 }),
+      new Field(scene, 'mint', one(flat(merge(mParts))), mint, { shadow: false, tint: 0.1, cell: 128 }),
+      new Field(scene, 'willow', one(flat(merge(wParts))), willow, { tint: 0.08, cell: 128 }),
+    ];
+  }
 
   // Flowers, ferns, pebbles and mushrooms: decoration only, hidden beyond the quality preset's decor distance.
   const meadow = (x, z, h, ny, d) => land(x, z, h, ny, d) && h < 26;
