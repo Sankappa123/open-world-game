@@ -549,6 +549,7 @@ function dismount(thrown = false) {
 }
 function callHorse() {
   const o = tameHorse();
+  if (STORY && !S.horse && !P.ride) { toast('You have no horse yet. Tame one at Horse Meadow, across the river to the east'); return; }
   if (!STORY || !S.horse || !o || P.ride) return;
   A.tone(1480, 0.18, 0.05); A.tone(1980, 0.3, 0.05, 0.16);
   const hp = o.root.position, d = Math.hypot(hp.x - P.pos.x, hp.z - P.pos.z);
