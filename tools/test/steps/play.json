@@ -1,0 +1,388 @@
+[
+{
+"until": "!!(window.G && document.getElementById('btn-new').onclick)",
+"timeout": 90000
+},
+{
+"js": "document.getElementById('btn-new').click(); 1",
+"wait": 3000
+},
+{
+"js": "window.ADV=[]; window._lastCh=G.chId(); setInterval(()=>{ if (G.chId()!==window._lastCh){ ADV.push(window._lastCh+'>'+G.chId()); window._lastCh=G.chId(); } },200); G.time(10); G.give('stick',3); G.give('stone',3); G.give('berry',4); 1",
+"wait": 500
+},
+{
+"key": "KeyF"
+},
+{
+"js": "G.bump('drank'); G.cnt('ate')"
+},
+{
+"until": "G.chId()==='fire'",
+"timeout": 20000
+},
+{
+"expect": "G.chId()==='fire'",
+"name": "awaken -> fire"
+},
+{
+"js": "G.give('fiber',2); window._f=G.placeStruct('fire',4,-4,0,true); G.tp(4,-1.6); 1",
+"wait": 1500
+},
+{
+"js": "var t=G.findTarget(); t&&t.label"
+},
+{
+"js": "var t=G.findTarget(); t&&/Sit/.test(t.label)&&t.act(); [G.P.h.pose,G.N.h.pose]",
+"wait": 2000
+},
+{
+"expect": "G.P.sit>0 || G.cnt('sat_fire')>=1",
+"name": "sitting by fire"
+},
+{
+"until": "G.chId()==='hunt'",
+"timeout": 60000
+},
+{
+"expect": "G.chId()==='hunt'",
+"name": "fire -> hunt"
+},
+{
+"js": "G.S.tools.spear=true; G.bump('deer'); G.bump('cook'); G.bump('meal'); 1"
+},
+{
+"until": "G.chId()==='shelter'",
+"timeout": 20000
+},
+{
+"expect": "G.chId()==='shelter'",
+"name": "hunt -> shelter"
+},
+{
+"js": "G.S.tools.axe=true; G.give('wood',12); G.give('fiber',8); G.tp(0,4); window._h=G.place('hut',0,-3,0); 1",
+"wait": 1500
+},
+{
+"until": "G.N.h.pose==='work'",
+"timeout": 30000
+},
+{
+"js": "G.tp(0,0.6); window._iv=setInterval(()=>{ const t=G.target; if (t&&t.act&&/Build/.test(t.label)) t.act(); },300); 1"
+},
+{
+"until": "G.sites()[0] && G.sites()[0].rise>=1",
+"timeout": 90000
+},
+{
+"js": "clearInterval(window._iv); [G.cnt('built_together'), G.P.h.pose, G.N.h.pose]"
+},
+{
+"expect": "G.cnt('built_together')===1",
+"name": "co-op hut build"
+},
+{
+"until": "G.P.h.pose===null && G.N.h.pose===null",
+"timeout": 30000
+},
+{
+"js": "G.tp(window._h.x+1, window._h.z+4); G.time(21); G.sleep()",
+"wait": 2500
+},
+{
+"expect": "G.P.rest>0 && G.N.rest>0",
+"name": "rest together in hut"
+},
+{
+"until": "G.chId()==='cave'",
+"timeout": 60000
+},
+{
+"expect": "G.chId()==='cave'",
+"name": "shelter -> cave"
+},
+{
+"until": "!document.getElementById('fade').classList.contains('on') && !(G.P.rest>0)",
+"timeout": 30000
+},
+{
+"js": "G.time(12); G.S.tools.torch=true; G.give('stick',3); var k=G.caves.list[0]; G.tp(k.mouth[0]-k.dir[0]*10, k.mouth[1]-k.dir[1]*10); G.N.pos.set(k.mouth[0]-k.dir[0]*8, 0, k.mouth[1]-k.dir[1]*8); 1",
+"wait": 3000
+},
+{
+"expect": "G.depth()>0.6 && G.S.found.echo",
+"name": "cave dark + discovered"
+},
+{
+"js": "G.toggleTorch(); G.torchOn",
+"wait": 2500
+},
+{
+"expect": "G.torchOn && G.cnt('torchlit')>=1 && G.caves.sconces[0].on",
+"name": "torch + wall torches"
+},
+{
+"js": "window.__look=(i)=>{var k=G.caves.list[0];var p=G.caves.panels[i];var a=Math.atan2(k.x-p.x,k.z-p.z);G.tp(p.x+Math.sin(a)*1.6,p.z+Math.cos(a)*1.6);return 1}; __look(0)",
+"wait": 800
+},
+{
+"js": "G.findTarget().act(); __look(1)",
+"wait": 800
+},
+{
+"js": "G.findTarget().act(); __look(2)",
+"wait": 800
+},
+{
+"js": "G.findTarget().act(); G.give('ochre',1); __look(3); G.N.pos.set(G.P.pos.x+1,0,G.P.pos.z); G.cnt('painting')",
+"wait": 800
+},
+{
+"js": "var t=G.findTarget(); t.act(); [t.label, G.cnt('handprint')]",
+"wait": 800
+},
+{
+"js": "let c=0; for (var n of G.caves.flintF.nodes) { G.tp(n.x+0.7,n.z); var t=G.findTarget(); if (t&&t.label==='Chip flint') { t.act(); c++; } } [c, G.cnt('flint')]"
+},
+{
+"expect": "G.cnt('painting')>=3 && G.cnt('handprint')>=1 && G.cnt('flint')>=6",
+"name": "paintings, hands, flint"
+},
+{
+"until": "G.chId()==='herd'",
+"timeout": 30000
+},
+{
+"expect": "G.chId()==='herd'",
+"name": "cave -> herd"
+},
+{
+"js": "G.time(12); G.S.tools.saddle=true; G.tp(170,40); 1",
+"wait": 3000
+},
+{
+"expect": "G.S.found.meadow && G.horses().filter(h=>!h.tame).length>=3",
+"name": "meadow found, herd present"
+},
+{
+"js": "G.tame()",
+"wait": 1500
+},
+{
+"expect": "!!G.S.horse && G.rideState().ride",
+"name": "tamed and riding"
+},
+{
+"js": "G.bump('horse_fed',3); G.N.ride=true; window.H=G.horse(); var x=G.riverX(30); G.tp(x-8,30); G.yaw=Math.PI*1.5; window.SW=0; window.MINH=9; window._sv=setInterval(()=>{ if(G.P.swim) SW++; MINH=Math.min(MINH,G.h(G.P.pos.x,G.P.pos.z)); },100); 1",
+"wait": 800
+},
+{
+"js": "[G.rideState().ride, G.rideState().nRide, H.root.position.x.toFixed(1), G.riverX(30).toFixed(1)]"
+},
+{
+"js": "G.ride(0,1,30).then(()=>{clearInterval(_sv); return [G.P.pos.x.toFixed(1), G.P.pos.z.toFixed(1), G.riverX(G.P.pos.z).toFixed(1), G.rideState().nRide, SW, MINH]})"
+},
+{
+"expect": "G.P.pos.x > G.riverX(G.P.pos.z)+2 && SW===0 && G.rideState().nRide ? [G.P.pos.x, MINH] : 0",
+"name": "ford crossed two-up, no swim"
+},
+{
+"js": "[H.root.position.x.toFixed(1), H.root.position.z.toFixed(1), G.P.face]"
+},
+{
+"js": "var x=G.riverX(0); while (G.h(x,0)<0.3) x-=1; G.tp(x-3,0); G.yaw=Math.PI*1.5; window._rx0=G.P.pos.x; 1",
+"wait": 500
+},
+{
+"js": "G.ride(0,1,10).then(()=>[G.P.pos.x.toFixed(2), G.riverX(0).toFixed(2), G.h(G.P.pos.x,G.P.pos.z).toFixed(2), G.P.swim])"
+},
+{
+"expect": "G.rideState().ride && G.h(G.P.pos.x,G.P.pos.z) > -1.3 && G.P.pos.x < G.riverX(G.P.pos.z) && G.P.pos.x > window._rx0+1",
+"name": "deep river refused"
+},
+{
+"js": "G.save(); 1",
+"wait": 800
+},
+{
+"reload": true
+},
+{
+"js": "document.getElementById('btn-continue').click(); 1",
+"wait": 5000
+},
+{
+"expect": "G.rideState().ride && G.horse() && G.horses().filter(h=>h.tame).length===1",
+"name": "reload: still riding"
+},
+{
+"js": "[G.horses().length, G.chId()]"
+},
+{
+"js": "window.ADV=[]; window._lastCh=G.chId(); setInterval(()=>{ if (G.chId()!==window._lastCh){ ADV.push(window._lastCh+'>'+G.chId()); window._lastCh=G.chId(); } },200); G.tp(-185,72); G.N.ride=true; [G.rideState().nRide, G.cnt('peak_ride')]",
+"wait": 2500
+},
+{
+"until": "G.chId()==='clay'",
+"timeout": 30000
+},
+{
+"expect": "G.chId()==='clay'",
+"name": "herd -> clay"
+},
+{
+"js": "G.dismount(); G.tp(6,6); G.give('clay',8); G.give('stone',10); window._k=G.placeStruct('kiln',12,4,0,true); G.give('brick',24); 1"
+},
+{
+"until": "G.chId()==='house'",
+"timeout": 20000
+},
+{
+"expect": "G.chId()==='house'",
+"name": "clay -> house"
+},
+{
+"js": "G.give('wood',10); window._ho=G.place('house',-24,-16,0); G.tp(-24,-10); window._iv=setInterval(()=>{ const t=G.target; if (t&&t.act&&/Build/.test(t.label)) t.act(); },300); 1",
+"wait": 4000
+},
+{
+"js": "[G.sites(), G.N.h.pose, G.target&&G.target.label]"
+},
+{
+"js": "clearInterval(window._iv); G.finishSites(); 1"
+},
+{
+"until": "G.chId()==='hearth'",
+"timeout": 30000
+},
+{
+"expect": "G.chId()==='hearth'",
+"name": "house -> hearth"
+},
+{
+"until": "G.P.h.pose===null",
+"timeout": 20000
+},
+{
+"js": "G.give('stone',8); G.give('clay',4); G.homeUpgrade('hearth'); 1",
+"wait": 4500
+},
+{
+"js": "G.give('wood',6); G.give('hide',3); G.give('fiber',6); G.homeUpgrade('bed'); 1",
+"wait": 4500
+},
+{
+"js": "G.placeStruct('stable', -10, -30, 0, true); G.tp(window._ho.x, window._ho.z+6); G.time(21); G.sleep()",
+"wait": 3000
+},
+{
+"expect": "G.P.rest>0 && G.N.rest>0",
+"name": "rest in house bed"
+},
+{
+"until": "G.chId()==='seeds'",
+"timeout": 60000
+},
+{
+"expect": "G.chId()==='seeds'",
+"name": "hearth -> seeds"
+},
+{
+"until": "!document.getElementById('fade').classList.contains('on') && !(G.P.rest>0)",
+"timeout": 30000
+},
+{
+"js": "G.give('grain',6); G.placeStruct('farm',-34,-10,0,true); G.bump('harvest'); G.placeStruct('well',-34,-22,0,true); for (const [k,x,z] of [['rack',-14,-22],['flowers',-30,-26],['basket',-16,-8]]) G.placeStruct(k,x,z,0,true); G.homeliness()",
+"wait": 1500
+},
+{
+"until": "G.chId()==='newlife'",
+"timeout": 20000
+},
+{
+"expect": "G.chId()==='newlife'",
+"name": "seeds -> newlife"
+},
+{
+"js": "G.S.close=Math.max(G.S.close,60); G.give('wood',20); G.give('hide',10); G.give('fiber',20); G.give('brick',20); G.homeUpgrade('cradle'); 1",
+"wait": 4800
+},
+{
+"js": "G.homeUpgrade('nursery'); 1",
+"wait": 4800
+},
+{
+"js": "G.tp(window._ho.x, window._ho.z+6); G.time(21); G.sleep()",
+"wait": 1500
+},
+{
+"until": "!(G.P.rest>0) && !document.getElementById('fade').classList.contains('on')",
+"timeout": 30000
+},
+{
+"js": "G.tp(window._ho.x, window._ho.z+6); G.time(21); G.sleep()",
+"wait": 1500
+},
+{
+"until": "!(G.P.rest>0) && !document.getElementById('fade').classList.contains('on')",
+"timeout": 30000
+},
+{
+"js": "G.tp(window._ho.x, window._ho.z+6); G.time(21); G.sleep()",
+"wait": 1500
+},
+{
+"until": "G.cnt('born')>=1",
+"timeout": 30000
+},
+{
+"expect": "G.cnt('born')===1 && G.kids.length===1",
+"name": "Lio born"
+},
+{
+"until": "G.chId()==='village'",
+"timeout": 30000
+},
+{
+"expect": "G.chId()==='village'",
+"name": "newlife -> village"
+},
+{
+"until": "G.S.village===true",
+"timeout": 20000
+},
+{
+"wait": 12000
+},
+{
+"js": "G.time(14); G.tp(10,10); 1",
+"wait": 3000
+},
+{
+"until": "Math.hypot(G.kids[0].pos.x-G.N.pos.x,G.kids[0].pos.z-G.N.pos.z)<4",
+"timeout": 120000
+},
+{
+"expect": "Math.hypot(G.kids[0].pos.x-G.N.pos.x,G.kids[0].pos.z-G.N.pos.z)<4",
+"name": "Lio follows Sena"
+},
+{
+"expect": "G.structs.filter(s=>s.kind==='house').length===5",
+"name": "epilogue once (5 houses)"
+},
+{
+"js": "G.toggleMap(); [G.seenFrac(), JSON.stringify(G.found())]",
+"wait": 1500
+},
+{
+"expect": "G.seenFrac()>0.2 && Object.keys(G.found()).length>=4",
+"name": "map fog/POIs"
+},
+{
+"js": "G.toggleMap(); JSON.stringify(ADV)"
+},
+{
+"expect": "ADV.join()==='herd>clay,clay>house,house>hearth,hearth>seeds,seeds>newlife,newlife>village'",
+"name": "6 later advances in order"
+}
+]

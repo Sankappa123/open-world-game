@@ -1,0 +1,133 @@
+[
+{
+"until": "!!(window.G && document.getElementById('btn-new').onclick)",
+"timeout": 90000
+},
+{
+"js": "document.getElementById('btn-new').click(); 1",
+"wait": 3000
+},
+{
+"js": "G.placeStruct('fire',4,-4,0,true); G.placeStruct('hut',0,-10,0,true); G.save(); var s=JSON.parse(localStorage.getItem('hearthborn-save-v2')); for (const k of ['storyV','worldV','seen','horse','kids','found','home','stash','rumour','village']) delete s[k]; s.c={stick:5}; window.OLD=JSON.stringify(s); localStorage.setItem('oldtpl', OLD); Object.keys(s).length"
+},
+{
+"js": "var s=JSON.parse(localStorage.getItem('oldtpl')); s.ch=0; s.structs=s.structs.filter(x=>0>=1||x.k!=='hut'); if(0>=5) s.structs.push({k:'house',x:-24,z:-16,r:0}); localStorage.setItem('hearthborn-save-v2', JSON.stringify(s)); Storage.prototype.setItem=function(){}; 1"
+},
+{
+"reload": true
+},
+{
+"js": "document.getElementById('btn-continue').click(); 1",
+"wait": 4000
+},
+{
+"expect": "G.S.storyV===2 && G.chId()+\" ch=\"+G.S.ch+\" close=\"+G.S.close",
+"name": "old ch 0"
+},
+{
+"js": "var s=JSON.parse(localStorage.getItem('oldtpl')); s.ch=1; s.structs=s.structs.filter(x=>1>=1||x.k!=='hut'); if(1>=5) s.structs.push({k:'house',x:-24,z:-16,r:0}); localStorage.setItem('hearthborn-save-v2', JSON.stringify(s)); Storage.prototype.setItem=function(){}; 1"
+},
+{
+"reload": true
+},
+{
+"js": "document.getElementById('btn-continue').click(); 1",
+"wait": 4000
+},
+{
+"expect": "G.S.storyV===2 && G.chId()+\" ch=\"+G.S.ch+\" close=\"+G.S.close",
+"name": "old ch 1"
+},
+{
+"js": "var s=JSON.parse(localStorage.getItem('oldtpl')); s.ch=2; s.structs=s.structs.filter(x=>2>=1||x.k!=='hut'); if(2>=5) s.structs.push({k:'house',x:-24,z:-16,r:0}); localStorage.setItem('hearthborn-save-v2', JSON.stringify(s)); Storage.prototype.setItem=function(){}; 1"
+},
+{
+"reload": true
+},
+{
+"js": "document.getElementById('btn-continue').click(); 1",
+"wait": 4000
+},
+{
+"expect": "G.S.storyV===2 && G.chId()+\" ch=\"+G.S.ch+\" close=\"+G.S.close",
+"name": "old ch 2"
+},
+{
+"js": "var s=JSON.parse(localStorage.getItem('oldtpl')); s.ch=3; s.structs=s.structs.filter(x=>3>=1||x.k!=='hut'); if(3>=5) s.structs.push({k:'house',x:-24,z:-16,r:0}); localStorage.setItem('hearthborn-save-v2', JSON.stringify(s)); Storage.prototype.setItem=function(){}; 1"
+},
+{
+"reload": true
+},
+{
+"js": "document.getElementById('btn-continue').click(); 1",
+"wait": 4000
+},
+{
+"expect": "G.S.storyV===2 && G.chId()+\" ch=\"+G.S.ch+\" close=\"+G.S.close",
+"name": "old ch 3"
+},
+{
+"js": "var s=JSON.parse(localStorage.getItem('oldtpl')); s.ch=4; s.structs=s.structs.filter(x=>4>=1||x.k!=='hut'); if(4>=5) s.structs.push({k:'house',x:-24,z:-16,r:0}); localStorage.setItem('hearthborn-save-v2', JSON.stringify(s)); Storage.prototype.setItem=function(){}; 1"
+},
+{
+"reload": true
+},
+{
+"js": "document.getElementById('btn-continue').click(); 1",
+"wait": 4000
+},
+{
+"expect": "G.S.storyV===2 && G.chId()+\" ch=\"+G.S.ch+\" close=\"+G.S.close",
+"name": "old ch 4"
+},
+{
+"js": "var s=JSON.parse(localStorage.getItem('oldtpl')); s.ch=5; s.structs=s.structs.filter(x=>5>=1||x.k!=='hut'); if(5>=5) s.structs.push({k:'house',x:-24,z:-16,r:0}); localStorage.setItem('hearthborn-save-v2', JSON.stringify(s)); Storage.prototype.setItem=function(){}; 1"
+},
+{
+"reload": true
+},
+{
+"js": "document.getElementById('btn-continue').click(); 1",
+"wait": 4000
+},
+{
+"expect": "G.S.storyV===2 && G.chId()+\" ch=\"+G.S.ch+\" close=\"+G.S.close",
+"name": "old ch 5"
+},
+{
+"js": "var s=JSON.parse(localStorage.getItem('oldtpl')); s.ch=6; s.structs=s.structs.filter(x=>6>=1||x.k!=='hut'); if(6>=5) s.structs.push({k:'house',x:-24,z:-16,r:0}); localStorage.setItem('hearthborn-save-v2', JSON.stringify(s)); Storage.prototype.setItem=function(){}; 1"
+},
+{
+"reload": true
+},
+{
+"js": "document.getElementById('btn-continue').click(); 1",
+"wait": 4000
+},
+{
+"expect": "G.S.storyV===2 && G.chId()+\" ch=\"+G.S.ch+\" close=\"+G.S.close",
+"name": "old ch 6"
+},
+{
+"js": "var s=JSON.parse(localStorage.getItem('oldtpl')); s.ch=7; s.structs=s.structs.filter(x=>7>=1||x.k!=='hut'); if(7>=5) s.structs.push({k:'house',x:-24,z:-16,r:0}); localStorage.setItem('hearthborn-save-v2', JSON.stringify(s)); Storage.prototype.setItem=function(){}; 1"
+},
+{
+"reload": true
+},
+{
+"js": "document.getElementById('btn-continue').click(); 1",
+"wait": 4000
+},
+{
+"expect": "G.S.storyV===2 && G.chId()+\" ch=\"+G.S.ch+\" close=\"+G.S.close",
+"name": "old ch 7"
+},
+{
+"until": "G.S.village===true",
+"timeout": 30000
+},
+{
+"expect": "G.structs.filter(s=>s.kind==='house').length===5",
+"name": "old ch7 epilogue houses"
+}
+]

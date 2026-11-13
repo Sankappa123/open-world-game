@@ -1,0 +1,9 @@
+[
+{"until":"!!(window.G && document.getElementById('btn-new').onclick)","timeout":90000},
+{"js":"document.getElementById('btn-new').click(); 1","wait":3000},
+{"js":"window.T=[]; new MutationObserver(()=>{ for (const d of document.getElementById('toasts').children) if(!T.includes(d.textContent)) T.push(d.textContent); }).observe(document.getElementById('toasts'),{childList:true}); G.setCh('herd'); G.time(12); G.S.tools.saddle=true; G.tp(170,40); 1","wait":3000},
+{"js":"G.tame()","wait":1000},
+{"js":"G.N.ride=true; var x=G.riverX(30); G.tp(x-8,30); G.yaw=Math.PI*1.5; window.LOG=[]; window._sv=setInterval(()=>{ LOG.push([+G.P.pos.x.toFixed(1), +G.P.pos.z.toFixed(1), +G.h(G.P.pos.x,G.P.pos.z).toFixed(2), +G.P.speed.toFixed(2)]); },700); 1","wait":500},
+{"js":"G.ride(0,1,14).then(()=>{clearInterval(_sv); return JSON.stringify(LOG)+' '+JSON.stringify(T)})"},
+{"js":"[G.riverX(28),G.riverX(30),G.riverX(32), [70,74,78,80,82,84,86,88,90].map(x=>+G.h(x,30).toFixed(2))]"}
+]
