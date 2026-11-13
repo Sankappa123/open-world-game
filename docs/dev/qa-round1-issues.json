@@ -1,0 +1,393 @@
+[
+ {
+  "summary": "I ran story QA round 1, read-only, on a snapshot build: preview on port 5192, Chrome on 9354, every /api/ request intercepted. Port 5173 and the real save were never touched. The machine load stayed at 40-55 and the game ran at 0.5-1 fps, so timing-based checks are unreliable.\n\n**What passed:**\n- The play.json steps from awaken to herd: fire, hunt, the co-op hut, rest in the hut, and the cave (torch, wall torches, 3 paintings, handprints, 14 flint).\n- The chapter cards and goals text read cleanly.\n- A spell check of every dialogue line, story line and toast found no typos.\n- The epilogue card and the village spawn appeared correctly.\n\n**Unverified because of load:** After the herd chapter, play.json failed on \"meadow found\", \"ford crossed two-up\" and \"reload: still riding\". The rest of its run then cascaded into failures. These look like runner timeouts at 1 fps, not regressions, and should be rechecked on an idle machine. Several screenshots in later scenes are black because the canvas was captured between frames, so I made no visual judgements from those.\n\n**Confirmed problems:**\n- The help panel is always visible and covers the subtitles, the E prompt, the chapter card's season line and the inventory chip.\n- The tame horse's \"Ride\" prompt takes priority over \"Sit with Sena\" and every other E action.\n- Lio has no map or minimap marker.\n- Sena never goes to the hearth at night.\n- Wolves ignore the pine forest when they spawn.\n- Mounting and dismounting are instant teleports.\n- \"Your hands are empty\" shows while fists are drawn.\n- One failed asset fetch leaves the title stuck on \"Loading\u2026\" with no message.\n\n**Shots and logs:**\n- Shots: /tmp/claude-1000/-home-ashish-Desktop-game/6dfdb715-4157-4569-89fa-7fd9e44a76a2/scratchpad/shots/qa_story/\n- Logs and steps: /tmp/claude-1000/-home-ashish-Desktop-game/6dfdb715-4157-4569-89fa-7fd9e44a76a2/scratchpad/tests/qa_story/ (play.log, qa.log, qa.json, run.mjs). This run.mjs is a copy of the repo runner that retries the Chrome start and takes its boot wait from the BOOT env var.\n\n`npm run build` passes. I appended a section to progress.md and stopped all my processes.",
+  "issues": [
+   {
+    "title": "Always-on 12-line help panel covers subtitles, E prompt, chapter card and inventory chip",
+    "area": "fpp-world",
+    "severity": "major",
+    "repro": "Start a new game at 1280x720 (G.mat.newGame('survivor')). Look at the lower right during the opening card and the first dialogue, then mount a horse.",
+    "evidence": "In shots/qa_story/a01_card.png the panel covers 'SUMMER \u00b7 THE VALLEY' on the chapter card. In a02_dialogue.png the inventory chip is clipped to 'Your hands are empt'. In a04/b01/c01 the dialogue subtitle text runs into the panel. In c01/c02 the E prompt pill is clipped to 'Dismount Daw\u2026'. index.html:32 #help has no toggle or timeout, and main.js never hides it outside the cine classes. The panel is about 565x260 px.",
+    "suggested_fix": "Show the help panel only for the first few minutes or on F1/H, and fade it after inactivity. Otherwise collapse it to a one-line 'F1 controls' hint. At minimum, raise #sub, #prompt and #inv above it or move #help so it does not overlap the bottom-centre band. This also fixes the known FPP weapon overlap."
+   },
+   {
+    "title": "Tame horse's E prompt overrides Sit with Sena, shared meal, revive and story beats",
+    "area": "weapons-horse",
+    "severity": "major",
+    "repro": "In chapter hearth or later, place a campfire with Sena nearby. Stand on a bench spot with the tame horse within 2.6 m. The prompt reads 'Ride Dawn' instead of 'Sit with Sena'.",
+    "evidence": "In shots/qa_story/c03_horse_vs_sit.png the prompt shows 'E Ride Dawn' next to the fire. findTarget() (main.js ~2008) returns wp4Target(p) first. That runs before wpnTarget, cmbTarget (revive a downed Sena), the shared meal, arcTarget and structTarget (the fire), so the horse wins every E action within 2.6 m.",
+    "suggested_fix": "Move the tame-horse branch of wp4Target after the shared meal, cmb, arc and struct targets, or return it only when nothing else matches. Another option is to require the camera to look at the horse, or keep a 1.2 m radius when another target exists. Keep 'Dismount' first while riding."
+   },
+   {
+    "title": "Lio has no marker on the map or minimap",
+    "area": "fpp-world",
+    "severity": "minor",
+    "repro": "After Lio is born (or after G.spawnKid), open the map (M) and look at the minimap.",
+    "evidence": "In shots/qa_story/d02_map_lio.png the legend lists You, Sena, Horse, Quest, Cave, Landmark, Ford, Deer, Wolves, Pin and Buildings, but no child. drawMap (main.js ~7896-7906) draws villagers and Sena but never loops over `kids`, and drawMini does not either.",
+    "suggested_fix": "Add `for (const c of kids) { marker(g, ...toMap(c.pos.x,c.pos.z), 'lio', 1.2); label(..., c.k.name); }` to drawMap and drawMini, plus a legend entry with a distinct colour."
+   },
+   {
+    "title": "Sena never sits by the hearth on New Life nights (she only goes to a campfire)",
+    "area": "sleep-home-story",
+    "severity": "minor",
+    "repro": "In chapter newlife, with a house, hearth and bed and no campfire within 40 m, set G.time(20.5) and wait near the house. Sena does not move to the hearth, even though her chapter line is 'Come and sit with me by the hearth, Aro.'",
+    "evidence": "updateSena (main.js ~8195): `const fire = structs.find((s) => s.kind === 'fire'); const night = world.env.night > 0.6 && fire && ...` then walkTo(fire). Nothing in updateSena reads S.home.hearth or homeHouse().hearthW.",
+    "suggested_fix": "At night, when homeHouse() has a finished hearth and Aro is within about 40 m, send Sena to h.hearthW plus an offset and play the sit or sitTalk pose. Prefer this to the campfire in newlife (and seeds/village). Offer 'Sit with Sena by the hearth' as an E target that reuses sitTogether, with a hearth seat pair."
+   },
+   {
+    "title": "Wolves spawn in a random direction with no pine-forest preference",
+    "area": "weapons-horse",
+    "severity": "minor",
+    "repro": "From chapter hunt on, wait for night with no wolves alive. Where the pack spawns has nothing to do with the biome.",
+    "evidence": "EVENTS.wolves (main.js 926-932): `a = rand()*6.283; landSpot(P.pos.x + sin(a)*46, P.pos.z + cos(a)*46, 0, 12)` with no biomeAt check. The roaming logic shows no pine bias either.",
+    "suggested_fix": "Sample 8-12 angles and pick the spawn spot where biomeAt(x,z) is pine, falling back to random. Bias their wander or home targets toward the nearest pine area during the day."
+   },
+   {
+    "title": "Mounting and dismounting are instant teleports",
+    "area": "weapons-horse",
+    "severity": "minor",
+    "repro": "Stand next to the tame horse and press E (Ride), then press E (Dismount). Aro snaps onto the saddle and snaps 1.3 m to the side in one frame. Sena does the same.",
+    "evidence": "mount() (main.js 526-535) does `P.pos.copy(o.root.position)` and sets the seat at once. dismount() (537-551) does `P.pos.set(hp.x + rx*1.3, ...)` and clearSeat(P). There is no timed phase, clip or blend.",
+    "suggested_fix": "Add a 0.6-0.8 s mount phase: face the horse's left side, play a climb/jump clip (UAL Jump_Start or a hop) while lerping the pelvis to the saddle, then hand over to the ride IK. Dismount is the reverse, a slide down with a landing dip, with input locked for that time."
+   },
+   {
+    "title": "'Your hands are empty' chip shows while fists are drawn and the weapon bar is visible",
+    "area": "fpp-world",
+    "severity": "polish",
+    "repro": "Start a new game. The weapon bar shows '1 Fists (selected) / 2 Axe / 3 Spear' while the inventory chip at the bottom says 'Your hands are empty'.",
+    "evidence": "qa.log: inv = 'Your hands are empty', wpn = '1Fists2Axe3Spear\u2026'. In a01_card.png the two show together. drawInv (main.js 308) falls back to that string whenever there are no tools or items.",
+    "suggested_fix": "Change the fallback to 'Nothing carried', or hide #inv when it is empty. Only say 'hands empty' when W.held is null and no torch is lit."
+   },
+   {
+    "title": "Asset load failure leaves the title on 'Loading\u2026' forever, with no error or retry",
+    "area": "save-perf",
+    "severity": "minor",
+    "repro": "Serve the game while one model or texture fetch fails (seen under heavy load in vite preview: 'anims2.glb not loaded TypeError: Failed to fetch', then GLTFLoader texture errors).",
+    "evidence": "The first QA attempt stayed on the 'Loading\u2026' button for 90 s (shots/qa_story/a00_title.png from that run) and window.G was never defined. main.js:45 `await Promise.all([loadNature(), loadPeople(), loadAnimals(), loadGame()])` has no catch. people.js only guards anims2.glb, and its texture loads still throw.",
+    "suggested_fix": "Wrap the boot in try/catch and show 'Some files failed to load. Retry'. Retry each loadAsync 2-3 times with backoff before giving up."
+   },
+   {
+    "title": "Map labels pile up at home and the meadow ('Home'/'Sena'/quest, 'Horse Meadow'/'Dawn')",
+    "area": "fpp-world",
+    "severity": "polish",
+    "repro": "Open the map (M) with Aro and Sena at home and the horse in the meadow.",
+    "evidence": "In shots/qa_story/d02_map_lio.png, 'Home' and 'Sena' are drawn on top of each other under the quest diamond and the player arrow, and the 'Dawn' label sits on 'Horse Meadow'.",
+    "suggested_fix": "Add simple label collision avoidance: offset a label when it overlaps one already drawn, or skip the Sena label when she is within 6 m of the player. Draw the quest diamond above the labels."
+   },
+   {
+    "title": "Epilogue time skip (400 days) does not match 'Many winters pass' or the epilogue lines",
+    "area": "sleep-home-story",
+    "severity": "polish",
+    "repro": "Finish newlife and enter the village epilogue. The clock reads Day ~401, so Lio is just over a year old, but the lines say she learned to ride before she could run, and the scene shows her grown on the horse.",
+    "evidence": "epilogue() (main.js 6731) sets `S.day += 400`. The fade text is 'Many winters pass\u2026'. Shot e03_epilogue_c.png shows 'Day 401 \u00b7 08:00'.",
+    "suggested_fix": "Skip several years (for example S.day += 365*6) or hide the day counter in the epilogue. Keep kidScale consistent with the shown age. Book II expects eighteen winters, so set the epilogue age with that in mind."
+   },
+   {
+    "title": "Quest marker missing for early chapters (awaken, fire, hunt, shelter, clay, seeds)",
+    "area": "sleep-home-story",
+    "severity": "polish",
+    "repro": "Start a new game. The goal 'Drink from the river' has no marker on the map or minimap. The same is true for 'Dig 8 clay at the riverbank' and 'Gather wild grain'.",
+    "evidence": "CH entries for awaken, fire, hunt, shelter, clay and seeds have no `where`, so questAt() returns null. In a01_card.png the minimap has no quest diamond.",
+    "suggested_fix": "Add `where` to these chapters: awaken/fire \u2192 the nearest river bank (riverX(P.pos.z)) until drank or fibre is done; hunt \u2192 the nearest herd; clay \u2192 the nearest clay field node; seeds \u2192 the nearest grain field."
+   },
+   {
+    "title": "Cave interior very dark beyond the torch radius",
+    "area": "fpp-world",
+    "severity": "minor",
+    "repro": "In chapter cave at 12:00, enter Echo Hollow 6-14 m past the mouth and look deeper in.",
+    "evidence": "In shots/qa_story/b01_echo_mouth_14m.png and b02_echo_mouth_6m.png, everything outside Sena's torch pool is near-black and the cave walls are unreadable. This is the known open item.",
+    "suggested_fix": "Raise the cave ambient/hemisphere floor a little (a cool fill of about 0.06-0.1). Add a weak bounce light that follows the torch with a larger distance, and light the cave sconces automatically once discovered."
+   }
+  ]
+ },
+ {
+  "summary": "QA round 1 for first person and the world. I changed no code, `npm run build` passes, and I stopped my own processes on ports 5193 and 9355. The machine was overloaded during the run (load 40-50, 20 of 22 GB RAM in use), so the game ran at 0.5-1 fps. Under that load the GPU process crashed once (the WebGL context was lost) and one boot failed when an asset load errored. Because of the frame rate, I checked moving states with a few screenshots plus code reading.\n\nKnown items that still reproduce:\n- Echo Hollow mouth buried under boulders.\n- Cave interiors black past the torch; from inside, the mouth renders black and there are white sky holes near the arch.\n- The tame horse's E prompt still takes priority over \"Sit with Sena\".\n- Lio has no map marker.\n- Sena goes to the outdoor fire at night, not the hearth.\n- Wolves spawn in a random direction, with no preference for pine forest.\n- No look limit while seated or riding in first person.\n- The spear is held one-handed in first person.\n- \"Your hands are empty\" shows while fists are raised.\n- The help panel covers the first-person weapon hand and cuts off the inventory chip at 1280x720.\n- Mounting and dismounting are instant.\n\nNew findings:\n- WebGL context loss is not handled: the screen goes white while the game keeps saving, and the map base, painted once at startup, goes blank.\n- A single failed model load stops the game from starting, with no message or retry.\n- An empty save-status pill shows after starting a new game.\n- The intro subtitle overlaps the help panel at 720p.\n- Mirror Lake sits in a steep, perfectly round 12 m crater.\n- The standing stones render almost black.\n- The first-person torch is oversized, with a two-lobed flame near the centre of the screen.\n- Performance hotspot: the home view draws 828 draw calls and about 3.0M triangles per frame, with 1,394 visible meshes.\n\nMap fog, markers, pins and auto-walk, the fords, night and storm all worked; the HUD at 1920x1080 is fine apart from the large help panel.\n\nScreenshots are in /tmp/claude-1000/-home-ashish-Desktop-game/6dfdb715-4157-4569-89fa-7fd9e44a76a2/scratchpad/shots/qa-fpp/ and the notes are appended to /tmp/claude-1000/-home-ashish-Desktop-game/6dfdb715-4157-4569-89fa-7fd9e44a76a2/scratchpad/progress.md.",
+  "issues": [
+   {
+    "title": "Help panel is always on and covers the first-person weapon hand, the inventory chip and subtitles at 1280x720",
+    "area": "fpp-world",
+    "severity": "major",
+    "repro": "Viewport 1280x720, New game (Survivor), then V for first person and draw the spear (3). The #help panel (568x265 px at right 18px, bottom 18px) covers the lower-right 44% of the screen. The spear hand and shaft are behind it (g05). The #inv chip (left 562 to right 718) is clipped by the panel (left 694), so it reads 'Your hands are empt'. The intro subtitle #sub (bottom 96px) prints on top of the help text. Sena is partly hidden behind it in third person.",
+    "evidence": "shots/qa-fpp/a02_hud720.jpg, g01_fists_chip.jpg, g05_fpp_spear_up.jpg, b02_fpp_lookdown.jpg. getBoundingClientRect: help {x:694,y:437,w:568,h:265}, inv {x:562,right:718}. index.html line 32 '#help' has no hide or toggle logic anywhere in main.js.",
+    "suggested_fix": "Make the help panel collapsible: show a 1-line '? Help (F1)' chip by default, expand on F1 or hold, and auto-collapse after the first 60 s of play. Add a Game-tab setting 'Show controls'. At least add a media query for max-height:800px that hides it or shrinks it to 2 columns, and hide it in first person while a weapon is drawn. Raise #sub above the panel or hide the panel while a subtitle is on."
+   },
+   {
+    "title": "Cave interiors are pitch black past the torch; from inside, the mouth renders black and dome gaps show white sky",
+    "area": "fpp-world",
+    "severity": "major",
+    "repro": "G.time(12); teleport to Echo Hollow centre (k=G.caves.list[0]; G.tp(k.x+k.dir[0]*2,k.z+k.dir[1]*2)), torch lit (T), first person. Looking at the back wall (yaw 0.907): everything beyond about 3 m of the torch is black and the cave paintings are invisible. Turning toward the mouth (yaw+PI): the arch and the outside are solid black, and jagged pure-white shapes appear in the ceiling near the arch (sky through gaps between the dome, tube and boulders).",
+    "evidence": "shots/qa-fpp/c05_echo_center_torch.jpg (black), c06_echo_center_lookout.jpg (black mouth, white holes), g_c03.jpg. world.js:517-524 cuts hemi light by 92% and sun by 100% at depth 1, and turns the fog to 0x050403 with density +0.02, so the daylit exterior seen from inside is fogged to black. caves.js tube is a half-cylinder whose ends meet the lumpy dome with no seal.",
+    "suggested_fix": "Keep a cave ambient floor (hemi at 0.15-0.2 rather than 0.08, warm-grey). Add a weak bounce PointLight just inside the mouth that scales with daylight, so the entrance zone glows. Don't fog the outside: lower the cave fog density, or apply it only to geometry inside (use a distance-from-mouth fade instead of global fog). Seal the tube-dome joint with an extra rock ring or extend the tube 0.5 m into the dome, and make dome/tube materials double-sided or add backing rocks over the gaps. Light the paintings with the sconce sooner (Sena lights it on first entry)."
+   },
+   {
+    "title": "Echo Hollow entrance is buried under a pile of boulders",
+    "area": "fpp-world",
+    "severity": "major",
+    "repro": "G.time(12); k=G.caves.list[0]; G.tp(k.mouth[0]+k.dir[0]*14, k.mouth[1]+k.dir[1]*14); G.yaw=0.907 (facing the cave). At 14 m and 30 m the mouth reads as a thin dark slot under a heap of dark green-tinted low-poly boulders. The two 'over the arch' rocks and six side rocks cover most of the arch, and the hill behind is a smooth cone with banded texture.",
+    "evidence": "shots/qa-fpp/c01_echo_fpp_14m.jpg, c02_echo_fpp_30m.jpg. caves.js:178-190: side rocks at lateral TUBE+0.8+sc*1.15 with scale 1.8-2.6 at s=R+3..R+8 (they straddle the mouth at R+5); arch rocks at floor+TUBE+sc*0.9 for s=R+2 and R+4.6.",
+    "suggested_fix": "For the side rocks, push them to s >= R+6.5 (in front of and beside the mouth, not over it) and add 1.0 to the lateral offset. Drop the second arch rock and lift the first to floor+TUBE+sc*1.3 set back to s=R+1.5, so it frames the lintel instead of blocking it. Exclude any rock whose projected bounds overlap the arch (|lat|<TUBE+0.5 and y<floor+TUBE+0.5). Tint the rocks to match the hill's rock texture instead of the green-black."
+   },
+   {
+    "title": "WebGL context loss is unhandled: the screen goes white, the game keeps running and saving, and the map base goes blank for good",
+    "area": "save-perf",
+    "severity": "major",
+    "repro": "Under memory pressure the GPU process crashed during the run. Verify with G.renderer.getContext().isContextLost() === true. After that the 3D view was solid white for the rest of the session (all shots e02-e05), with the HUD live and PUT /api/save calls continuing. The big map's explored area showed as a flat dark hole: the #mapcanvas pixel at (410,410) was 0,0,0,0, and the minimap showed only parchment, because mapBase (main.js:7712) is painted once at module load and its accelerated 2D canvas lost its contents. After a page reload both were correct again (the minimap showed terrain in i01). The same happens to players on laptop sleep/wake or a GPU driver reset.",
+    "evidence": "shots/qa-fpp/g_e.jpg (white), d01_map720.jpg (dark map holes). The eval returned {lost:true, frame:400}. grep shows no 'webglcontextlost', 'contextrestored' or 'isContextLost' handling in src/.",
+    "suggested_fix": "On renderer.domElement 'webglcontextlost': preventDefault, pause the game and save, and show an overlay 'Graphics were reset - click to continue'. On 'webglcontextrestored', three.js re-uploads; if not, offer a reload that resumes from the save. Repaint mapBase lazily: wrap the painter in a function, call it on first map open and on canvas 'contextrestored' or when isContextLost() is true, or create it with getContext('2d', {willReadFrequently:true}) so it is CPU-backed and survives GPU resets."
+   },
+   {
+    "title": "One failed asset load aborts the whole boot with no message or retry",
+    "area": "save-perf",
+    "severity": "minor",
+    "repro": "Reload the page while the server is slow (it happened at load 45). GLTFLoader logged 'Couldn't load texture t_eye_normal.png / leaves.png / leaf_pine_c.png / t_hair_2_basecolor.jpg' and then threw an uncaught 'Failed to load buffer hair_beard.bin'. window.G was never defined and the title screen never became usable; a second reload worked.",
+    "evidence": "Driver console log after the first reload: EXC 'Error: THREE.GLTFLoader: Failed to load buffer \"hair_beard.bin\"' at index-*.js:4466. The MAT notes also mention adding 'page-load and reload retries for asset loads that fail under machine load' to their harness.",
+    "suggested_fix": "Wrap the model and texture loads in a retry (2-3 attempts with backoff). If a load still fails, show a 'Could not load assets - Retry' message on the loading screen instead of a silent dead page. Missing textures should fall back to a flat material rather than reject the load."
+   },
+   {
+    "title": "First person: no look limit while seated or riding (you can look straight back into Sena's face)",
+    "area": "fpp-world",
+    "severity": "minor",
+    "repro": "Ride a tamed horse with Sena behind (G.setCh('herd'); G.tame(); within 10 m of Sena), V for first person, then mouse-look 180 degrees (or G.yaw=G.P.face). The view turns freely through 360 degrees and lands about 0.3 m from Sena's face. The same happens sitting at the fire or on the bench.",
+    "evidence": "main.js:8050-8058 applyLook: 'camYaw -= lookX * k' with no clamp; only the pitch is clamped (pitchMin/fppPitchMax). The FPP verification notes record 'looking 180 deg back puts her face ~0.3 m away'.",
+    "suggested_fix": "In first person while P.ride, P.sit>0, a seat or rest, clamp the yaw relative to the body (P.face+PI) to plus or minus 110 degrees (riding) or 120 degrees (seated) with a soft spring at the edge. To look further, turn the horse or stand up. Keep TPP free."
+   },
+   {
+    "title": "First person: spear held with one hand only",
+    "area": "fpp-world",
+    "severity": "minor",
+    "repro": "Give the spear, select 3, draw, V for first person, wait until G.wpn.vm().weapon==='spear' and the raise completes. The shaft runs from the lower right to the crosshair, held by the right hand only; there is no left hand on the shaft (third person holds it two-handed). The spearhead is also hard to read at the crosshair.",
+    "evidence": "shots/qa-fpp/g05_fpp_spear_up.jpg. FPP verification 'Remaining: Spear in first person is held by the right hand only'.",
+    "suggested_fix": "In fppVm, when the spear is held, IK the left arm (fpArm('l', ...)) to a grip point about 0.45 m forward along the shaft (FIT.spear front-grip), the same as the third-person GRIP_L. Rotate the shaft so the flint head sits slightly right of and below the crosshair and is visible."
+   },
+   {
+    "title": "'Your hands are empty' chip shows while the fists are raised",
+    "area": "fpp-world",
+    "severity": "minor",
+    "repro": "New game, press 1 then hold Q (or G.wpn.select('fists'); G.wpn.draw()). Aro raises his fists in a guard, but the inventory chip still reads 'Your hands are empty'. The text comes from drawInv when there are no tools or items, so it contradicts the fists and stays until something is picked up.",
+    "evidence": "shots/qa-fpp/g01_fists_chip.jpg. main.js:308 \"$('inv').innerHTML = h || '<span>Your hands are empty</span>'\". G.wpn.state() showed {sel:'fists', st:'drawn'} with inv text 'Your hands are empty'.",
+    "suggested_fix": "Change the empty text to 'Nothing carried' (it describes the inventory, not the hands), or hide the chip when empty. If the hands wording stays, suppress it while W.held is set or torchOn is true."
+   },
+   {
+    "title": "Tame horse's E prompt takes priority over 'Sit with Sena'",
+    "area": "weapons-horse",
+    "severity": "minor",
+    "repro": "With a tamed horse standing within 2.6 m of the fire where Sena sits, approach the fire: the prompt shows 'Ride <name>' or 'Feed <name>' and pressing E mounts the horse instead of sitting with Sena.",
+    "evidence": "main.js:2010 findTarget: 'const w4 = wp4Target(p); if (w4 || P.ride) return w4;' runs before every other target. wp4Target returns Ride or Feed for any tame horse within 2.6 m.",
+    "suggested_fix": "Only return the horse target first while riding or taming. Otherwise compute it and compare: let structure, Sena and seat targets win when the horse is not the nearest (horse distance > seat or fire distance minus 0.5), or move the wp4Target check after structTarget and the ARC/ROM targets. Keep 'Dismount' as the only target while riding."
+   },
+   {
+    "title": "Mounting and dismounting are instant teleports",
+    "area": "weapons-horse",
+    "severity": "minor",
+    "repro": "Stand next to the tamed horse and press E: Aro snaps onto the saddle in one frame. Press E while riding: he snaps to 1.3 m beside the horse, standing, and Sena snaps off the other side.",
+    "evidence": "main.js:526-549: mount() does 'P.pos.copy(o.root.position)' plus seatOn on the next frame; dismount() does 'P.pos.set(hp.x + rx*1.3, ...)' and clearSeat(P) with no transition.",
+    "suggested_fix": "Add a 0.5-0.7 s mount and dismount: lerp P from the side point to the saddle (and back) with an arc in Y, blend the 'ride' pose weight 0 to 1, and lock input meanwhile (camShot-free). For Sena, delay her by 0.3 s. For the visual, use a UAL jump or step-up clip if one exists, or the crouch pose plus vertical lift."
+   },
+   {
+    "title": "Lio has no map marker",
+    "area": "sleep-home-story",
+    "severity": "minor",
+    "repro": "Reach the family chapters with Lio spawned (G.kids non-empty), then open the map (M) or check the minimap. Sena, villagers, the horse and herds get markers, Lio does not.",
+    "evidence": "main.js drawMap (7884-7910) draws POIs, structures, the horse, the quest, herds, wolves, villagers, Sena, the pin, the spear and the player, with no loop over kids. The minimap (7856-7875) also has no kid marker.",
+    "suggested_fix": "In drawMap and the minimap, add 'for (const c of kids) { const [x,y]=toMap(c.pos.x,c.pos.z); marker(g,x,y,'sena',1.1); label(x,y,c.name||'Lio'); }' with its own small glyph (a smaller Sena dot in a lighter colour), and add 'Lio' to the legend."
+   },
+   {
+    "title": "Sena does not sit by the hearth on New Life nights",
+    "area": "sleep-home-story",
+    "severity": "minor",
+    "repro": "Chapter 'newlife' (G.setCh('newlife')) with the house built and the hearth upgrade, at night (G.time(21)). Sena walks to the outdoor fire (or idles), not to the indoor hearth, although the chapter line is 'Come and sit with me by the hearth'.",
+    "evidence": "main.js updateSena (about 8196): 'const night = world.env.night > 0.6 && fire && ...; if (night) walkTo(N, fire.x + 1.7, fire.z - 0.9, ...)': only the outdoor fire struct. There is no hearth branch (h.hearthW exists at 1971).",
+    "suggested_fix": "In updateSena's night branch: if the house is built with a hearth (S.home.hearth) and the chapter is at or after 'newlife' (or always once a hearth exists), walkTo the hearthW plus an offset inside the house and set N.sit with the seated pose facing the hearth. Add 'Sit with Sena by the hearth' to structTarget there."
+   },
+   {
+    "title": "Wolves spawn in a random direction, with no preference for the pine forest",
+    "area": "weapons-horse",
+    "severity": "minor",
+    "repro": "Reach the 'hunt' chapter and wait for the night (or call G.EVENTS.wolves()) at home, several times. Packs appear 46 m away in any direction, including the open meadow and the river side.",
+    "evidence": "main.js:926-928 EVENTS.wolves: 'a = rand()*6.283; landSpot(P.pos.x + sin(a)*46, P.pos.z + cos(a)*46, 0, 12)'. No biomeAt check.",
+    "suggested_fix": "Sample 8 candidate angles, score each with biomeAt(x,z)==='pine' (plus 2) and distance to the pine edge, and pick the best (with some randomness). Then have the pack approach out of the tree line. Also make wolves retreat toward the pine biome when w.leave is set."
+   },
+   {
+    "title": "Mirror Lake sits in a steep, perfectly circular 12 m crater",
+    "area": "fpp-world",
+    "severity": "minor",
+    "repro": "G.time(9); G.tp(-95,138); G.yaw=Math.PI (looking north across the lake). The lake is a round disc with a hard circular edge at the bottom of a bowl whose banded mud walls rise about 12 m in 10 m. Heights: G.h(-95,150)=-1.2, G.h(-95,140)=10.8, G.h(-95,130)=12.1. It reads as a quarry pit, not a lake.",
+    "evidence": "shots/qa-fpp/h05_lake_shore.jpg; also h04_lake.jpg (a wall of cracked mud texture from the water).",
+    "suggested_fix": "In world.js features(), give the lake basin a wide smoothstep falloff (shore slope 1:4 or gentler over about 25 m), noise the radius (plus or minus 15% with low-frequency noise) so the outline is irregular, and add a reed or pebble beach band at the waterline. Clamp slopes near the lake so the banded cliff texture does not show."
+   },
+   {
+    "title": "Low frame rate: home view draws 828 calls and about 3.0M triangles per frame",
+    "area": "save-perf",
+    "severity": "minor",
+    "repro": "New game, G.tp(0,4), third person at the start view, then read G.renderer.info.render after a frame.",
+    "evidence": "renderer.info.render {calls:828, triangles:2,967,612, points:2080}, 1394 visible meshes, 1 shadow-casting light, pixelRatio 0.8 (render-quality setting at 80%). The triangle count includes the shadow pass, so the grass and trees are drawn twice.",
+    "suggested_fix": "Profile on a real GPU, but the likely wins are: (1) don't cast shadows from grass and the small decor (castShadow=false on grass instanced meshes); (2) LOD or impostors for trees beyond about 60 m and a lower Q.decor radius; (3) merge or instance the per-tree and per-rock meshes (1394 visible meshes points to individual meshes); (4) cull the cave and landmark groups by distance (cave rock dressing is visible from across the map); (5) a shadow-camera frustum fitted to about 60 m around the player."
+   },
+   {
+    "title": "Empty save-status pill visible after New game",
+    "area": "save-perf",
+    "severity": "polish",
+    "repro": "Start a New game (Survivor) at either resolution. Under the top-right toast an empty dark rounded pill (24x~20 px at right:18px, top:100px) stays on screen with no text.",
+    "evidence": "shots/qa-fpp/a02_hud720.jpg and f01_hud1080.jpg (top right, under 'Click the game to capture the mouse'). The eval showed #savechip textContent '' with style.opacity '1' and className 'panel'.",
+    "suggested_fix": "Only set opacity when the chip has text: in the frame loop use '$('savechip').style.opacity = el.textContent ? Math.min(1, saveFlash) : 0'. Also find out who clears the text (it starts empty in index.html; the new-game path seems to raise saveFlash without calling save())."
+   },
+   {
+    "title": "Standing stones render almost black in daylight",
+    "area": "fpp-world",
+    "severity": "polish",
+    "repro": "G.time(9); G.tp(150,-45); G.yaw=-Math.PI/2 (looking at the stone circle). The monoliths are flat near-black slabs with no visible stone texture, even in the morning sun.",
+    "evidence": "shots/qa-fpp/i01_stones_autowalk.jpg",
+    "suggested_fix": "In landmarks.js, use the rock texture (rockTexture()) with a lighter grey-ochre base colour (about 0x8a8478), roughness 0.95, and add a lichen tint so the stones read in daylight. Check that the normals aren't inverted (the faces look unlit)."
+   },
+   {
+    "title": "First-person torch is oversized and its flame sits near the centre of the screen as two blobs",
+    "area": "fpp-world",
+    "severity": "polish",
+    "repro": "Give the torch (G.S.tools.torch=true, T), first person, and look ahead in a cave. The shaft fills the lower-left quarter up to the screen centre, and the flame shows as two side-by-side orange lobes at about 45% of the screen height, close to the crosshair.",
+    "evidence": "shots/qa-fpp/g_c03.jpg (top-right and bottom-left panels), c06_echo_center_lookout.jpg.",
+    "suggested_fix": "Lower the torch viewmodel and push it outward (hand at about x -0.32, y -0.38 in camera space), shorten its visible length, and keep the flame below the lower-left third. Merge the two flame sprites into one with a flicker, or offset the halo sprite so they overlap instead of sitting side by side."
+   }
+  ]
+ },
+ {
+  "summary": "QA round 1 covered rest, sleep, home and family. I played it in headless Chrome against a snapshot build: preview on port 5191, Chrome on 9353, and every /api/ request intercepted, so no real save was touched. The machine's load average was 37-43, so the game ran at 0.8-6 fps, but the rest sequence runs on the wall clock and the phase holds made screenshots possible. I edited no code and made no commits. `npm run build` passes, and I added a section to progress.md. Screenshots are in /tmp/claude-1000/-home-ashish-Desktop-game/6dfdb715-4157-4569-89fa-7fd9e44a76a2/scratchpad/shots/qa-rst/ (01-34). The console showed no errors or exceptions.\n\nWhat passed:\n- **Rest menu:** at night it offers Sleep until dawn and Nap 2 hours; by day only the nap; Esc closes it.\n- **Rest rules:** for 90 s after waking there is no rest prompt. With a wolf 20 m away at night, the prompt reads \"You can't rest with wolves prowling nearby\", Sena says her line, and G.rest is refused.\n- **Hut, house and cave sequences:**\n  - The walk-in goes through the doorway (with a cut when far away), then sit or kneel, then lie down.\n  - They hold hands (hand gap 0.10 m), with the exterior star time-lapse and the dream line.\n  - On waking: dawn, sit up, stand, stretch, then Sena's morning line (including the first-home line).\n  - The camera hands back to the player, the walls keep him inside, and the Snug, Well rested and Rested chips appear.\n- **Comfort and tiers** are right: hut 3, house with bed and hearth 8, cave 2. Closeness goes up 2 or 4.\n- **Resting alone** works.\n- **Building together:** hold E to build; Sena kneels on the far side and the build runs at 2.2\u00d7.\n- **Home upgrades:** hearth, bed, cradle and nursery all build, each with a fade and +2 h.\n- **Lio's birth:** the fade card works and the story moves on to the village epilogue.\n- **Hot spring soak and sitting with Sena at the fire** both trigger.\n\nOf the known open items in my area, three still reproduce:\n- The tame horse's \"Ride\" prompt steals E from \"Sit with Sena\".\n- Lio has no map or minimap marker.\n- Sena does not sit by the hearth on New Life nights.\n\nI also found new issues, all listed below. The worst are:\n- Berry-bush bodies stay inside a hut or house built on top of them.\n- The blanket is a huge lumpy hump that hides Sena and the held hands.\n- The grown Lio sleeps on top of a tiny cradle.\n- Grass grows inside the nursery room.\n- They sit on top of the hot-spring water instead of in it.\n- The windows glow cream inside the house at night.\n\nThe WebGL context was lost once during testing, which left a white screen with no message. That was probably the overloaded headless GPU, but the game has no recovery or notice for it.",
+  "issues": [
+   {
+    "title": "Berry bush stays inside a hut or house built on top of it, poking through the bed",
+    "area": "sleep-home-story",
+    "severity": "major",
+    "repro": "New story game, G.setCh('shelter'); G.place('hut',10,4,0); G.finishSites(); G.time(21.5); rest in the hut. A leafy bush fills the head end of the bed in the sit, lie and wake shots. The same happens when the player places any structure over one of the near-spawn berry bushes from the build menu.",
+    "evidence": "shots/qa-rst/05_sit.jpg, 06_lie.jpg, 08_wake_2.jpg. Instance query: Leaves_NormalTree at (10.45, 2.31), scale 0.88, inside the hut (r = 2.3). placeStruct marks the berry node gone and hides only its berries mesh. The bush body is a separate Field('bush') in world.js:274, which is not in world.fields, and its collider stays as well. world.clear() only clears grass carpets.",
+    "suggested_fix": "world.js: keep the bush Fields (e.g. world.decor = [bushFields]) and expose them. In placeStruct (main.js:1831), hide bush nodes within radius + 0.6 too (scale 0 via Field.set) and turn their colliders off (addCollider returns the collider; store it on n.col). Alternatively make world.clear() hide decor bushes as well as grass."
+   },
+   {
+    "title": "Bed blanket is a huge lumpy hump that hides Sena and the held hands",
+    "area": "sleep-home-story",
+    "severity": "major",
+    "repro": "Rest in the house with bed and hearth, together. Hold the night with G.restHold('night') and view G.restCam('end'). Also seen in the hut and the cave.",
+    "evidence": "shots/qa-rst/18_house_lie.jpg, 19_house_hold.jpg, 06_lie.jpg, 33_cave_bed.jpg. The blanket rises about 0.4-0.5 m over Sena's curled knees (RT.sHip 1.25 and sKnee 1.35 push them up), so only her hand by the pillow shows. The hold point is at matY+0.07 (probe: holdPt y 4.27, mattress 4.20), beneath the blanket, so the holding-hands feature is never visible. The near edge is a hard straight seam lying across Aro's arm.",
+    "suggested_fix": "In rstDrape, cap the drape height (e.g. min(top, 0.22)) and scale the body points by 0.6. Keep the blanket below the hold point by shortening zTop (head[0][1] + 0.75) or lifting R.holdPt above the drape top, so the hands rest on top of the blanket. Reduce Sena's knee curl (sHip ~0.8) so her shoulder and face stay visible from cam.end."
+   },
+   {
+    "title": "Tame horse's 'Ride' E prompt overrides 'Sit with Sena' at the campfire (known open item, still reproduces)",
+    "area": "sleep-home-story",
+    "severity": "major",
+    "repro": "Tame a horse (G.spawn('horse',3,-20,{horse:true,wild:true}); G.tame(o); G.dismount()). Place a fire at (0,-25), stand at (0,-22.6) at 19:30 with Sena close, and put the horse 2.1 m away. The target is 'Ride Dawn'. Move the horse away and the target becomes 'Sit with Sena'.",
+    "evidence": "Measured: withHorse 'Ride Dawn' (dh 2.1), noHorse 'Sit with Sena'. findTarget() returns wp4Target first (main.js:2010) before any struct or fire target.",
+    "suggested_fix": "In findTarget, call wp4Target only when the horse is nearer than the closest struct target (fire within radius + 1.6), or give fire/sit targets priority when Aro faces the fire. Simplest: if a finished fire is within 3.2 m and Sena can sit, skip wp4Target's 'Ride' label unless Aro faces the horse (dot of facing and horse direction > 0.5)."
+   },
+   {
+    "title": "Lio has no marker on the map or minimap (known open item, still reproduces)",
+    "area": "sleep-home-story",
+    "severity": "minor",
+    "repro": "Get Lio born (newlife chapter goals done, rest at home), then open the map (M) or look at the minimap in the village epilogue.",
+    "evidence": "drawMini (main.js:7854) and drawMap (7891) place markers for Sena, the horse, animals and POIs, but never iterate kids[]. Shot 26_after_birth.jpg shows the minimap with no child marker.",
+    "suggested_fix": "Add put(c.pos.x, c.pos.z, 'sena', true, 0.7) or a new 'kid' marker for each kid in drawMini, and a marker plus label(c.k.name) in drawMap."
+   },
+   {
+    "title": "Sena never sits by the hearth on New Life nights (known open item, still reproduces)",
+    "area": "sleep-home-story",
+    "severity": "minor",
+    "repro": "Chapter newlife with house, hearth, cradle and nursery. G.time(21) and wait 15 s near the house.",
+    "evidence": "Sena stands next to Aro outside (N at -12.6, 17.1, pose null, sit 0). No code in updateSena references the hearth or newlife; the only hearth uses are the light, comfort and ROM scenes.",
+    "suggested_fix": "In updateSena, when CH id is 'newlife', the night (S.time >= 19), S.home.hearth is true and Sena is free (nFree()), walk her to toWorld(home, [1.3, 0, -0.6]), face the hearthPt, and set h.pose 'sit' (or 'sitTalk') until rest or morning. Add a short line once per night."
+   },
+   {
+    "title": "Grown Lio (epilogue) sleeps on top of the tiny cradle, legs and head hanging out",
+    "area": "sleep-home-story",
+    "severity": "major",
+    "repro": "Village epilogue after the birth (Lio at scale 0.62, cradle built). Night rest at the house; look at the cradle (local 1.8, 1.2).",
+    "evidence": "shots/qa-rst/28_cradle.jpg: Lio about 0.9 m long (head z 12.65, foot 13.54) lies over a cradle about 0.5 m long, with no blanket. kidBed(): S.home.cradle && i === 0 always picks the cradle, whatever the age or scale.",
+    "suggested_fix": "In kidBed, use the cradle only while kidScale(k) < 0.55 (an infant). Otherwise use a small bedroll in the nursery (S.home.nursery: local [-4.8, 0.2, 0]) or the parents' bed (rstKids already supports a child between them). Drape a small blanket over her (reuse makeBlanket)."
+   },
+   {
+    "title": "Grass grows through the nursery floor",
+    "area": "sleep-home-story",
+    "severity": "minor",
+    "repro": "Build the nursery upgrade (G.homeUpgrade('nursery')) and look into the annex from inside the house (rest cam during the wake).",
+    "evidence": "shots/qa-rst/25_wake_lio.jpg: green grass blades on the nursery planks. placeStruct clears only radius 4.4 + 0.4 around the house centre, and the annex reaches to local x of about -6.2. applyHome adds annexCol but never calls world.clear.",
+    "suggested_fix": "In applyHome, when S.home.nursery is set, call world.clear(w.x, w.z, 2.4) at the annex centre (toWorld(h, [-4.8, 0, 0])), next to the annexCol line."
+   },
+   {
+    "title": "Hot-spring soak: Aro and Sena sit on top of the water, hips above the surface",
+    "area": "sleep-home-story",
+    "severity": "major",
+    "repro": "Go to the spring (G.landmarks.spring = -105, -62), stand 5 m away with Sena near, and press E on 'Rest in the warm water (with Sena)'.",
+    "evidence": "shots/qa-rst/32_spring.jpg. Measured: water surface y 9.93 (basin + 0.6), Aro's pelvis 10.09, head 10.73. The seat is sp.y + 0.2, so they look like they hover on the surface. Steam sprites at opacity 0.22 are barely visible by day, so it doesn't read as a hot spring.",
+    "suggested_fix": "In soakTogether's seat(), set seat y to LMK.spring.water - 0.85 (pelvis about 0.3 below the surface, shoulders above). Raise the steam sprite opacity to 0.35-0.4 by day, and give the water a slightly milky tint."
+   },
+   {
+    "title": "House windows glow cream from inside at night (the emissive box is visible on both sides)",
+    "area": "sleep-home-story",
+    "severity": "minor",
+    "repro": "Rest in the house at night; the walk-in shot (cam.walk) and the cradle view show the windows.",
+    "evidence": "shots/qa-rst/16_house_walk.jpg, 28_cradle.jpg: bright flat cream panes inside a dark room at 20:40. The windows are BoxGeometry(0.9, 0.9, t + 0.04) with glowM (entities.js:342) running through the wall, and main drives the emissive by night.",
+    "suggested_fix": "Make the window box face only outward: use a PlaneGeometry on the outer face with glowM, and a dark blue-black glass plane (night sky colour, low emissive) on the inner face. Alternatively split it into two thin boxes with different materials."
+   },
+   {
+    "title": "The hearth has no fire: logs and an ember disc only, no flame or chimney smoke",
+    "area": "sleep-home-story",
+    "severity": "polish",
+    "repro": "Build the hearth and rest at night; the hearth sits unlit in the corner of the lie shot.",
+    "evidence": "shots/qa-rst/18_house_lie.jpg: a stone ring with orange-tinted logs and no flame. entities.js:313-317 builds only stones, an emberM disc and logs. The comfort text and dream lines talk about a crackling hearth.",
+    "suggested_fix": "Reuse the campfire flame (the fire structure's flame sprites/mesh plus flicker) inside hearthG, scaled to 0.6, and visible only at night or when someone is home. Add a smoke puff loop from the chimney top."
+   },
+   {
+    "title": "Sena's 'You didn't come home last night' plays when Aro slept at home and Sena was away",
+    "area": "sleep-home-story",
+    "severity": "minor",
+    "repro": "Village/house: G.N.pos.set(60,0,60) at 22:00. Rest in the house (menu note: 'Sena is too far away to join you'), then bring Sena back near Aro.",
+    "evidence": "Sub after the solo night in the home house: 'Sena: You didn't come home last night. I kept the fire going for you.' The APART lines are chosen without checking where Aro slept (rstTick).",
+    "suggested_fix": "Record where Aro slept (S.c.apartWhere = R.s.kind, and whether it was homeHouse()). If he slept at home, use a different pair, e.g. 'I couldn't get back before dark. Was the bed cold without me?'; keep the current lines for nights he spent away from home."
+   },
+   {
+    "title": "The birth line 'Look at her hands, Aro' plays after the jump to the village epilogue",
+    "area": "sleep-home-story",
+    "severity": "minor",
+    "repro": "Complete the newlife goals and rest at home: the birth card shows, the wake runs, the chapter jumps to 'Epilogue \u00b7 The Village' (day 23 \u2192 423), and then the birth line plays.",
+    "evidence": "shots/qa-rst/26_after_birth.jpg: the aerial village epilogue (Day 423) with the subtitle 'Sena: Look at her hands, Aro\u2026'. maybeBirth uses a wall-clock setTimeout(5200) instead of the wake phase. Lio is also never framed during the wake, which looks at the bed, not the cradle.",
+    "suggested_fix": "Move the two lines into the wake phase (e.g. when R.phase === 'wake' and R.t > 1.6, replacing the morning line on the birth night). Add a wake camera shot on the cradle (toWorld(s, kidBed(s, 0))) for that night. Hold the chapter advance until rstDone."
+   },
+   {
+    "title": "rstAbort() never clears busy: aborting a rest leaves all input locked",
+    "area": "sleep-home-story",
+    "severity": "minor",
+    "repro": "G.lie('both', true) then G.lie('both', false) (or any path that calls rstAbort while R.on). Afterwards G.mat.state().busy === true and the keydown handler returns early (menuOpen || busy), so movement, E, Tab and so on do nothing. At the fire, survFire's 'Sit with Sena' disappears because it checks !busy.",
+    "evidence": "Measured busy:true after G.lie(false), and the fire prompt fell back to 'Campfire \u2014 bring raw meat\u2026'. rstBegin sets busy = true (main.js:~2793), but rstAbort (3088-3102) resets everything except busy. die() is masked by downed(), which handles busy, but any future abort path soft-locks.",
+    "suggested_fix": "In rstAbort, when R.on was true, set busy = false (and P.rest = N.rest = 0, already done) before cine(false). Also restore s.col.off for the shelter."
+   },
+   {
+    "title": "The help panel covers the bottom-centre interaction prompt and subtitles",
+    "area": "fpp-world",
+    "severity": "major",
+    "repro": "Any new game before pointer lock (help shown): stand at the house door. The prompt shows as 'E Nap for a whil\u2026', cut off by the help panel. Subtitles ('Long before the first word\u2026', Sena's lines) run underneath the panel.",
+    "evidence": "shots/qa-rst/13_house.jpg, 15_inside.jpg, 21_house_done.jpg, 31_sit_fire.jpg, 32_spring.jpg. The help panel spans x 695-1262, y 350-612 at 1280\u00d7720 and overlaps the prompt at y about 383 and the subtitle at y about 522. Sena is also hidden behind it in the hot-spring shot.",
+    "suggested_fix": "Show the help panel only for the first N seconds, toggle it with H/F1, or shrink it and anchor it above the inventory bar in the right column (bottom: 90px, max-height 40vh). Hide it while #restmenu, a subtitle or the prompt would overlap, or move the prompt above the panel's top."
+   },
+   {
+    "title": "Wake shot crops Aro's stretch; the hand-back camera faces the thatch roof or the house side wall",
+    "area": "sleep-home-story",
+    "severity": "polish",
+    "repro": "Rest in the hut and let the wake run; then rest in the house and watch the hand-back after rstDone.",
+    "evidence": "shots/qa-rst/08_wake_2.jpg: in the hut, Aro's raised hands and the top of his head are cut off by the letterbox (cam.wake [0.15, 1.6, 1.6] is too low and close). 09_after.jpg: after the hand-back the thatch cone fills about 2/3 of the screen. 21_house_done.jpg: Aro faces the west wall corner by the bed and the camera is pressed to the side wall.",
+    "suggested_fix": "Hut cam.wake: pull back and up (e.g. [0.4, 2.0, 1.9], wakeLook y 1.2). In the release, pitch the camera down to about -0.05 inside the hut (camPitch 0.1 points up into the cone) and clamp it to the room height. House: set D.exit to a point facing the door ([-1.2, 0.9]) so the release looks out of the doorway."
+   },
+   {
+    "title": "Floor-bed sit phase: Aro is on all fours with his head down instead of kneeling",
+    "area": "sleep-home-story",
+    "severity": "polish",
+    "repro": "Rest in the hut (a low bed); hold at the sit phase with G.restHold('sit').",
+    "evidence": "shots/qa-rst/05_sit.jpg: the 'work' base pose for low beds puts Aro on hands and knees with his arms hanging, so it reads as crawling, not kneeling down to lie.",
+    "suggested_fix": "For low beds, use a kneel-sit (the kneeling seated frame of 'sit', or 'work' with the spine pitched up and the hands on the thighs through ik2) for about 0.6 s before lying back."
+   },
+   {
+    "title": "Lost WebGL context leaves a white screen with no message or recovery",
+    "area": "save-perf",
+    "severity": "minor",
+    "repro": "Under heavy GPU load (here: headless vulkan with load avg about 40, about 3M triangles per frame), the context was lost while holding E at the house site. The screen turned fully white while the HUD kept running.",
+    "evidence": "G.renderer.getContext().isContextLost() === true; renderer.info showed 2.96M triangles and 812 draw calls; shot 12b.jpg. No webglcontextlost handler exists.",
+    "suggested_fix": "Add canvas listeners for 'webglcontextlost' (preventDefault, pause, save, show a 'Graphics reset, click to continue' panel) and 'webglcontextrestored' (reload the page, or rebuild after saving). Consider a lower default triangle budget on 'low' quality."
+   }
+  ]
+ }
+]

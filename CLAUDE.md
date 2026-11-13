@@ -58,38 +58,82 @@ The user asked for a 21+ game.
   - any harm to children
   - torture mechanics
 
-## Status (last updated 2026-11-13)
-**Committed** on branch `expansion`, which the user pushed:
-- the 12-chapter story with old-save migration
-- co-op building and home upgrades
-- the bigger world with landmarks and caves
-- tameable, rideable horses
-- the parchment map with fog of war
-- the family arc
-- torch, poultice, cloak, waterskin and fishing
+## Working with this user
+- They often check progress. Answer with a short table: what's done, what's running, a % estimate and a time estimate.
+- They want complete, professional results. They chose multi-agent workflows for big jobs ("run more agents, use the full power").
+- Keep this file and `docs/dev/` updated at every milestone and commit them (`git commit -- CLAUDE.md docs/dev`), so any laptop can resume.
+- Claude usually has no GitHub credentials, so ask the user to push (VS Code "Sync Changes", or `git push`).
+- They tend to restart or close sessions. Commit WIP before long runs, and commit again at checkpoints.
+- Never start a new game or click "New story" without `/api/` interception. Never touch their real save except at their explicit request.
 
-**WIP checkpoint committed (8e37add, 2026-11-13 16:00, after a reboot stopped all agents):**
-1. **Weapons (WPN) and sleep (RST):** built, integrated and tested by their builders. **The QA test-and-fix round has NOT run yet**: all 5 testers were cut off by an API outage. Spec: `docs/dev/spec-weapons-sleep.md`.
-2. **First-person realism (FPP):** DONE and verified. Open items: the spear is one-handed in FPP, no neck limit while riding, and the "hands are empty" chip shows while holding a weapon.
-3. **Mature features:**
-   - M1 foundation is DONE (21+ notice, difficulty modes, downed/permadeath and memorial, settings tabs). Pure logic is in `src/mature.js`.
-   - **M2 gore, M3 survival, M4 combat/enemies, M5 story, M6 romance+music are PARTIAL** (files `gore.js`, `survival.js`, `combat.js`, `enemies.js`, `tribe.js`, `arc_data.js`, `romance.js`, `music.js`). Each builder must inspect its partial work and continue from it, not start over.
-   - After that: ARC integration (raid, fever, romance beats), then QA on Story, Survivor and Hardcore.
-   - Spec: `docs/dev/spec-mature.md`.
+## Status: STOPPED 2026-11-13 ~17:20 on the office laptop. RESUME HERE
+When the user says "I'm back, continue" (or similar), do this:
+1. Run `git pull` and `git log --oneline -3`. The last commit should be the 17:20 handover. Then `npm install`, then `npm run db` (Docker; without Docker, saves fall back to SQLite).
+2. Optional, if the user wants their own game at home: import their save. Start `npm run dev` (port 5173), then run `curl -X PUT -H 'content-type: application/json' --data @docs/dev/user-save.json localhost:5173/api/save`. That save is day 13, chapter 9 "Hearth and Home".
+3. Recreate a scratchpad from `docs/dev/`:
+   - `spec-mature.md` → `spec_mature.md`
+   - `spec-weapons-sleep.md` → `spec_ws.md`
+   - `spec-expansion.md` → `spec.md`
+   - `progress-log.md` → `progress.md`
+   - `where-agents-stopped.txt`, `qa-round1-issues.json`, `*_research.json`
+4. Relaunch the two workflows saved in `docs/dev/workflows/`. Replace `SCRATCHPAD` in them with the new scratchpad path, and adjust ports if needed. The machine needs Chrome for the headless tests.
+   - **`A-mature-finish.js`**: finishes the 5 mature packages, then ARC phase C integration, mature QA (Story, Survivor/Hardcore, visual and content limits), fixes, and a retest.
+   - **`B-qa-fix.js`**: QA and fixes for weapons, sleep, first person and the existing systems.
+     - **QA round 1 is already partly done.** Three testers finished (story, first person and world, sleep and home): 47 issues, 12 of them major, all in `docs/dev/qa-round1-issues.json`.
+     - Two testers did not finish: weapons and horses, and save and performance.
+     - So: skip the 3 finished lenses and feed their issues straight to the fixers. Re-run only the weapons-horse and save-perf testers, then fix, then retest.
 
-**Planned for 2026-11-14: Viking way of life, "Book II: The Sea Road".** Spec: `docs/dev/spec-viking.md`, which starts with the user-facing options in §0.
-- Recommended option C: after Book I, eighteen winters later, Lio is grown and steers. Bronze Age longship with a horse-head prow and the first sail, a crew with loyalty, river to the sea and islands, a longhouse hall with feasts and vows, the Grey Sails sea raiders, a holmgang duel, and a coda with real Vikings.
-- **Ask the user the 4 questions in §0** (A/B/C, can grown Lio be downed, gods, helmets) before building. Defaults: C, yes but never dies, own gods, no horns.
-- Build it with work packages N1–N6 from the spec after the mature build is committed.
+### What is done (all committed on `expansion`)
+- **Expansion:** the 12-chapter story with old-save migration, co-op building and home, landmarks and caves, horses, the parchment map with fog of war, the family arc, torch, poultice, cloak, waterskin and fishing.
+- **WPN, Assassin's Creed–style weapons:**
+  - spear on the back, axe at the hip;
+  - draw and sheathe, keys 1–4 and Q;
+  - aim with right mouse, with an arc; the thrown spear stays where it lands and can be picked up;
+  - hitstop and shake on hits.
+- **RST cinematic sleep:**
+  - rest menu with "until dawn" or "nap";
+  - lying side by side, a blanket, holding hands;
+  - a time-lapse sky, waking up and Sena's greeting.
+- **FPP first person:**
+  - your body is visible when looking down, and your hands hold the weapons;
+  - head bob comes from the feet, with a landing dip;
+  - no clipping into walls;
+  - comfort settings.
+- **M1 MAT mature foundation:**
+  - the 21+ notice;
+  - difficulty modes Story, Survivor, Hardcore and Custom;
+  - being downed and rescued by Sena; permadeath with a memorial;
+  - 5-tab settings.
+- **Save protection:** only port 5173 touches the real database. A double-start guard stops structures from being built twice.
 
-**Next after these land:** commit to `expansion` (Claude has no GitHub credentials on this machine, so the user pushes). Then work the backlog in `docs/dev/spec-mature.md` §1.2:
-- loading bar and contextual hints
-- seasons
-- bow, traps, dog companion
-- skills
-- gamepad
-- achievements and photo mode
+### What is partial (code on disk, not finished or tested; details in `docs/dev/where-agents-stopped.txt`)
+| Package | Where it stopped |
+|---|---|
+| M2 GORE (`gore.js`) | Logic and bear wounds done. Was running its visual test pass. |
+| M3 SURV (`survival.js`) | Unit tests pass. Was running its browser acceptance tests. |
+| M4 CMB (`combat.js`, `enemies.js`, `tribe.js`) | Fixed a null-attacker crash in the raider logic. Was writing acceptance scripts 5, 11 and 12. |
+| M5 ARC (`arc_data.js`) | Phase B mostly done (fever goal counters, migration tests). **Phase C (raid, fever, romance integration) not started.** |
+| M6 ROM+MUS (`romance.js`, `music.js`) | Was testing the heart-60 event, the fade setting and gifts. |
 
-**Known issues to watch:** frame rate is low in headless tests (7–21 fps with software rendering); check on a real GPU.
+### Top QA issues to fix (see `docs/dev/qa-round1-issues.json`)
+- **Help panel** is always on and covers subtitles, the E prompt, the first-person weapon and the inventory. Make it toggle with F1/H, or show contextual hints instead.
+- **Tame horse's E prompt** overrides "Sit with Sena", meals, revive and story beats. Fix the target priority.
+- **Caves:** pitch black past the torch; the mouth renders black from inside; white specks at gaps in the dome; the Echo Hollow entrance is buried under boulders.
+- **WebGL context loss** is unhandled: the screen goes white.
+- **Home and sleep:**
+  - berry bushes stay inside a hut or house built on top of them;
+  - the blanket hump hides Sena and the held hands;
+  - grown Lio sleeps on the tiny cradle;
+  - in the hot spring, they sit on top of the water.
+- **Still open from earlier:**
+  - stiff rider arms and instant mounting;
+  - no map marker for Lio;
+  - Sena doesn't sit by the hearth on New Life nights;
+  - wolves don't prefer the pine forest;
+  - the spear is one-handed in first person;
+  - the "hands are empty" chip shows while holding a weapon;
+  - low frame rate.
 
-The user's real save (MongoDB slot `default`) was advanced at their request to day 12, chapter 9 "Hearth and Home".
+### After that
+- **Viking "Book II: The Sea Road":** spec in `docs/dev/spec-viking.md`. **Ask the user the 4 questions in §0 first.** Defaults: option C; grown Lio can be downed but never dies; the game's own gods; no horned helmets.
+- **Backlog** (`docs/dev/spec-mature.md` §1.2): loading bar, seasons, bow, traps, dog, skills, gamepad, achievements, photo mode.

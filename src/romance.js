@@ -149,9 +149,11 @@ export function makePoses(THREE, ik2) {
     hand(C, who) {
       return (h) => {
         const w = C.handW; if (!(w > 0)) return;
-        const self = who === 'P' ? C.P : C.N, other = who === 'P' ? C.N : C.P, side = who === 'P' ? 'r' : 'l';
-        self.h.bones.pelvis.getWorldPosition(a); other.h.bones.pelvis.getWorldPosition(b);
-        m.addVectors(a, b).multiplyScalar(0.5); fwdOf(C.P, f);
+        const self = who === 'P' ? C.P : C.N, side = who === 'P' ? 'r' : 'l';
+        // The meeting point hangs off Aro alone (his root and pelvis height): Aro animates before Sena moves each frame,
+        // so a point built from both pelvises would lag a frame on one side and the hands would part at walking pace.
+        C.P.h.bones.pelvis.getWorldPosition(a); fwdOf(C.P, f); rightOf(C.P, b);
+        m.set(C.P.pos.x, a.y, C.P.pos.z).addScaledVector(b, C.T.handGap / 2);
         m.y += C.T.handY; m.addScaledVector(f, C.T.handFwd);
         h.bones['upperarm_' + side].getWorldPosition(e);
         rightOf(self, g); g.multiplyScalar(side === 'r' ? 1 : -1);          // outward from her/his own body

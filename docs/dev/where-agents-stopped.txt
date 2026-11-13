@@ -1,0 +1,40 @@
+#### workflow wf_f4cb473b-347 results: 0
+=== finish M5 ARC phase B
+  said: Now a shared test preamble and the batch of acceptance tests.
+  said: Now fix the fever goal counters and add fever-outcome memories.
+  last actions: Check getHeight handles caves | Wait for migration test result | Migration tests v2 ch11 and v1 ch6 | Find mature story setting control | Write mature-off and hardcore tests | Wait for both migration results
+=== finish M6 ROM + MUS
+  said: Now start my driver.
+  said: Now the bench test with the fixed arm.
+  last actions: /tmp/claude-1000/-home-ashish-Desktop-game/6dfdb715-4157-4569-89fa-7fd9e44a76a2/scratchpad | Test heart 60 event once-only | Test fade setting and gifts | Inspect menu state after gifts | Rebuild snapshot and reload | Wait for rebuild and load
+=== finish M2 GORE
+  last actions: /tmp/claude-1000/-home-ashish-Desktop-game/6dfdb715-4157-4569-89fa-7fd9e44a76a2/scratchpad | /tmp/claude-1000/-home-ashish-Desktop-game/6dfdb715-4157-4569-89fa-7fd9e44a76a2/scratchpad | Find help panel toggle | Lift focus arrow; write visual test; rebuild snapshot | Run visual pass in headless Chrome | Wait for first visual shots
+=== finish M3 SURV
+  said: Unit tests pass. Now let me read survival.js and the SURV section in full to assess completeness.
+  last actions:  | Log network failures in runner, rerun | Watch for network failures | Keep watching boot | SURV acceptance results (booted run) | Wait for first assertions
+=== finish M4 CMB
+  said: Meanwhile, let me check enemies.js and tribe.js more fully.
+  said: Now a helper file with test functions for the acceptance checks.
+  last actions: Reproduce updateFoes exception | Pinpoint exception column | Fix null atk crash in raider think | Rebuild, reload and write boot script | Boot a survivor game on new snapshot | Write async acceptance scripts 5, 11, 12
+#### workflow wf_78584803-95e results: 3
+=== QA r1:save-perf
+  said: Let me make the probe tolerant and print the exception.
+  said: The previous command was cut short; I'll write the harness files with Write.
+  said: Chrome was slow to start under load; adding a retry loop.
+  last actions: Run soak, mid-action and migration tabs | Find placeStruct call sites | Read ARC struct-placing code for idempotence | Find top-right HUD chips | Check matchip styling and usage | Wait for first mid-action results
+=== QA r1:story
+  said: Start the preview server and run the full playthrough first.
+  said: Now appending my section to progress.md.
+  last actions: Find tool grants that may skip HUD refresh | /tmp/claude-1000/-home-ashish-Desktop-game/6dfdb715-4157-4569-89fa-7fd9e44a76a2/scratchpad | Stop my preview server and verify the build | Stop the remaining 5192 preview processes | Append QA section to progress notes | 
+=== QA r1:weapons-horse
+  last actions: /tmp/claude-1000/-home-ashish-Desktop-game/6dfdb715-4157-4569-89fa-7fd9e44a76a2/scratchpad | Tame and mount a horse | Find when wild horses spawn | Set herd chapter, tame and mount | /tmp/claude-1000/-home-ashish-Desktop-game/6dfdb715-4157-4569-89fa-7fd9e44a76a2/scratchpad | Measure rider hands and gallop
+=== QA r1:sleep-home
+  said: Now I'll write a persistent CDP daemon that keeps API interception active and a command client.
+  said: Let me set up the shelter chapter with a hut and test the rest flow at night.
+  said: Now I'll append my section to progress.md.
+  last actions: Kill my own test processes | Check remaining vite preview owner | Kill my preview server and verify build passes | Confirm build success line | Append QA section to progress.md | 
+=== QA r1:fpp-world
+  said: Mirror Lake sits in a steep, perfectly circular crater. Quick checks of the pin/auto-walk and a landmark next.
+  said: Auto-walk and the pin beacon work. The standing stones render almost black in morning light. One quick draw-call sample for the performance note, then I'll wrap up.
+  said: Now appending my section to progress.md.
+  last actions: Sample render stats at home view | Stop my test processes and run the build | Identify the 5193 listener and confirm the build | Kill my vite preview on 5193 | Append QA section to progress notes | 

@@ -330,7 +330,7 @@ export function createTribe(ctx) {
     postureTick(f, dt, ctx.clock());
     if (f.stun > 0) { f.stun -= dt; f.speed = 0; return; }
     if (f.stagger > 0) { f.stagger -= dt; f.speed = 0; f.atk = null; return; }
-    if (f.atk) { tickAttack(f, dt); f.speed = 0; faceTo(f, tgtPos(f.atk.target).x, tgtPos(f.atk.target).z, dt, f.atk.t < f.atk.wind * 0.7 ? 6 : 1); return; }
+    if (f.atk) { const a = f.atk, tp = tgtPos(a.target); tickAttack(f, dt); f.speed = 0; faceTo(f, tp.x, tp.z, dt, a.t < a.wind * 0.7 ? 6 : 1); return; }   // tickAttack may end (or a parry cancel) the attack
     const dP = Math.hypot(P.pos.x - f.pos.x, P.pos.z - f.pos.z);
     switch (f.mode) {
       case 'patrol': case 'camp': {

@@ -3751,7 +3751,7 @@ function goreInit() {
   // Hunter's Focus arrow: a flat glowing chevron on the ground
   const sh = new THREE.Shape(); sh.moveTo(0, 0.55); sh.lineTo(0.32, 0.05); sh.lineTo(0.12, 0.05); sh.lineTo(0.12, -0.45); sh.lineTo(-0.12, -0.45); sh.lineTo(-0.12, 0.05); sh.lineTo(-0.32, 0.05); sh.closePath();
   const ag = new THREE.ShapeGeometry(sh); ag.rotateX(-Math.PI / 2);
-  GS.arrow = new THREE.Mesh(ag, new THREE.MeshBasicMaterial({ color: 0xff3a24, transparent: true, opacity: 0, depthWrite: false, blending: THREE.AdditiveBlending, fog: false }));
+  GS.arrow = new THREE.Mesh(ag, new THREE.MeshBasicMaterial({ color: 0xff3a24, transparent: true, opacity: 0, depthWrite: false, depthTest: false, blending: THREE.AdditiveBlending, fog: false }));   // drawn over meadow grass
   GS.arrow.visible = false; GS.arrow.renderOrder = 3; scene.add(GS.arrow);
   GS.ray = new THREE.Raycaster(); GS.ray.far = 2.6;
   Object.assign(window.G, { gore: goreHooks() });
@@ -3996,14 +3996,14 @@ function goreTarget(p) {
   return null;
 }
 const goreNeed = (o) => (o.kind === 'fox' || o.kind === 'wolf' ? 2.5 : 4);
-function goreCam(o, close) {                         // a short side shot (wide on Gore Low); none in first person
+function goreCam(o, close) {                         // a short three-quarter shot over Aro's shoulder onto the animal (wide on Gore Low); none in first person
   if (view === 'fpp' || !settings.finisherCam && !close) return null;
-  const p = o.root.position, ax = p.x - P.pos.x, az = p.z - P.pos.z, l = Math.hypot(ax, az) || 1, sx = -az / l, sz = ax / l;
-  const low = goreLevel() === 'low', d = low ? 4.6 : close ? 2.0 : 2.3, gy = getHeight(p.x, p.z);
-  // high enough to look down over meadow grass at the carcass and the kneeling hunter (low shots sat inside the grass)
-  const pos = new THREE.Vector3(p.x + sx * d - (ax / l) * (low ? 1.5 : 0.5), gy + (low ? 2.8 : close ? 1.65 : 1.45), p.z + sz * d - (az / l) * (low ? 1.5 : 0.5));
-  const k = close ? 0.68 : 0.5;                       // frame on the animal more than on Aro
-  return { pos, look: new THREE.Vector3(p.x * k + P.pos.x * (1 - k), gy + (close ? 0.3 : 0.6), p.z * k + P.pos.z * (1 - k)), t: 99, gore: true };
+  const p = o.root.position, ax = p.x - P.pos.x, az = p.z - P.pos.z, l = Math.hypot(ax, az) || 1, fx = ax / l, fz = az / l, sx = -fz, sz = fx;
+  const low = goreLevel() === 'low', back = low ? 3.2 : close ? 1.5 : 1.8, side = low ? 3.4 : close ? 1.9 : 2.2, gy = getHeight(p.x, p.z);
+  // high enough to look down over meadow grass (lower shots sat inside the grass and lost the carcass)
+  const pos = new THREE.Vector3(P.pos.x - fx * back + sx * side, Math.max(gy, P.pos.y) + (low ? 2.9 : close ? 1.75 : 1.55), P.pos.z - fz * back + sz * side);
+  const k = close ? 0.75 : 0.6;                       // frame on the animal, Aro in the near third
+  return { pos, look: new THREE.Vector3(p.x * k + P.pos.x * (1 - k), gy + (close ? 0.3 : 0.55), p.z * k + P.pos.z * (1 - k)), t: 99, gore: true };
 }
 function goreButcherStart(o) {
   goreInit();
@@ -4141,7 +4141,7 @@ function goreFocus(dt) {
   let x, z, head;
   if (f.dist > 6 || f.head == null) { head = Math.atan2(f.x - P.pos.x, f.z - P.pos.z); x = P.pos.x + Math.sin(head) * 1.6; z = P.pos.z + Math.cos(head) * 1.6; }
   else { head = f.head; x = f.x; z = f.z; }
-  A2.visible = true; A2.position.set(x, getHeight(x, z) + 0.06, z); A2.rotation.y = head;
+  A2.visible = true; A2.position.set(x, getHeight(x, z) + 0.3, z); A2.rotation.y = head;   // knee height: readable above the grass
   A2.material.opacity = 0.45 + 0.3 * Math.sin(clock * 5);
   if (!GS.said[f.trail] && Math.hypot(N.pos.x - P.pos.x, N.pos.z - P.pos.z) < 25) { GS.said[f.trail] = 1; say('Sena', 'It is bleeding. This way.'); }
 }
@@ -4197,8 +4197,8 @@ function goreHooks() {
 const ROMP = ROMD.makePoses(THREE, ik2);
 const ROM = {
   // pose and camera tuning (G.rom.T live-edits it). lips/brow/cheek: points in each Head bone's local frame.
-  T: { handY: -0.12, handFwd: 0.08, apart: 0.32, lean: 0.06, leanN: 0.02, kissLean: 0.05, headYaw: 0.35, headRoll: 0.1, pitchP: 0.18, pitchN: 0.1, tilt: 0.14,
-    handUpP: 0, handSideP: 0.14, handBackP: 0.09, handUpN: 0.1, handSideN: 0.12, handBackN: 0.08,
+  T: { handY: -0.12, handFwd: 0.08, handGap: 0.55, apart: 0.32, lean: 0.06, leanN: 0.02, kissLean: 0.05, headYaw: 0.35, headRoll: 0.1, pitchP: 0.18, pitchN: 0.1, tilt: 0.14,
+    handUpP: -0.12, handSideP: 0.14, handBackP: 0.12, handUpN: 0.1, handSideN: 0.12, handBackN: 0.08,
     lipsP: [0, 0.07, 0.11], lipsN: [0, 0.07, 0.1], browP: [0, 0.15, 0.1], browN: [0, 0.14, 0.09], cheekN: [0.06, 0.1, 0.06], gap: 0.015, shoulderUp: 0.1, armUp: 0.05, armBack: 0.04,
     camDist: 1.9, camY: 1.5, kissDist: 1.5, hideBack: true },
   P, N, w: 0, mode: null, kissK: 0, browK: 0, armsW: 1, peck: false, handW: 0, benchW: 0, benchHead: false, benchSideP: 'l', bench: false,
@@ -4243,7 +4243,7 @@ function romRegister(def) { const i = SENA_ACTS.findIndex((a) => a.id === def.id
 function romTarget(p) {
   if (busy || P.ride || N.ride || P.sit > 0 || N.sit > 0 || P.rest > 0 || N.rest > 0 || P.downed > 0 || N.downed || MAT.rescuing || ROM.scene || P.swim) return null;
   const dx = N.pos.x - p.x, dz = N.pos.z - p.z, d = Math.hypot(dx, dz);
-  if (d > 2.2 || hostileNear(20)) return null;
+  if (d > 2.2 || hostileNear(20) || (ROM.hand && P.speed > 0.5)) return null;   // walking hand in hand: no prompt bobbing over them
   // only when Aro looks her way, so gathering beside her still works
   if (d > 0.6 && Math.abs(angTo(camFace(), Math.atan2(dx, dz))) > 0.85) return null;
   return ROM.tgt = { label: 'Sena (hold E)', key: true, rom: true, act() { if (!ROM.eAt) ROM.eAt = performance.now(); } };
@@ -4626,10 +4626,12 @@ async function romNight(s) {
   for (const e of [P, N]) { e.vx = e.vz = 0; e.speed = 0; e.sit = 0; e.h.pose = null; e.node = null; }
   ROM.nightCrouch = true;
   R.lastLook = null;
-  const cp = W3([-0.9, 1.55, 1.25]), cl = W3([hx[0] - 0.9, 0.9, hx[2] + 0.7]);
+  // side-on to the two of them with the hearth glowing past Sena (the old over-the-shoulder spot hid her behind Aro)
+  const cp = W3([hx[0] + 0.29, 1.5, hx[2] + 2.41]), cl = W3([hx[0] - 0.8, 0.95, hx[2] + 0.65]);
   rstShot(cp, cl, 0.01, true);
   $('restdip').classList.remove('on');
   const Ln = ROMD.L.night;
+  subs.length = 0; subT = 0; $('sub').classList.remove('on');                           // a clean slate: only their lines tonight
   say(...Ln[0]); say(...Ln[1]);
   await romWaitSubs(16000);
   ROM.nightCrouch = false;
