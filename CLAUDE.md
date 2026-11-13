@@ -69,7 +69,7 @@ The user asked for a 21+ game.
 ## Status: STOPPED 2026-11-13 ~17:20 on the office laptop. RESUME HERE
 When the user says "I'm back, continue" (or similar), do this:
 1. Run `git pull` and `git log --oneline -3`. The last commit should be the 17:20 handover. Then `npm install`, then `npm run db` (Docker; without Docker, saves fall back to SQLite).
-2. Optional, if the user wants their own game at home: import their save. Start `npm run dev` (port 5173), then run `curl -X PUT -H 'content-type: application/json' --data @docs/dev/user-save.json localhost:5173/api/save`. That save is day 13, chapter 9 "Hearth and Home".
+2. Optional, if the user wants their own game at home: import their save. Start `npm run dev` (port 5173), then run `curl -X PUT -H 'content-type: application/json' --data @docs/dev/user-save.json localhost:5173/api/save`. That save is day 14, chapter 9 "Hearth and Home", with a tamed horse called Dawn.
 3. Recreate a scratchpad from `docs/dev/`:
    - `spec-mature.md` → `spec_mature.md`
    - `spec-weapons-sleep.md` → `spec_ws.md`
