@@ -33,6 +33,9 @@ npm run build   # must always pass
 
 ## Testing rules (important)
 - **Never touch the user's real save.** Test servers use ports **5174+**, never 5173.
+- **Hard protection** in `server/db.mjs`: only requests that arrive on port 5173 (or the ports in `HB_SAVE_PORTS`) use the real `hearthborn` database. Every other port gets `hearthborn_test` and `saves/hearthborn_test.sqlite`.
+  - Added on 2026-11-13, after a test run overwrote the real save. It was restored from a snapshot; backup copy at `~/.claude/projects/-home-ashish-Desktop-game/hearthborn-notes/save_backup_day13.json`.
+  - If you run the production server on another port, set `HB_SAVE_PORTS`.
 - Drive the game in headless Chrome with every `/api/` request intercepted: `tools/test/run.mjs`.
   ```bash
   npx vite --port 5174 --strictPort &

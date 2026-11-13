@@ -5,17 +5,21 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 const DIR = path.resolve('saves');
-const SQLITE_FILE = path.join(DIR, 'hearthborn.sqlite');
 const MONGO_URL = process.env.MONGO_URL || 'mongodb://127.0.0.1:27018';
 const MONGO_DB = process.env.MONGO_DB || 'hearthborn';
+// Only a server listening on the player's own port may touch the real saves. Every other port (test servers run by
+// tools and agents on 5174+) gets a separate "_test" database and SQLite file, so a test can never overwrite a game.
+const REAL_PORTS = String(process.env.HB_SAVE_PORTS || '5173').split(',').map((p) => +p.trim());
+const KIND = { real: { mongo: MONGO_DB, sqlite: path.join(DIR, 'hearthborn.sqlite') }, test: { mongo: MONGO_DB + '_test', sqlite: path.join(DIR, 'hearthborn_test.sqlite') } };
 const KEEP = 12;                       // snapshots kept per slot
-let db = null, mode = 'none';
+const handles = {}, modes = {};
+let mode = 'none';
 
-async function openMongo() {
+async function openMongo(name) {
   const { MongoClient } = await import('mongodb');
   const client = new MongoClient(MONGO_URL, { serverSelectionTimeoutMS: 2500, connectTimeoutMS: 2500 });
   await client.connect();
-  const d = client.db(MONGO_DB), saves = d.collection('saves'), snaps = d.collection('snapshots');
+  const d = client.db(name), saves = d.collection('saves'), snaps = d.collection('snapshots');
   await saves.createIndex({ slot: 1 }, { unique: true });
   await snaps.createIndex({ slot: 1, createdAt: -1 });
   return {
@@ -43,9 +47,9 @@ async function openMongo() {
   };
 }
 
-async function openSqlite() {
+async function openSqlite(file) {
   const { DatabaseSync } = await import('node:sqlite');
-  const d = new DatabaseSync(SQLITE_FILE);
+  const d = new DatabaseSync(file);
   d.exec(`
     PRAGMA journal_mode = WAL;
     CREATE TABLE IF NOT EXISTS saves (slot TEXT PRIMARY KEY, data TEXT NOT NULL, updated_at INTEGER NOT NULL);
@@ -77,30 +81,36 @@ async function openSqlite() {
   };
 }
 
-export async function openDb() {
-  if (db) return db;
+// kind: 'real' (the player's saves) or 'test'. Each is opened once and cached.
+export async function openDb(kind = 'real') {
+  if (kind in handles) return handles[kind];
+  const K = KIND[kind];
+  let d = null, m = 'none';
   fs.mkdirSync(DIR, { recursive: true });
-  try { db = await openMongo(); mode = 'mongodb'; }
+  try { d = await openMongo(K.mongo); m = 'mongodb'; }
   catch (err) {
     console.warn(`[hearthborn] MongoDB not reachable at ${MONGO_URL} (${err.message.split('\n')[0]}). Start it with: docker compose up -d`);
-    try { db = await openSqlite(); mode = 'sqlite'; }
-    catch (err2) { console.warn('[hearthborn] SQLite unavailable too:', err2.message); db = null; mode = 'none'; }
+    try { d = await openSqlite(K.sqlite); m = 'sqlite'; }
+    catch (err2) { console.warn('[hearthborn] SQLite unavailable too:', err2.message); }
   }
-  console.log(`[hearthborn] saves: ${mode}${mode === 'mongodb' ? ` (${MONGO_URL}/${MONGO_DB})` : mode === 'sqlite' ? ` (${SQLITE_FILE})` : ''}`);
-  return db;
+  handles[kind] = d; modes[kind] = m;
+  if (kind === 'real') mode = m;
+  console.log(`[hearthborn] ${kind} saves: ${m}${m === 'mongodb' ? ` (${MONGO_URL}/${K.mongo})` : m === 'sqlite' ? ` (${K.sqlite})` : ''}`);
+  return d;
 }
 export const dbMode = () => mode;
+const kindOf = (req) => (REAL_PORTS.includes(req.socket?.localPort) ? 'real' : 'test');
 
 // Express-style handler shared by the Vite dev server and the production server. Returns true if it handled the request.
 export async function handleApi(req, res) {
   const url = new URL(req.url, 'http://x');
   if (!url.pathname.startsWith('/api/')) return false;
   const send = (code, body) => { res.statusCode = code; res.setHeader('content-type', 'application/json'); res.setHeader('cache-control', 'no-store'); res.end(JSON.stringify(body)); };
-  const d = await openDb();
+  const kind = kindOf(req), d = await openDb(kind), mode = modes[kind];
   if (!d) return send(503, { ok: false, error: 'no database available' }), true;
   const slot = (url.searchParams.get('slot') || 'default').slice(0, 40);
   try {
-    if (url.pathname === '/api/health') return send(200, { ok: true, db: mode }), true;
+    if (url.pathname === '/api/health') return send(200, { ok: true, db: mode, saves: kind }), true;
     if (url.pathname === '/api/saves') return send(200, { ok: true, db: mode, saves: await d.list() }), true;
     if (url.pathname === '/api/history') return send(200, { ok: true, history: await d.history(slot) }), true;
     if (url.pathname === '/api/restore' && req.method === 'POST') return send(200, { ok: await d.restore(slot, url.searchParams.get('id')) }), true;
