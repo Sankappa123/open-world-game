@@ -68,10 +68,14 @@ The user asked for a 21+ game.
 - the family arc
 - torch, poultice, cloak, waterskin and fishing
 
-**In progress (uncommitted while agents work):**
-1. **Weapons (WPN) and sleep (RST):** built and integrated. The 2-round QA test-and-fix pass is running. Spec: `docs/dev/spec-weapons-sleep.md`.
-2. **First-person realism (FPP):** DONE and verified on 2026-11-13. Body visible looking down, hands holding weapons and torch, head bob from the feet, landing dip, roll, no wall clipping, comfort settings in Esc → Video. Open: the spear is one-handed in FPP, no neck limit while riding, and the "Your hands are empty" chip shows even when holding a weapon.
-3. **Mature features (M1–M6):** M1 foundation DONE. M2 gore, M3 survival, M4 combat/enemies, M5 story, M6 romance+music are being built in parallel, then ARC integration and QA. Spec: `docs/dev/spec-mature.md` (§12 = the user's tone decisions).
+**WIP checkpoint committed (8e37add, 2026-11-13 16:00, after a reboot stopped all agents):**
+1. **Weapons (WPN) and sleep (RST):** built, integrated and tested by their builders. **The QA test-and-fix round has NOT run yet**: all 5 testers were cut off by an API outage. Spec: `docs/dev/spec-weapons-sleep.md`.
+2. **First-person realism (FPP):** DONE and verified. Open items: the spear is one-handed in FPP, no neck limit while riding, and the "hands are empty" chip shows while holding a weapon.
+3. **Mature features:**
+   - M1 foundation is DONE (21+ notice, difficulty modes, downed/permadeath and memorial, settings tabs). Pure logic is in `src/mature.js`.
+   - **M2 gore, M3 survival, M4 combat/enemies, M5 story, M6 romance+music are PARTIAL** (files `gore.js`, `survival.js`, `combat.js`, `enemies.js`, `tribe.js`, `arc_data.js`, `romance.js`, `music.js`). Each builder must inspect its partial work and continue from it, not start over.
+   - After that: ARC integration (raid, fever, romance beats), then QA on Story, Survivor and Hardcore.
+   - Spec: `docs/dev/spec-mature.md`.
 
 **Planned for 2026-11-14: Viking way of life, "Book II: The Sea Road".** Spec: `docs/dev/spec-viking.md`, which starts with the user-facing options in §0.
 - Recommended option C: after Book I, eighteen winters later, Lio is grown and steers. Bronze Age longship with a horse-head prow and the first sail, a crew with loyalty, river to the sea and islands, a longhouse hall with feasts and vows, the Grey Sails sea raiders, a holmgang duel, and a coda with real Vikings.
