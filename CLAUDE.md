@@ -69,18 +69,14 @@ The user asked for a 21+ game.
 - torch, poultice, cloak, waterskin and fishing
 
 **In progress (uncommitted while agents work):**
-1. **Weapons (WPN) and sleep (RST)** are built. The integration check and then the 2-round QA test-and-fix pass are running. Spec: `docs/dev/spec-weapons-sleep.md`.
-2. **First-person realism (FPP):** body awareness, head bob, hands, no clipping, settings. Research is done and the build is in progress.
-3. **Mature features (M1–M6), 14 features.** Spec: `docs/dev/spec-mature.md`, including §12 (the user's tone decisions). Steps:
-   1. M1 foundation: content notice, difficulty, downed/permadeath, settings.
-   2. Built in parallel:
-      - M2 GORE: blood, wounds, hunting realism, dismemberment
-      - M3 SURV: injuries, illness, water, spoilage
-      - M4 CMB: combat, predators, the Ash People raiders
-      - M5 ARC: 7 mature chapters with choices
-      - M6 ROM+MUS: romance and an adaptive score
-   3. ARC integration.
-   4. QA: Story, Survivor and Hardcore runs.
+1. **Weapons (WPN) and sleep (RST):** built and integrated. The 2-round QA test-and-fix pass is running. Spec: `docs/dev/spec-weapons-sleep.md`.
+2. **First-person realism (FPP):** DONE and verified on 2026-11-13. Body visible looking down, hands holding weapons and torch, head bob from the feet, landing dip, roll, no wall clipping, comfort settings in Esc → Video. Open: the spear is one-handed in FPP, no neck limit while riding, and the "Your hands are empty" chip shows even when holding a weapon.
+3. **Mature features (M1–M6):** M1 foundation DONE. M2 gore, M3 survival, M4 combat/enemies, M5 story, M6 romance+music are being built in parallel, then ARC integration and QA. Spec: `docs/dev/spec-mature.md` (§12 = the user's tone decisions).
+
+**Planned for 2026-11-14: Viking way of life, "Book II: The Sea Road".** Spec: `docs/dev/spec-viking.md`, which starts with the user-facing options in §0.
+- Recommended option C: after Book I, eighteen winters later, Lio is grown and steers. Bronze Age longship with a horse-head prow and the first sail, a crew with loyalty, river to the sea and islands, a longhouse hall with feasts and vows, the Grey Sails sea raiders, a holmgang duel, and a coda with real Vikings.
+- **Ask the user the 4 questions in §0** (A/B/C, can grown Lio be downed, gods, helmets) before building. Defaults: C, yes but never dies, own gods, no horns.
+- Build it with work packages N1–N6 from the spec after the mature build is committed.
 
 **Next after these land:** commit to `expansion` (Claude has no GitHub credentials on this machine, so the user pushes). Then work the backlog in `docs/dev/spec-mature.md` §1.2:
 - loading bar and contextual hints

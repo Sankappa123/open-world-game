@@ -534,3 +534,139 @@ Tests are in tests/wp4: t1.json (acceptance), t2.json (whistle, feed, stable, ki
 **Prototype finding (20b):** at pitch 1.45 (83°), with the camera 6 cm ahead of the real eye and the head hidden, you see your chest, hands and front foot. With the current 1.25 limit and a 58° FOV, the body stays mostly out of frame (16). A strong spine bend shows only one leg (20), so keep the bend at 0.25 rad or less. A camera behind the eye shows the inside of the neck stump (18), so hide neck vertices too.
 **Shots:** shots/fpp/00–14 (audit), 15–20 (body prototypes).
 **Plan:** prioritized P0–P3 with parameter values in the agent's return message. The core idea is a smoothed eye taken from the Head bone, a visible body with head and neck discarded in the colour pass only (the shadow keeps the head), and footstep-locked bob, roll and landing dip with comfort sliders.
+
+## FPP first person: implementation (DONE)
+**Files:** src/main.js (`// ---------- FPP first person ----------` right before `// ---------- start ----------`, plus one-line `// FPP` hooks), src/people.js (1 line: `h.back` plays the gait clip reversed), index.html (3 Esc-menu rows: Head bob, Field of view, Reduce motion; `#pause .box` scrolls at 720p). No new deps, no commits. `npm run build` passes on the working tree.
+**Hooks in main.js:** placeStruct `fppHouseCols(st)` (house only); the 3 pitch clamps use `fppPitchMax()` (1.45 in first person, 1.25 in third); the 2.3 m step timer only sounds when `!FP.own`; `P.face = fppFace(dt, moving, dx, dz)` in first person; jump vy 5.6 → 4.4 (0.65 m apex); updateCamera `if (fppCamera(dt)) return;` after the camShot block and `const fovT = fppFovT(dt)`; frame: `fppVm(dt)` after wpnVm, `fppPost()` after the world render; `G.fpp()` / `G.FP` / `G.fppCamera` / `G.fppVm` at the end.
+### What it does
+- **Eyes:** the camera rides the Head bone (eye offset measured once from the Eyes mesh in head space) + 6 cm along the view. A slow base (1.5/s, up to 7/s for big changes like crouch/sit/kneel) plus 24% of the gait residual (clamped ±5 cm, × head-bob setting) up/down, 50% side sway (figure-8), 70% fore/aft; horizontal offset clamped to 0.24 m (inside the collision circle). Re-entry blends from the previous camera over 0.3 s (clean hand-back from the RST cinematic: measured 1.69 → 1.67 m, no pop).
+- **Body:** Aro stays visible with his shadow. A per-vertex `fppMask` (skin weights: head+neck / right arm / left arm) and `onBeforeCompile` discard (flat varying) hide head and neck in the colour pass only; hair, beard, eyes, eyebrows use colorWrite/depthWrite false, so the shadow keeps the whole head. Override order 12: spine twist toward the view (30/30/40) and a neck/chest bend when looking down (max 0.25 rad). Feet: ±45° idle tolerance then turn in place at 6 rad/s; moving legs face the motion (±0.9 rad), backward walking plays the clip reversed; seated/working/dancing/resting never steer P.face; weapons drawn, aim, attack cool-down, swim, air snap to the view (melee/throw direction unchanged).
+- **Steps:** contacts from foot bones (local minimum near an adaptive floor; frame-rate proof), both views; measured 1.77 steps/game-s at 3.3 m/s, 3.3 sprint, 1.2 sneak (anim: 2.0 / – / 1.21). Each step: sound (sneak quiet, sprint louder, stone path brighter), −1.2 cm spring dip and 0.3° roll toward that foot.
+- **Springs:** critically damped (k 60): take-off −2 cm, landing −clamp(|vy|·0.012, 0.03, 0.12) m and a 1.5° nod (both scaled by the bob setting; reduce motion 30%).
+- **Roll/sway/breath/FOV:** strafe roll −(side v/6.6)·1.5° + turn roll up to 0.8°, capped ±2°; sprint sway 0.25°; idle breathing 6 mm/0.15° at 0.25 Hz, tired (stamina < 25) 2 cm at 0.6 Hz with an audible breath; FOV = setting + 6·clamp((v−3.3)/3.3) (also third person), WPN aim zoom = setting − 10, throw punch +3.
+- **Guards:** near plane 0.06 in first person (0.15 otherwise); terrain y ≥ ground + 0.25; house wall slabs push the camera out (nursery doorway respected). **House wall colliders** (both views): 27 r 0.3 circles just outside the walls where the r 3.52 circle doesn't reach; they switch off with the house circle (RST walk-in/indoors). Corner walk-in fixed (06 vs 47).
+- **Hands (integrates WPN, no duplicate):** a second Aro rig (`AR`) in WPN's vmScene draws only his arms (mask), shoulders just behind the eye. Each hand is solved from the held thing: `hand = thing × FIT⁻¹` (the same FIT as third person), two-bone IK + wrist-roll share + fist fingers. WPN's box fists/forearms are hidden; weapons, torch and glow stay on vmR/vmL. The body's own arm on that side is hidden while the viewmodel draws it, and the body's held spear/axe/torch are hidden for the colour pass. Pickups (`use`/`pick` shots): the right (or free) hand reaches to the ground point 1.2 m ahead mapped onto the viewmodel camera (0.25 s out, 0.1 hold with a closing fist, 0.3 back), both body arms hidden during the shot. Sprint with nothing drawn: fists pump into the bottom of the view. Riding: two fists over the withers, fixed to the horse frame (not the view), with two rein straps to the horse's Head bone, projected to match on screen.
+- **Torch:** viewmodel hand 5/3/3 cm lower-left-further, light ×0.5, glow 0.28, shaft ×0.42, flame ×0.78.
+- **Swim:** eye 0.28 above the swim line, 1.333 s stroke bob (4 cm) + 1° roll. Viewmodel breaststroke hands exist but are off (`FP.swimHands`): drawn over the water they read as fake.
+- **Riding:** saddle height followed at 14/s, nod with the gait from the saddle's up/down.
+- **Settings:** `settings.fppBob` (0..1, default 0.7), `settings.fov` (50..80, default 60), `settings.reduceMotion` (roll 0, bob 25%, landing 30%, no sprint FOV/sway/punch). Verified: FOV 72 applied, roll 0 and no sprint widening with reduce motion.
+- **WPN bug fixed in passing:** wpnVm sets `vmR/vmL.visible = null` when camShot is null; three.js draws null as visible, so the spear showed as a dot whenever the viewmodel scene rendered without WPN. fppVm normalises to booleans.
+### Evidence (vite preview of a snapshot on 5179, Chrome 9341, every /api/ intercepted; machine load 14-17, game at 2-20 fps)
+- Gait (in first person, bob 70%): walk/jog 3.3 m/s camera p-p 6.7 cm, sprint 6.1 cm, sneak 4.1 cm at eye 0.88-0.92 m; strafe roll −0.86°; sprint FOV 66 (base 60).
+- Jump: apex 0.53 m sampled (0.65 theoretical), landing spring and nod recorded.
+- Shots (shots/fpp/): 31_lookdown / 52_fpp_lookdown_final (chest, legs, feet, shadow), 32_walk_down_grid (arms swing in view while walking), 36_axe, 37_grid (spear, fists guard with real hands), 53_grid (torch at night, real hand), 42_reach_b (pickup reach), 43_grid (swim water line), 44_grid (horse ears, real hands on the reins), 45_grid (seated at the fire, eye 1.28; lap), 46_kneel_build, 47_grid (house wall, no clipping), 48_grid (rest cinematic with head visible, hand-back), 49_settings, 50_grid (strafe), 51_grid (third person unchanged, look-down, torch).
+- Test copy builder: scratchpad/fppsrc/mk.py (`index` = git index + FPP lines, `work` = working tree), tests/fpp/rebuild.sh, boot.sh, fp.sh, meas.js (GAIT, JTRACE, DRAW2, REACHAT, FR2). Note: FR2 renders outside the frame, so it shows held items fppPost restored; use real screenshots for those.
+### Gaps
+- Jump_Start / Jump_Land / Hit clips not wired (anims.glb has them; people.js would need loading).
+- No underwater tint (the eye never goes under: swim eye is pinned above the water line).
+- Mouse smoothing setting (P3) not added; the raw mouse path is unchanged.
+- Under heavy load the gait numbers were sampled at 5-15 fps; re-check bob feel at 60 fps by eye.
+
+## WPN + RST integration (spec_ws.md §4): DONE
+**Harness:** scratchpad/tests/int/ (a copy of the WPN daemon harness re-pointed at tests/int + `rrun.mjs`, a copy of the RST runner moved to 5174/9333 that waits for Chrome to start; `rr.sh` runs one suite and always kills the 9333 Chrome after it). It used a `vite preview` of a build snapshot in tests/int/dist on 5174 with Chrome on 9333, and every /api/ request was intercepted. No commits.
+- **Joint checks** (`tests/int/joint.json`, generated by `gen.py`): 16/16 PASS, errors=0, on the latest build.
+  - A: rest with the spear thrown out. It is taken off the ground at bedtime and laid by the bed, and the toast "Sena brought your spear home last night" shows. Everything returns to its socket, and no second spear is left in the world.
+  - B: rest with the torch lit. The torch goes out and lies on the floor by the bed through the night, then returns unlit to the hip at wake.
+  - C: rest with the axe drawn. It is put away instantly in `prep` and laid on the floor, then is back on the hip after waking.
+  - D: hold aim and press the real E key at the hut. The aim is cancelled, the zoom and the aim crosshair are cleared, and the rest menu opens. Pressing 1 starts the rest with the weapons put away, and they are back after waking.
+- **Extra checks** (`tests/int/shots4.json`): 6/6 PASS.
+  - Sena's spear is hidden in bed and back after waking.
+  - Solo rest: her basket is not laid at Aro's bed, and it is on her back after the night.
+  - Cave: the weapons come back after waking.
+**Fixes (tagged `integration`, plus one WPN line):**
+1. `wpnRest`: hide Sena's old flint-era spear (`N.h.spear`). wpnSena does not run during the rest, so the spear stayed on her back and stuck out across the bed over both sleepers (visible in the house-bed side shot).
+2. `wpnSena`: Sena carries her basket and spear again while she walks out of the door after a night (`R.nOut`). Before this, both vanished as soon as `wpnWake` had put them on her back, and popped back once she was outside.
+3. `rstBegin`: a solo rest passes no basket point. Before this, Sena's basket left her (she was 40+ m away) and was laid at Aro's bed.
+4. `wpnRest`: in a cave (no wall to lean against), the spear lies flat along the bed instead of standing upright in mid-air.
+5. Tree chop sets `W.hsLast` like other hits. `wpn/chop.json` checked it; it was undefined in a fresh game.
+**Suites on the integrated build:**
+- wpn: accept 10/10, accept2 10/11, accept3 11/11, accept4 8/9, rest 4/4, chop 3/4 then 4/4 after fix 5.
+  - The accept2 and accept4 misses are timing only, at 5 fps: the tap-Q swap was measured at 0.80 s against a limit of < 0.8, and trauma had decayed to 0.175 against > 0.2 by the time of the check. With shake off, `shakeK` was 0.
+- rst: t1 21/23, t2 16/17, t3 7/8, errors=0.
+  - Misses at about 5 fps: Sena's per-frame step was 0.345 m against < 0.3 (2.3 m/s × the 0.15 s dt cap); the fixed real-time walk out of the door was too short (in a manual run he walks out and the collider comes back); the skip finished in 5.6 s against 4.5.
+- tests/final/play.json (as wpn/play_slow.json): 28/28, errors=0.
+  - On the final build at load average 20+ it needed every `until` timeout tripled (tests/int/play_slow3.json); with the old timeouts the co-op hut build timed out at 90 s and the rest of the chain failed after it.
+- wp4 t2: 8/8.
+- wp4 t1: tame / gallop / pelvis-sample / trot-cap fail only on game-time vs real-time at 5 fps. That ride code is untouched, and t1's remaining checks pass.
+**Screens (Intel GL)**, in scratchpad/shots/int/:
+- s1_idle_tpp, s1b_idle_tpp_back
+- s2_aim_arc
+- s3_chop_side/side2/tpp
+- s4_ride_stowed, s4b_ride_side
+- s5_house_bed_asleep(2), s5b_house_bed_side2, s5c/s5d props
+- s6a_wake_situp, s6_wake_stretch, s6c_after_wake, s6d_sena_walks_out
+- s7_cave_asleep, s7b_cave_after
+- Contact sheets g1–g8.
+**Notes for the next pass:**
+- The machine ran at 5 fps (load average 12-20), so timing checks are noisy.
+- Another package (MAT) is mid-edit in the same tree:
+  - It adds a "21+ / blood / dismemberment" content gate and a difficulty modal before New game. That conflicts with the family-friendly rule; it is flagged here and was not touched.
+  - Harnesses that click `btn-new` after accepting the gate now land in the difficulty modal. tests/int/setup.sh clicks `ng-go`.
+  - One build in the middle of the run failed at boot (`matBindSettings` was not defined yet); it was fine about a minute later.
+- Visual judgement:
+  - The blanket in the house bed is a tall, bulky hump that hides most of Sena from the main bedside camera.
+  - The axe head reads as a sledgehammer.
+  - From the side shot, the spear leaning in the bed-head corner lines up with Aro's head.
+
+## M1 MAT: mature foundation (spec_mature.md §3-§7, §12): DONE
+**Files:** NEW `src/mature.js` (pure: DIFF table + `diffOf`, `packSize`, `canSetMode`, BUS `on/off/emit`, `clockDelta`, `penaltyLoss`, Stones store, epitaphs, `causeLine`, FULL/TONED presets, NOTICE, `renderChoice`; the guardrail comment block incl. §12), `src/save.js` (DEFAULTS §3.1 with §12 defaults: blood on, gore high, romance full, matureStory on; `deleteGame` also drops a pending queued save; `SETTING_DEFAULTS` export), `index.html` (CSS block "MAT", `#gate`, `#newgame`, `#stones`, `#obit`, `#choice`, `#downed`, `#matchip`, `#btn-stones`, pause tab bar + Game/Video/Audio/Content rows + credits row), `src/main.js` (section `// ---------- MAT mature foundation ----------` where die() was, plus one-line `// MAT` hooks).
+### Shared contracts other packages use (all names are module-level in main.js)
+- **State:** every §4.1 field is in `fresh()` (gh, diff, downedDay, weakUntil, nhp, aff/naff, risk, skinQ, age, stashAge, legend, arc{...}, rom{...}); storyV 3 + chId. Every §4.2 item is in ITEMS. Tools boilbag/pot/mantle/bearcloak show in the inventory bar when set in `S.tools`. `matLoad()` deep-merges diff/arc(+choices, raid, home)/rom(+heart, dayCaps, gifts)/risk/age/stashAge/legend, arrays default [].
+- **`D()`** (cached preset ⊕ `S.diff.custom`), `diffK(k)`. Keys: drainK chillK dmgK foeHpK pack[min,max] aff('off'|'gentle'|'full') ill('off'|'low'|'high') spoil('off'|'survivor'|'hardcore') cook('instant'|'spit') nodeK animalRespawn herdK meat[deer,stag] revive('always'|'daily') senaFate('never'|'recover'|'die') death('rescue'|'penalty'|'perma') saves('free'|'auto') grace. `matGrace()` (SURV: true = no afflictions yet).
+- **Bus:** `on(ev, fn, order)`, `emit(ev, e)`, `MATD.off`. A throwing listener is logged with console.error and the rest still run. Events emitted by MAT: `playerHitPre`/`playerHit`, `animalHitPre`/`animalHit`/`animalDie` (animalHit fires on the killing blow too, `e.kill`), `land {drop, speed, water}` (jump landings; drop = apex - landing ground), `rested {hours, mode, together, tier}` (in rstApply before its save), `hours {h}` (matClock per whole hour, skipHours with its h), `downed`/`revived {who, by, item}`/`died {who, cause}`, plus NEW `rescued {who, cause, penalty, lost}` (a non-permanent death), `settings {key}` (any content/audio/difficulty change), `chose {id, i, label}`. MAT's own listener: `playerHitPre` order 20 (`dmgK`; who 'N' on Story → dmg 0).
+- **Hit payloads:** reuse preallocated Vector3s: copy `e.point`/`e.dir` if you keep them. animal: `{o, dmg, kind:'cut'|'pierce'|'blunt'|'kick', weapon:'axe'|'spear'|'fists'|'thrown'|null, heavy, from, point, dir, dist (thrown), vel (thrown), zone, crit, kill, cancel}`. `e.dir` = direction of the blow. player: `{who, dmg, kind, from, dir (attacker->victim), part, cancel, blocked, applied, downed}`.
+- **`playerHurt(e)`** returns e (`e.applied` once hp moved). who 'N' lowers `S.nhp` (CMB reacts to it). Wolf bite is now 8 × dmgK; the horse throw 5. A hit on a downed Aro counts; the 3rd ends it. `hurt(o, dmg, info)`: all 3 call sites pass info. `spawn()`/`revive()` scale wolves and `o.hostile` animals by foeHpK. `hostileNear` = wolves + `o.hostile` + `foes`.
+- **`foes`** is a `const []` declared in the MAT section (G.foes too). **CMB: push into it, do not redeclare it.** Each needs `pos` (Vector3), `live`, `fled`.
+- **`choose(id, title, options, {timer, def, note})`** → Promise<index>. busy=true, pointer unlocked, keys 1-4 / E (first enabled) / Esc (def if not null) / mouse; `req()` false shows greyed with `hint`; the timer (only with settings.choiceTimer) resolves `def` (or the first enabled). No story state is written.
+- **`skipHours(h)`**, `matClock()` (S.gh; forward jumps < 20 h count). Rescue advances the clock with skipHours.
+- **Stamina cap:** `matStamCap()` (weak 70) at the updatePlayer stamina line; other packages add caps with `G.mat.stamCap(fn)` (pushes into `STAM_CAPS`) instead of editing that line. HP regen ×`matRegenK()` (0 downed, 0.5 weak).
+- **Scarcity:** `take()` uses `matRespawnAt(k)` (NODE[k][2] × nodeK); butcher `o.respawn = clock + D().animalRespawn` and `matLoot(kind)` (**GORE: keep both in your butcher**); `EVENTS.wolves` uses `MATD.packSize(D(), reached('house'))`; Hardcore removes 40% of each deer herd at start.
+- **Keys:** GAME_KEYS has KeyI, KeyZ, AltLeft (preventDefault). `matKey(e)` runs first in keydown (choice panel, then the downed/death input lock). Help lines for I/Z/Alt/hold-E/RMB/hold-LMB are NOT added: each owner adds its own line when the feature exists.
+- **Death:** `die(why)` → `canBeDowned()` (Sena ≤ 40 m, not downed (`N.downed`), not swimming; Hardcore: once per S.day and a bandage/hidebandage/ypoultice/poultice) → `downed()` (25 s, Death01 frames as override `matLie` order 10, input locked, low orbiting camera via camShot, `#downed` overlay) → Sena runs (`matSenaRescue` is the top branch of updateSena), kneels at his chest 2.5 s → `matRevive()` (hp 25, minimum food 15 / water 20 / warmth 30, Hardcore uses the dressing, 3 s bite grace, `revived`). Otherwise by mode: `rescue(why, penalty)` (today's fade; Survivor penalty = all meat/fish/cooked/grilled/bread/dried/spoiled + half fibre and berries, `S.weakUntil = S.gh + 24`, "Weak · N h" chip) or `permadeath(why, who)`. `die()` also fires from the start of updatePlayer when hp ≤ 0 (the old updateStats check regenerated hp back above 0 before testing it, so a well-fed Aro could not die from bites).
+- **Permadeath / `endRun(cause)`:** busy, memorial pushed to `localStorage['hearthborn-stones']`, a `hearthborn-perma-dead` tombstone, `deleteGame()`, `died` emitted, then the grief beat (black 1.5 s; the fallen lies, the other kneels at the chest with a hand IK'd to theirs; camera on the face then out to the sky; lines; no blood ever), then `#obit` ("Return to the valley" reloads). `save()` returns once `MAT.dead`. `endRun('sena')` swaps the roles and uses the "Embers" wording; refused when Mature story is off. GORE: clear screen blood/wounds on `died`.
+- **Settings UI:** pause tabs Game/Controls/Video/Audio/Content. Rows without `data-tab` are sorted by their input id (`TAB_OF`), unknown rows go to Game. **Add `data-tab="..."` to any new pause row.** Content changes call `setGore({blood, gore, screenBlood})` if it exists, audio sliders call `musicVolumes()` if it exists, both emit `settings`. The Credits row (Game tab) already names UAL2/Bull (CC0) and the Running Brown Bear (CC-BY 3.0); README and CREDITS.txt are left to CMB (§8).
+- **Difficulty UI:** Game tab dropdown (Hardcore can only be lowered, with a confirm → `softened`, perma off; raising is disabled); Hardcore hides `#btn-save`.
+- **Title:** `#gate` until `settings.ageOk >= CONTENT_V` (I am 21 → FULL preset; toned-down → TONED preset). Begin/New story opens `#newgame` (3 cards, Survivor preselected, Custom… toggles + sliders → `S.diff.custom`). `#btn-stones` shows when the Stones exist. A dead Hardcore save (or one older than the tombstone) shows no Continue.
+- **Test compatibility:** a *scripted* `#btn-new.click()` while the notice is still up (every fresh test profile) starts a Survivor game directly, so older harnesses keep working; a person cannot reach the button then (overlay, tabindex -1, `isTrusted` check). New tests: `G.mat.newGame(mode, custom)` (accepts the notice and starts).
+### G hooks
+`G.mat = {D, diffK, diff(), setDiff(mode, custom), canLower(mode), endRun(cause), permadeath(why, who), die, grace(), stamCap(fn), downed(), rescuing(), dead(), stones(), respawnAt(k), loot(kind), gate(show), newGame(mode, custom), state(), DIFF, BUS, foes}`, `G.playerHurt`, `G.skipHours`, `G.choose`, `G.on`, `G.off`, `G.emit`, `G.foes`.
+### Evidence (scratchpad/tests/mat/: run.mjs = harness on 5180/9342 with every /api/ intercepted and logged, plus page-load and reload retries for asset loads that fail under machine load)
+- `node tests/mat/unit.mjs`: 20/20 PASS (tables, custom clamps, pack sizes, mode rules, bus order/cancel/throwing listener, clockDelta, penalty, Stones store, epitaphs non-graphic, causes, presets).
+- t1.json (acceptance 1, 2, 3, 4, 11, 12): gate + disabled Begin; I am 21 → ageOk 1 / blood on / full defaults; hidden after reload; toned-down preset; 3 cards with Survivor preselected; Hardcore → perma, Save now hidden; **food drain Hardcore/Survivor = 1.300**; lowering → softened; raising refused; choose Digit2 → 1, req:false not choosable, E → first enabled, timer → def; berry respawn 170×1.3.
+- t2/t3/t4.json (acceptance 5-10, 12): bite 10 → −16/−10/−6 (Hardcore/Survivor/Story); skipHours(5) → gh +5 and `{h:5}`; Survivor with Sena near → downed → revived, hp 25; Sena 210 m away → rescue, cooked 0, fibre 6→3, sticks kept, weak; third hit while downed → rescue; Hardcore with a bandage → revived, bandage used, downedDay set; Hardcore second fall the same day → permadeath, save null, +1 stone, `DELETE /api/save` seen, #obit, no save on pagehide; Stones button on the title; v2 save at ch 8 without diff → survivor + grace, chId hearth, legacy, storyV 3, firstKiss = day (close 65); Sena downed herself → the timer runs out → Story rescue; stored settings drive every row after a reload.
+- **tests/final/play.json on Story** (tests/mat/play_story.json = wpn/play_slow.json starting with `G.mat.newGame('story')`): 30/30 PASS, errors=0.
+- Shots (Intel GL) in shots/mat/: v01_gate, v02/v03 new game (+custom), v04/v05/v05b pause Content/Game/Audio, v06 choice panel, w07 downed (falling), w08 Sena arriving, w09 up again, w10 grief beat (Sena kneeling over Aro, hand reaching to his), w11/w12 camera out to the valley sky, v13 obituary, v14 the Stones, v15 title.
+- `npm run build` passes.
+### Deviations
+- Content notice text adds "graphic", "(including dismemberment)" per §12.
+- Downed pose uses the full Death01 fall (12 cached frames) rather than a fixed t=0.5 frame; the get-up is a 1.1 s blend out (plays `getUp` if CMB adds that shot).
+- `rescued` and `settings`/`chose` events added; `died` is only for permanent deaths.
+- clockDelta counts forward jumps < 20 h (spec said 12) so an evening-to-dawn rest is counted.
+- `#btn-new` "disabled" = `aria-disabled` + tabindex -1 + covered by the gate (not the `disabled` attribute), for the scripted-click compatibility above.
+### Gaps
+- Audio sliders (Music/Effects/Ambience) only store settings until MUS builds the buses (`musicVolumes`).
+- Reduce flashing only halves MAT's hurt flash; GORE/CMB read `settings.reduceFlash` for theirs.
+- Hardcore "herd cap −40%" is applied once per page load at game start (herds are not re-created on a reload-less new game).
+- Grief beat length is in game time (≈11 s at normal frame rates; slower on this loaded machine).
+
+## FPP verification (independent tester/fixer)
+**Setup:** `vite preview` (project vite) of working-tree builds on 5179, headless Chrome on 9341 (Intel GL), every `/api/` request answered by CDP Fetch; saves only in the throwaway Chrome profile. The machine was at load 20-41, so the game ran at 1-11 fps; dynamic numbers are game-time based. New harness files in tests/fpp/: `rb.sh` (build working tree → dist, reload, new Survivor game, helpers), `sh.sh` (wait frames + screenshot), `bodycam.js` (`BODYCAM()`: bones in camera space and the nearest visible body vertex, with the FPP body shift applied), `rest.js`. `npm run build` passes. No commits.
+### Passed
+- Idle/walk look-down (legs, feet, hands, shadow; no head/hair); idle stance is staggered so only the front foot shows straight down (the back foot is 0.33 m behind the root, hidden by the hips), which is correct for the clip.
+- Axe / spear / torch at night / torch + axe / torch + spear viewmodel hands; tree and house wall + corner at 5 yaws (no clipping); jump (apex 0.54 m sampled, landing spring + nod); strafe and backward walk (legs face the motion, clip reversed); swim at the water line; two-up riding (hands on the withers, Sena behind; looking 180° back puts her face ~0.3 m away, no clipping); seated at the fire (eye 1.31, knees/feet); kneeling at a build site (eye 0.81); RST rest in the house: cinematic → hand-back camera moved 2 mm at the switch, then eased 5 cm over ~4 s, near plane 0.15 → 0.06 after; V toggled 9 times: third person clean (head drawn, colorWrite on, near 0.15, viewmodel arms off, body root back at P.pos, back spear visible); save in FPP at pitch 1.4 → reload → Continue restores first person and pitch; Esc → Video tab: Head bob / FOV / Reduce motion rows work (FOV 75 applied, no sprint widening, roll 0, persisted); console clean.
+- Frame time: interleaved 4×5 s FPP vs TPP (axe drawn, arms rig on): FPP 640-756 ms/frame vs TPP 739-1025 ms/frame on the saturated machine, i.e. not worse (less on screen). Microbenchmarks were noise-dominated at this load.
+### Fixed (all in the FPP section; no new hooks outside it)
+1. **Camera inside the neck/shoulders when walking or sprinting and looking down** (big dark blurred blob over the lower half of the screen; nearest body vertex 2.2 cm from the camera at walk, 10.5 cm at sprint). Cause: the jog/sprint lean puts the real eye 0.35-0.46 m ahead of the root, but the camera is clamped to 0.24 m (to stay inside the collision circle), so it sat 10-20 cm behind the eye. Fix: the drawn body slides under the camera horizontally (`FP.shift`, ≤ 0.22 m, not when riding), applied in fppVm right before the world render and undone in fppPost. After: nearest vertex 19-25 cm, clean look-down (v14 vs v08/v09).
+2. **Sprint fist pump never visible** (fists at y -0.34..-0.5 at 0.3 m, below the 52° viewmodel frustum). Now in step with the body's own arm swing (hand ahead of the chest → up into view) and raised so the forward fist reaches the lower third (v33).
+3. **Left fist in the fists guard faced the camera palm-first** (fingers curled toward the viewer). Now mirrors the right fist (v32).
+4. **Spear on the back crossed the view** as a thick pole when swimming (and near the eye looking up/back). The back-slot spear is hidden for the frame in first person (v35 vs v38).
+5. **Sena could stand inside Aro** (no person-person separation) → camera inside her hair. First person only: `fpSpace()` keeps Aro 0.55 m from Sena/villagers who stand free (skipped when busy, camShot, riding, seated, in bed, downed or a seat).
+6. Robustness: FP roll/turn-rate reset on re-entry and a NaN-safe P.face in fppFace (a NaN camYaw used to poison FP.roll and P.face permanently).
+7. Per-frame cost: dropped the full arms-rig `updateMatrixWorld(true)` (ik2 updates each chain from the root) and fppPost only refreshes the root matrix.
+### Remaining
+- Spear in first person is held by the right hand only (third person holds it two-handed).
+- Riding: horse head/ears fill the right of the view when the horse turns 40° off the view at trot; hands off-screen then (they stay on the withers). Free 360° look while seated/riding (no neck limit).
+- Water: the sun specular shows as a bright blob when looking straight down while swimming (water shader, not FPP).
+- Gait bob/step feel still only measured at 1-11 fps; needs an eye check at 60 fps.
+- HUD chip "Your hands are empty" stays on while a weapon/torch is held (not FPP; probably the MAT/WPN chip).
+- Shots: shots/fpp/v02-v59 (grids: v05_08_grid, v09_10_grid, v11_grid, v14_grid, v17_grid, v20_grid, v21_grid, v25_grid, v28_grid, v33_grid, v34_grid, v35_grid, v38_grid, v41_grid, v45_grid, v48_grid, v51_grid, v56_grid, v58_grid).
