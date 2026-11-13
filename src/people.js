@@ -129,7 +129,7 @@ export function makeHuman({ female = false, light = false, tint = 0xffffff, hair
   let shot = null, shotW = 0, shotKey = null, fading = null;
 
   // pose: a loop that overrides the movement state; straddle spreads the legs (riding behind); lie is read by settle() in main
-  const h = { root, spear, axe, grip, sock, bones, who, crouch: 0, pose: null, straddle: false, lie: false, has: (k) => !!act[k], overrides: [], blends: [], gripR: 0, gripL: 0 };
+  const h = { root, spear, axe, grip, sock, bones, who, crouch: 0, pose: null, straddle: false, lie: false, has: (k) => !!act[k] || !!lib.clips[who]?.[k], overrides: [], blends: [], gripR: 0, gripL: 0 };
   // Bone overrides run after mixer.update, sorted by order (10 body, 15 stance, 20 fingers, 30 IK, 40 additive).
   h.removeOverride = (id) => { const i = h.overrides.findIndex((o) => o.id === id); if (i >= 0) h.overrides.splice(i, 1); };
   h.addOverride = (id, order, fn) => { h.removeOverride(id); h.overrides.push({ id, order, fn }); h.overrides.sort((a, b) => a.order - b.order); };

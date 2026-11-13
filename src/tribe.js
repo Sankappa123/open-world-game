@@ -245,6 +245,7 @@ export function createTribe(ctx) {
     if (postureAdd(f, POSTURE.light * (info.heavy ? POSTURE.heavyK : 1), ctx.clock())) breakPosture(f);
     ctx.sfx.pain(f.pos, f.chief);
     ctx.emit('foeHit', e);
+    if (!f.surrender && f.mode === 'combat' && shouldFlee(f.hp, f.maxHp, false, 0, f.noFlee)) { f.stun = Math.min(f.stun || 0, 0.25); flee(f); }   // the blow that breaks him: he runs at once
   }
   // the hit payload (GORE's foeHit contract); CMB's counter/heavy rules run in ctx.foeHitPre
   const _ep = new THREE.Vector3(), _ed = new THREE.Vector3();
@@ -280,7 +281,7 @@ export function createTribe(ctx) {
   async function decide(f) {
     if (f.mode !== 'downed' || f.deciding) return;
     f.deciding = true;
-    const i = await ctx.choose('surrender', `${f.name} kneels in the snow-grey ash`, [{ label: 'Spare him' }, { label: 'Kill him' }], { def: 0, note: 'He has dropped his weapon.' });
+    const i = await ctx.choose('surrender', `${f.name} drops to his knees`, [{ label: 'Spare him' }, { label: 'Kill him' }], { def: 0, note: 'He has thrown down his weapon. He is waiting for your answer.' });
     f.deciding = false;
     ctx.emit('surrender', { f, i, choice: i === 1 ? 'kill' : 'spare' });
     if (i === 1) { ctx.execute(f); return 'kill'; }
@@ -412,7 +413,7 @@ export function createTribe(ctx) {
   function setTimeoutLike(f, t, fn) { (f.timers ||= []).push({ t, fn }); }
   function timers(dt) { for (const f of foes) if (f.timers?.length) for (let i = f.timers.length - 1; i >= 0; i--) { const q = f.timers[i]; if ((q.t -= dt) <= 0) { f.timers.splice(i, 1); if (f.state === 'live') q.fn(); } } }
   function bars(f) {
-    const head = f.h.bones.head; head.getWorldPosition(_v); _v.y += 0.42;
+    const head = f.h.bones.Head; head.getWorldPosition(_v); _v.y += 0.42;
     // the detection meter: white while curious, orange when suspicious, red the moment he commits
     const show = f.mode !== 'combat' && f.mode !== 'downed' && f.mode !== 'flee' && f.alert > 0.02;
     f.meter.visible = show || (f.mode === 'combat' && (f.redT = (f.redT ?? 1.2) - 0.016) > 0);

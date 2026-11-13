@@ -218,18 +218,21 @@ export function makePoses(THREE, ik2) {
         const w = C.benchW; if (!(w > 0)) return;
         const T = C.T;
         if (who === 'N') {
-          C.P.h.bones['clavicle_' + C.benchSideP].getWorldPosition(e); e.y += T.shoulderUp;
+          // the top of his near shoulder (the upperarm joint; the clavicle bone's origin is at the base of the neck)
+          C.P.h.bones['upperarm_' + C.benchSideP].getWorldPosition(e); e.y += T.shoulderUp;
           ptOf(h.bones.Head, T.cheekN, m);
           const k = C.benchHead ? 1 : 0.35;
           aim(h.bones.spine_02, m, e, 0.5 * k * w, 0.3);
           ptOf(h.bones.Head, T.cheekN, m);
           aim(h.bones.neck_01, m, e, 0.7 * k * w, 0.5);
         } else if (C.benchHead) {
-          // his near arm around her: the hand on her far shoulder
+          // his near arm around her: the hand on her far shoulder. Both face the fire, so his near side and her far side
+          // share a letter (she sits on his right -> her right shoulder is the far one). The elbow stays behind her back.
           const side = C.benchSideP;
-          C.N.h.bones['clavicle_' + (side === 'l' ? 'r' : 'l')].getWorldPosition(e); e.y += 0.04;
-          h.bones['upperarm_' + side].getWorldPosition(a); a.y -= 0.35; fwdOf(C.P, f); a.addScaledVector(f, -0.2);
+          C.N.h.bones['upperarm_' + side].getWorldPosition(e); fwdOf(C.N, f); e.y += T.armUp; e.addScaledVector(f, -T.armBack);
+          h.bones['upperarm_' + side].getWorldPosition(a); a.y -= 0.12; fwdOf(C.P, f); a.addScaledVector(f, -0.42);
           ik2(h, side, e, a, w);
+          h.gripR = side === 'r' ? Math.max(h.gripR, 0.25 * w) : h.gripR; h.gripL = side === 'l' ? Math.max(h.gripL, 0.25 * w) : h.gripL;
         }
       };
     },

@@ -168,7 +168,7 @@ function makeSplats() {
       .replace('#include <alphamap_fragment>', '#include <alphamap_fragment>\n  diffuseColor.a *= vSp.y;')
       .replace('#include <roughnessmap_fragment>', '#include <roughnessmap_fragment>\n  roughnessFactor = mix(0.9, 0.18, vSp.z);')
       .replace('#include <emissivemap_fragment>', `#include <emissivemap_fragment>
-  { float br = max(vColor.r, max(vColor.g, vColor.b)); totalEmissiveRadiance += vColor * smoothstep(0.75, 1.1, br) * (0.35 + 0.35 * uPulse); }`);
+  { vec3 fc = vColor.rgb; float br = max(fc.r, max(fc.g, fc.b)); totalEmissiveRadiance += fc * smoothstep(0.75, 1.1, br) * (0.35 + 0.35 * uPulse); }`);
   };
   mat.customProgramCacheKey = () => 'gore-splat';
   const n = POOL.splats, m = new THREE.InstancedMesh(geo, mat, n);
@@ -326,9 +326,9 @@ export function setFocus(on, center, r = 40) {
   const hx = nx >= 0 ? SP.x[nx] - SP.x[best] : 0, hz = nx >= 0 ? SP.z[nx] - SP.z[best] : 0;
   return { trail: id, x: SP.x[best], z: SP.z[best], dist: bd, head: nx >= 0 ? Math.atan2(hx, hz) : null };
 }
-export function splatBrightness(id) {                   // tests: mean max-channel brightness of a trail's instanceColor
+export function splatBrightness(id, c = null, r = 40) { // tests: mean max-channel brightness of a trail's instanceColor (optionally within r of c)
   if (!SP?.m.instanceColor) return 0; const a = SP.m.instanceColor.array; let s = 0, n = 0;
-  for (let i = 0; i < SP.n; i++) if (SP.live[i] && SP.trail[i] === id) { s += Math.max(a[i * 3], a[i * 3 + 1], a[i * 3 + 2]); n++; }
+  for (let i = 0; i < SP.n; i++) if (SP.live[i] && SP.trail[i] === id && (!c || Math.hypot(SP.x[i] - c.x, SP.z[i] - c.z) < r)) { s += Math.max(a[i * 3], a[i * 3 + 1], a[i * 3 + 2]); n++; }
   return n ? s / n : 0;
 }
 export function splatKinds(id) { const out = {}; if (!SP) return out; for (let i = 0; i < SP.n; i++) if (SP.live[i] && (!id || SP.trail[i] === id)) { const k = Object.keys(KIND)[SP.kind[i]]; out[k] = (out[k] || 0) + 1; } return out; }
@@ -701,9 +701,11 @@ function screenUpdate(dt) {
 }
 
 // ----- heartbeat, bleeding edge, desaturation (DOM layers #hurtbeat, #bleededge; the WebGL canvas filter on high)
-const HB = { ph: 0, lastBeat: 0, filt: '' };
+const HB = { ph: 0, lastBeat: 0, filt: '', beat: null, edge: null, bo: '', eo: '', nb: null };
 function heartUpdate(dt, env) {
-  const beat = document.getElementById('hurtbeat'), edge = document.getElementById('bleededge');
+  HB.beat ||= document.getElementById('hurtbeat'); HB.edge ||= document.getElementById('bleededge');
+  const beat = HB.beat, edge = HB.edge, nb = !cfg.blood;
+  if (HB.nb !== nb) { HB.nb = nb; beat?.classList.toggle('nb', nb); edge?.classList.toggle('nb', nb); }   // DOM writes only on a change
   const show = cfg.screen && env.playing && !env.dead;
   const { bpm, amp } = heartbeat(env.hp ?? 100);
   let o = 0;
@@ -713,10 +715,10 @@ function heartUpdate(dt, env) {
     const lub = Math.exp(-((HB.ph - 0.04) ** 2) / 0.0025), dub = 0.6 * Math.exp(-((HB.ph - 0.24) ** 2) / 0.003);
     o = amp * (0.35 + 0.65 * Math.max(lub, dub)) * (cfg.reduceFlash ? 0.5 : 1);
   }
-  if (beat) { beat.style.opacity = o.toFixed(3); beat.classList.toggle('nb', !cfg.blood); }
+  const bo = o.toFixed(3); if (beat && bo !== HB.bo) { HB.bo = bo; beat.style.opacity = bo; }
   let eo = 0;
   if (show && env.bleeding) eo = (0.25 + 0.25 * Math.sin(now * 3.4)) * (cfg.reduceFlash ? 0.5 : 1);
-  if (edge) { edge.style.opacity = eo.toFixed(3); edge.classList.toggle('nb', !cfg.blood); }
+  const es = eo.toFixed(3); if (edge && es !== HB.eo) { HB.eo = es; edge.style.opacity = es; }
   const f = show && cfg.quality === 'high' && (env.hp ?? 100) < 35 ? `saturate(${(0.4 + 0.6 * (env.hp / 35)).toFixed(2)})` : '';
   if (f !== HB.filt && env.canvas) { HB.filt = f; env.canvas.style.filter = f; }
 }

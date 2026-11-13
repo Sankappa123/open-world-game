@@ -670,3 +670,47 @@ Tests are in tests/wp4: t1.json (acceptance), t2.json (whistle, feed, stable, ki
 - Gait bob/step feel still only measured at 1-11 fps; needs an eye check at 60 fps.
 - HUD chip "Your hands are empty" stays on while a weapon/torch is held (not FPP; probably the MAT/WPN chip).
 - Shots: shots/fpp/v02-v59 (grids: v05_08_grid, v09_10_grid, v11_grid, v14_grid, v17_grid, v20_grid, v21_grid, v25_grid, v28_grid, v33_grid, v34_grid, v35_grid, v38_grid, v41_grid, v45_grid, v48_grid, v51_grid, v56_grid, v58_grid).
+
+## 2026-11-13 16:00 — interruption notice
+Two API outages (15:17, 15:45) and then a machine reboot (~15:58) stopped every agent. All code on disk was committed as WIP checkpoint 8e37add. M2/M3/M4/M5-B/M6 are PARTIAL (see where_stopped.txt in the scratchpad). The weapons/sleep QA round never produced results. The scratchpad was wiped by the reboot and restored from docs/dev and ~/.claude/projects/-home-ashish-Desktop-game/hearthborn-notes; screenshots and newer per-package test files from today are gone (rewrite tests as needed). The test runner tools/test/run.mjs in the repo takes PORT/CDP env vars. Use GL="--use-angle=vulkan" style flags for faster headless rendering where it works.
+
+## QA round 1: story playthrough tester (qa_story), read-only
+**Setup:** snapshot build in tests/qa_story/dist, preview on 5192, Chrome on 9354, every /api/ request intercepted. The runner copy is tests/qa_story/run.mjs: it retries the Chrome start and its boot wait is set by the BOOT env var. Steps: tests/qa_story/qa.json. Shots are in shots/qa_story/.
+**Machine load was 40-55 (0.5-1 fps)**, so timing checks and the later play.json steps were not reliable: the reload/continue, ford and meadow checks failed because the runner timed out. Some screenshots are black because the canvas was captured between frames.
+**Passed:**
+- play.json up to herd: awaken > fire > hunt > shelter (co-op hut, rest) > cave (torch, sconces, paintings, hands, flint).
+- Chapter card and goals text. Dialogue has no spelling errors (aspell over all say/lines/toasts). Epilogue card and village are in place.
+**Confirmed issues (open items that still reproduce):**
+- The help panel is always on (12 lines, about 565x260 px at 1280x720). It covers the subtitles, the E prompt pill ("Dismount Daw…"), the season line on the chapter card and the inventory chip ("Your hands are empt…").
+- The tame horse prompt takes priority: wp4Target is first in findTarget, so "Ride Dawn" replaces "Sit with Sena" at a campfire, and also the revive, meal and story beats.
+- Lio has no marker on the map or the minimap, and the legend has no entry for her.
+- Sena does not go to the hearth at night: updateSena's night branch only looks for a campfire.
+- Wolves spawn 46 m from Aro in a random direction (EVENTS.wolves) with no biome check.
+- Mounting and dismounting are instant teleports (mount: P.pos.copy; dismount: P.pos.set).
+- "Your hands are empty" shows next to the weapon bar while fists are drawn.
+- Asset loading has no error handling: one failed fetch in the top-level Promise.all leaves the title stuck on "Loading…" for good.
+
+## QA round 1: FPP + world (qa-fpp, read-only)
+**Setup:** vite preview of a snapshot build on 5193, headless Chrome on 9355 (vulkan/swiftshader), every /api/ request answered by CDP Fetch. The driver is persistent (tests/qa-fpp/drv.mjs + c.sh, HTTP over a unix socket). The machine was at load 40-50 with RAM 20/22 GB, so the game ran at 0.5-1 fps. One GPU-process crash and one failed asset boot happened mid-run. No code edited; `npm run build` passes.
+**Shots:** shots/qa-fpp/ (grids g_b01, g_c03, g_e, g_g, g_h; singles a02_hud720, f01_hud1080, c01/c02 Echo entrance, c06 cave look-out, d01 map, g05 FPP spear, h05 lake, i01 stones).
+**Still reproduces (known items):**
+- Echo Hollow mouth buried by boulders (c01/c02).
+- Cave interior black past the torch (c05). From inside, the mouth renders black, and holes in the dome near the arch show white sky (c06).
+- Horse E prompt still wins over Sit with Sena: wp4Target runs first in findTarget.
+- Lio has no map marker: drawMap has no kids loop.
+- Sena goes to the outdoor fire at night, not to the hearth on New Life nights.
+- Wolves spawn 46 m away in a random direction, with no pine preference.
+- FPP: no yaw limit while seated or riding (applyLook).
+- FPP: spear held in one hand (g05).
+- "Your hands are empty" shows with fists drawn (g01).
+- Help panel covers the FPP weapon hand and clips the inventory chip at 1280x720 (a02, g05).
+- Mount and dismount are instant (they teleport).
+**New:**
+- WebGL context loss is unhandled: white screen, the game keeps saving, and the one-time-painted map base canvas goes blank.
+- One failed GLTF buffer load aborts boot with no message or retry.
+- The #savechip shows as an empty pill after New game.
+- Intro subtitle overlaps the help panel at 720p.
+- Mirror Lake sits in a 12 m circular crater with steep, banded walls.
+- Standing stones render almost black.
+- The FPP torch is oversized, with a double-lobed flame at screen centre.
+- Home view: 828 draw calls, 3.0M tris per frame, 1394 visible meshes (perf hotspot).

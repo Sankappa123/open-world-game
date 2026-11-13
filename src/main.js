@@ -3744,7 +3744,7 @@ function gorePatchHuman(h, { hands = false, paint = null } = {}) {   // also use
 }
 function goreInit() {
   if (GS.init) return; GS.init = true;
-  GR.initGore(scene, getHeight, quality()); setGore(); GS.q = quality();
+  GR.initGore(scene, getHeight, quality()); setGore(); GS.q = settings.quality;
   gorePatchHuman(P.h, { hands: true }); gorePatchHuman(N.h);
   try { if (AR?.root) GR.prepModel(AR.root, 'human', { clone: false, hands: GS.hands }); } catch {}   // FPP viewmodel arms: bloody hands in first person too
   for (const id of ['hurtbeat', 'bleededge', 'gorefocus', 'gorebar']) GS.el[id] = $(id);
@@ -3999,9 +3999,11 @@ const goreNeed = (o) => (o.kind === 'fox' || o.kind === 'wolf' ? 2.5 : 4);
 function goreCam(o, close) {                         // a short side shot (wide on Gore Low); none in first person
   if (view === 'fpp' || !settings.finisherCam && !close) return null;
   const p = o.root.position, ax = p.x - P.pos.x, az = p.z - P.pos.z, l = Math.hypot(ax, az) || 1, sx = -az / l, sz = ax / l;
-  const low = goreLevel() === 'low', d = low ? 4.6 : close ? 1.75 : 2.3, gy = getHeight(p.x, p.z);
-  const pos = new THREE.Vector3(p.x + sx * d - (ax / l) * (low ? 1.5 : 0.7), gy + (low ? 2.8 : close ? 1.05 : 1.2), p.z + sz * d - (az / l) * (low ? 1.5 : 0.7));
-  return { pos, look: new THREE.Vector3((p.x + P.pos.x) / 2, gy + (close ? 0.35 : 0.6), (p.z + P.pos.z) / 2), t: 99, gore: true };
+  const low = goreLevel() === 'low', d = low ? 4.6 : close ? 2.0 : 2.3, gy = getHeight(p.x, p.z);
+  // high enough to look down over meadow grass at the carcass and the kneeling hunter (low shots sat inside the grass)
+  const pos = new THREE.Vector3(p.x + sx * d - (ax / l) * (low ? 1.5 : 0.5), gy + (low ? 2.8 : close ? 1.65 : 1.45), p.z + sz * d - (az / l) * (low ? 1.5 : 0.5));
+  const k = close ? 0.68 : 0.5;                       // frame on the animal more than on Aro
+  return { pos, look: new THREE.Vector3(p.x * k + P.pos.x * (1 - k), gy + (close ? 0.3 : 0.6), p.z * k + P.pos.z * (1 - k)), t: 99, gore: true };
 }
 function goreButcherStart(o) {
   goreInit();
@@ -4092,12 +4094,12 @@ function goreCorpseHit(fx, fz) {
 // ----- per frame (after updateWorldThings): focus, butcher, mercy, corpses, drips, hands, then gore.js
 function goreFrame(dt) {
   goreInit();
-  if (GS.q !== quality()) { GS.q = quality(); setGore(); }
+  if (GS.q !== settings.quality) { GS.q = settings.quality; setGore(); }   // (quality() 'auto' queries GL: only on a change)
   const live = playing && !paused;
   if (live) {
     goreButcherTick(dt); goreMercyTick(dt); goreFocus(dt);
     // bloody hands wash off in water (5 s) or slowly wear off (4 min)
-    if (GS.hands.value > 0) GS.hands.value = Math.max(0, GS.hands.value - dt * (P.pos.y < 0 ? 0.2 : 1 / 240));
+    if (GS.hands.value > 0) GS.hands.value = Math.max(0, GS.hands.value - dt * (P.pos.y < 0 || P.swim ? 0.2 : 1 / 240));
   }
   for (const o of animals) {
     if (o.drip > 0 && o.state === 'live') {          // a wounded predator drips as it moves
@@ -4153,7 +4155,7 @@ function goreFoeHit(f, e = {}) {
   if (goreBloodOn()) GR.bloodBurst(pt, dir, GR.burstCount(goreLevel(), e.kill, e.heavy) * (kid ? 0.3 : 1), { heavy: e.heavy, kill: e.kill });
   GR.addWound(h.root, pt, e.weapon === 'axe' ? 0.085 : 0.065);
   goreSfx('flesh', 1, pt); if (e.heavy) goreSfx('crack', 0.7, pt);
-  if (e.kill && goreBloodOn() && goreLevel() === 'high' && !kid && (e.weapon === 'axe' || e.kind === 'finisher')) {
+  if (e.kill && goreBloodOn() && goreLevel() === 'high' && !kid && !f.goreQuick && (e.weapon === 'axe' || e.kind === 'finisher')) {   // a captive's death (the surrender choice) is quick, never a spectacle
     let seg = 0;
     if (e.kind === 'finisher' && e.weapon === 'axe') seg = 1;                    // decapitation finisher
     else if (e.heavy && e.weapon === 'axe') {
@@ -4164,6 +4166,7 @@ function goreFoeHit(f, e = {}) {
   }
 }
 on('foeHit', (e) => goreFoeHit(e.f || e.foe || e.o, e), 50);
+on('surrender', (e) => { if (e.f && e.choice === 'kill') e.f.goreQuick = true; }, 40);   // §2.4/§12: no dismemberment of a surrendered man
 function goreHooks() {
   return {
     stats: () => ({ ...GR.stats(), puffs: GS.puffs, hands: GS.hands.value }),
@@ -4172,7 +4175,7 @@ function goreHooks() {
     wound: (o, p, r) => GR.addWound(o.a?.model || o.h?.root || o.root || o, p, r),
     woundsOf: (o) => GR.woundCount(o.a?.model || o.h?.root || o.root || o),
     clear: (o) => GR.clearWounds(o.a?.model || o.h?.root || o.root || o),
-    focus: () => GS.focus, trail: (o) => GR.trailCount(o.gid), trailBright: (o) => GR.splatBrightness(o.gid), kinds: (o) => GR.splatKinds(o?.gid),
+    focus: () => GS.focus, trail: (o) => GR.trailCount(o.gid), trailBright: (o, near) => GR.splatBrightness(o.gid, near ? P.pos : null), kinds: (o) => GR.splatKinds(o?.gid),
     hands: () => GS.hands.value, setHands: (v) => { GS.hands.value = v; },
     zone: (o, p) => goreZoneOf(o, p), ext: (o) => goreExt(o),
     bed: (o) => { o.wounded = true; o.bleed ||= 0.08; goreBedDown(o); o.bedT = 2; o.lying = true; o.a.play('Death', 'hold', 1); },
@@ -4182,6 +4185,7 @@ function goreHooks() {
     paint: (h, list) => GR.bonePaint(h.root, list), cfg: () => GR.goreCfg(),
     autoButcher: (o) => { goreButcherStart(o); if (GS.butch) GS.butch.auto = true; return !!GS.butch; },   // tests: butcher without holding E
     wallHit: (p, d) => goreWallDecal(p, d),
+    set: (o = {}) => { Object.assign(settings, o); setGore(); return { ...GR.goreCfg() }; },   // tests: Content settings without the pause UI
   };
 }
 
@@ -4195,8 +4199,8 @@ const ROM = {
   // pose and camera tuning (G.rom.T live-edits it). lips/brow/cheek: points in each Head bone's local frame.
   T: { handY: -0.12, handFwd: 0.08, apart: 0.32, lean: 0.06, leanN: 0.02, kissLean: 0.05, headYaw: 0.35, headRoll: 0.1, pitchP: 0.18, pitchN: 0.1, tilt: 0.14,
     handUpP: 0, handSideP: 0.14, handBackP: 0.09, handUpN: 0.1, handSideN: 0.12, handBackN: 0.08,
-    lipsP: [0, 0.07, 0.11], lipsN: [0, 0.07, 0.1], browP: [0, 0.15, 0.1], browN: [0, 0.14, 0.09], cheekN: [0.06, 0.1, 0.06], gap: 0.015, shoulderUp: 0.1,
-    camDist: 1.6, camY: 1.45, kissDist: 1.35, hideBack: true },
+    lipsP: [0, 0.07, 0.11], lipsN: [0, 0.07, 0.1], browP: [0, 0.15, 0.1], browN: [0, 0.14, 0.09], cheekN: [0.06, 0.1, 0.06], gap: 0.015, shoulderUp: 0.1, armUp: 0.05, armBack: 0.04,
+    camDist: 1.9, camY: 1.5, kissDist: 1.5, hideBack: true },
   P, N, w: 0, mode: null, kissK: 0, browK: 0, armsW: 1, peck: false, handW: 0, benchW: 0, benchHead: false, benchSideP: 'l', bench: false,
   freeHands: (who) => (who === 'P' && torchOn ? ['r'] : ['r', 'l']),
   hand: null, scene: null, talk: null, eAt: 0, last: 0, tierT: 0, tier: null, awayT: 0, homeAway: 0, satN: -1, mealN: -1, inited: false, fk: false,
@@ -4379,6 +4383,7 @@ function romSceneStart(kind, o = {}) {
   ROM.w = 0; ROM.kissK = 0; ROM.browK = 0;
   $('prompt').style.display = 'none';
   if (sc.cam) { const [pos, lk] = romCam(sc, kind === 'kiss' || kind === 'almost' ? 'kiss' : 'embrace'); R.lastLook = null; rstShot(pos, lk, o.cut ? 0.01 : 0.9, !!o.cut); sc.camPos = pos; sc.camLook = lk; }
+  if (sc.cam && !ROM.nightOn && !R.on && !$('hud').classList.contains('cine')) { sc.cine = true; cine(true); }   // letterbox, HUD away
   if (sc.fade) { $('fade-text').textContent = ''; $('fade').classList.add('on'); }
   return new Promise((res) => { sc.done = res; });
 }
@@ -4410,6 +4415,7 @@ function romSceneEnd(cut = false) {
   ROM.scene = null; ROM.mode = null; ROM.w = ROM.kissK = ROM.browK = 0; ROM.peck = false; busy = false;
   for (const m of ROM.hidden.splice(0)) m.visible = true;
   if (sc.fade) $('fade').classList.remove('on');
+  if (sc.cine && !ROM.nightOn && !R.on) cine(false);
   if (sc.cam && !sc.o.keepCam && (camShot?.dolly || camShot?.release)) camShot = cut ? null : { release: true, from: camPos.clone(), lookFrom: (R.lastLook || sc.camLook || look).clone(), k: 0, dur: 1.1 };
   sc.done?.(sc);
 }
@@ -4732,7 +4738,10 @@ function romTick(dt) {
   if ((ROM.tierT -= dt) <= 0) {
     ROM.tierT = 0.5;
     const t = romTier();
-    if (t !== ROM.tier) { ROM.tier = t; const el = $('bar-close'); if (el?.firstChild?.nodeType === 3) el.firstChild.nodeValue = `Closeness · ${t.name}`; }
+    if (t !== ROM.tier) {                            // the bar label is the tier (the 66 px label column fits one word); the tooltip says what it is
+      ROM.tier = t; const el = $('bar-close');
+      if (el?.firstChild?.nodeType === 3) { el.firstChild.nodeValue = t.name; el.style.whiteSpace = 'nowrap'; el.title = `Closeness with Sena: ${t.name}`; }
+    }
     // shared acts the game already counts (fire sits, shared meals)
     if (cnt('sat_fire') !== ROM.satN || cnt('meal_shared') !== ROM.mealN) { ROM.satN = cnt('sat_fire'); ROM.mealN = cnt('meal_shared'); romShared(); }
     // neglect: three days with nothing shared, then -1 a day and one line
@@ -4797,7 +4806,7 @@ function romState() {
 // A.out is the master (settings.volume); A.sfx, A.amb and A.mus feed it (built in A.init). Music: src/music.js.
 // States (3 s crossfade): title, day, night, cave, danger, combat, fire, romance, grief, raid. Any package can emit
 // 'music' {state, dur} on the bus to force a state for dur seconds (ARC grief beats, the raid); 'died' plays the lament.
-const MUS = { m: null, state: 'title', cand: 'title', candT: 0, forced: null, forceUntil: 0, hitAt: -1e9, dangerAt: -1e9, griefUntil: -1, season: null, iv: 0, woke: false };
+const MUS = { m: null, state: 'title', cand: 'title', candT: 0, forced: null, forceUntil: 0, hitAt: -Infinity, dangerAt: -Infinity, griefUntil: -Infinity, season: null, iv: 0, woke: false };
 function musicVolumes() {
   if (!A.ctx || !A.mus) return;
   const t = A.ctx.currentTime, set = (g, v) => { g.gain.cancelScheduledValues(t); g.gain.setTargetAtTime(clamp(+v || 0, 0, 1), t, 0.03); g.gain.value = clamp(+v || 0, 0, 1); };
@@ -4813,27 +4822,31 @@ function musicInit() {
 // title music needs a user gesture to start the audio
 function musicWake() { if (playing || MUS.woke) return; MUS.woke = true; A.init(); musicInit(); }
 addEventListener('pointerdown', musicWake); addEventListener('keydown', musicWake);
-function musicForce(s, dur = 20) { MUS.forced = s || null; MUS.forceUntil = s ? clock + dur : 0; }
+// music timers run on the wall clock (seconds), like the score itself
+const musNow = () => performance.now() / 1000;
+function musicForce(s, dur = 20) { MUS.forced = s || null; MUS.forceUntil = s ? musNow() + dur : 0; }
 function musicSting(kind) {
   if (!MUS.m || !(settings.music > 0)) return false;
   return MUS.m.sting(kind);
 }
-on('playerHit', () => { MUS.hitAt = clock; }, 80);
-on('animalHit', (e) => { if (e.o && (e.o.kind === 'wolf' || e.o.hostile)) MUS.hitAt = clock; }, 80);
-on('died', () => { MUS.griefUntil = clock + 120; musicSting('lament'); }, 80);
-on('rescued', () => { MUS.griefUntil = clock + 20; musicSting('lament'); }, 80);
+on('playerHit', () => { MUS.hitAt = musNow(); }, 80);
+on('animalHit', (e) => { if (e.o && (e.o.kind === 'wolf' || e.o.hostile)) MUS.hitAt = musNow(); }, 80);
+on('died', () => { MUS.griefUntil = musNow() + 120; musicSting('lament'); }, 80);
+on('rescued', () => { MUS.griefUntil = musNow() + 20; musicSting('lament'); }, 80);
 on('music', (e) => musicForce(e.state, e.dur ?? 20));
 function musicSnap() {
-  const E = world.env;
-  if (MUS.forced && clock > MUS.forceUntil) MUS.forced = null;
-  if (playing && hostileNear(30)) MUS.dangerAt = clock;
+  const E = world.env, now = musNow();
+  if (MUS.forced && now > MUS.forceUntil) MUS.forced = null;
+  if (playing && hostileNear(30)) MUS.dangerAt = now;
   const raid = !!(S.arc?.raid && !S.arc.raid.done && S.arc.raid.wave > 0 && foes.some((f) => f.live && !f.fled));
-  return { playing, forced: MUS.forced, grief: MAT.dead || !!MAT.endT || P.downed > 0 || clock < MUS.griefUntil, romance: !!(ROM.scene && ROM.scene.kind !== 'peck') || ROM.music || ROM.nightOn,
-    raid, combat: clock - MUS.hitAt < 6, danger: clock - MUS.dangerAt < 4, fire: P.sit > 0, cave: E.cave > 0.5, night: E.night > 0.5 };
+  return { playing, forced: MUS.forced, grief: MAT.dead || !!MAT.endT || P.downed > 0 || now < MUS.griefUntil, romance: !!(ROM.scene && ROM.scene.kind !== 'peck') || ROM.music || ROM.nightOn,
+    raid, combat: now - MUS.hitAt < 6, danger: now - MUS.dangerAt < 4, fire: P.sit > 0, cave: E.cave > 0.5, night: E.night > 0.5 };
 }
 function updateMusic(dt) {
-  const want = MUSD.pickState(musicSnap());
-  if (want !== MUS.cand) { MUS.cand = want; MUS.candT = 0; } else MUS.candT += dt;
+  // the score runs on the wall clock (a 1 fps frame must not stretch a 2 s settle into a minute)
+  const now = performance.now(); dt = MUS.wall ? Math.min(0.5, (now - MUS.wall) / 1000) : dt; MUS.wall = now;
+  const sn = musicSnap(), want = MUSD.pickState(sn);
+  if (want !== MUS.cand) { MUS.cand = want; MUS.candT = 0; MUS.why = { ...sn, downed: P.downed, endT: MAT.endT, gu: MUS.griefUntil, clock }; } else MUS.candT += dt;
   MUS.state = MUSD.settleState(MUS.state, MUS.cand, MUS.candT);
   // the thaw: winter gives way to spring
   const se = S.arc?.season || null;
@@ -4874,7 +4887,7 @@ const cmbCtx = {
   braced: (o) => cmbBraced(o), onBrace: (o) => cmbOnBrace(o), lie: (f) => { f.matFallT = 0; f.matStill = true; matLieStart(f, false); },
   blockPose: (f, w) => cmbBlockPose(f.h, w), onBlocked: (f) => { trauma = Math.min(1, trauma + 0.12); W.recoil = 0.14; hitStop = 0.05; hsWho = null; },
   execute: (f) => cmbExecute(f), foeHitPre: (e) => cmbFoeHitPre(e),
-  paint: (h) => { if (typeof gorePatchHuman !== 'function') return false; try { gorePatchHuman(h, { paint: [{ bone: 'hand_l', r: 0.12 }, { bone: 'hand_r', r: 0.12 }, { bone: 'head', r: 0.15 }, { bone: 'lowerarm_l', r: 0.07 }, { bone: 'lowerarm_r', r: 0.07 }] }); return true; } catch { return false; } },
+  paint: (h) => { if (typeof gorePatchHuman !== 'function') return false; try { gorePatchHuman(h, { paint: [{ bone: 'hand_l', r: 0.12 }, { bone: 'hand_r', r: 0.12 }, { bone: 'Head', r: 0.15 }, { bone: 'lowerarm_l', r: 0.07 }, { bone: 'lowerarm_r', r: 0.07 }] }); return true; } catch { return false; } },
   sfx: {},
 };
 const PRED = createPredators(cmbCtx);
@@ -5424,7 +5437,7 @@ function cmbUpdate(dt) {
   // Sena's health bar over her head when hurt
   const showN = (S.nhp < 99.5 || N.downed > 0) && !(N.rest > 0) && D().senaFate !== 'never';
   cmbSenaBar.visible = showN;
-  if (showN) { N.h.bones.head.getWorldPosition(_c1); cmbSenaBar.position.set(_c1.x, _c1.y + 0.42, _c1.z); cmbSenaBar.userData.set(N.downed > 0 ? clamp(N.downed / 60, 0, 1) : S.nhp / 100, N.downed > 0 ? '#e0281c' : '#e8d8b8'); }
+  if (showN) { N.h.bones.Head.getWorldPosition(_c1); cmbSenaBar.position.set(_c1.x, _c1.y + 0.42, _c1.z); cmbSenaBar.userData.set(N.downed > 0 ? clamp(N.downed / 60, 0, 1) : S.nhp / 100, N.downed > 0 ? '#e0281c' : '#e8d8b8'); }
   // loot extras after the butcher (pelt, horn, bear hide and claws); the bear never comes back
   for (const o of animals) {
     if (!o.looted) { o.cmbLoot = false; continue; }
@@ -5448,7 +5461,7 @@ function cmbSpawn(kind, x, z, opts = {}) {
   if (kind === 'raider' || kind === 'korr') return TRIBE.spawnRaider(x, z, { ...opts, chief: kind === 'korr' || opts.chief });
   return spawn(kind, x, z, opts);
 }
-window.G.cmb = {
+const cmbG = {                                       // CMB test hooks; published as G.cmb after window.G exists (end of file)
   block: (on) => cmbBlock(on), dodge: () => cmbDodge(), heavy: () => { C.heavyNext = true; wpnPrimary(); return C.swingHeavy; },
   posture: (o) => o?.posture || 0, state: (o) => (o?.foe ? o.mode : o?.st || o?.state), spawn: cmbSpawn, brace: () => !!C.brace, stam: () => S.stam,
   glints: () => cmbGlints.total, glintsActive: () => cmbGlints.active(), C, knock: (from) => cmbKnock(from), finish: (o) => cmbFinish(o),
@@ -5472,7 +5485,7 @@ function cmbDuel(x, z, opts = {}) {
     }, 250);
   });
 }
-Object.assign(window.G, { spawnRaider, clearFoes, updateFoes, cmbDuel });
+const cmbHooks = (G) => Object.assign(G, { cmb: cmbG, spawnRaider, clearFoes, updateFoes, cmbDuel });   // called after window.G is created
 // keydown hook: Alt dodge, E mash in the maul
 function cmbKey(e) {
   if (!playing || paused) return false;
@@ -5587,6 +5600,8 @@ const arcAxis = (k, n) => { if (!n) return 0; const was = S.arc[k] || 0; S.arc[k
 function arcMem(id, text) { if (!text) return; S.arc.memory.push({ day: S.day, id, ch: CH[S.ch].id, text }); if (S.arc.memory.length > 60) S.arc.memory.shift(); }
 // opts: [{label, hint?, req?, value, approve?, mercy?, mem?, fx?}]. Resolves with the picked index once recorded.
 async function arcChoose(id, title, opts, cfg = {}) {
+  const had = S.arc.choices[id];                     // already decided (G.arcChoose mid-scene, or a scene re-run after a load): never apply twice
+  if (had != null) return Math.max(0, opts.findIndex((o, i) => (o.value ?? i) === had));
   ARCS.defs[id] = { opts, title };
   const i = await choose(id, title, opts.map((o) => ({ label: o.label, hint: o.hint, req: o.req })), cfg);
   return arcApply(id, i);
@@ -5993,7 +6008,7 @@ function arcGoals(id) {
       const r = A.rem || {}, ok = (k) => () => !!(A.rem || {})[k] || A.senaWound === 'scarred' || !!A.feverDone;
       return [['Stop her bleeding: a poultice on the wound (E at the bed)', ok('bled')],
         [`Willow bark, by the river (${Math.min(S.inv.willow, 2)}/2)`, ok('willow')], [`Yarrow, on Horse Meadow (${Math.min(S.inv.yarrow, 2)}/2)`, ok('yarrow')], ['Grey cave moss, in Flint Deep', ok('moss')],
-        ['Sit with her through the night (E at the bed, evening)', () => !!A.feverDone]].map((g, i) => (i && r[['', 'willow', 'yarrow', 'moss'][i]] ? [g[0].replace(/ \(\d\/\d\)/, ''), g[1]] : g));
+        ['Sit with her through the night (E at the bed, evening)', () => !!A.feverDone]].map((g, i) => (i && (r[['', 'willow', 'yarrow', 'moss'][i]] || A.senaWound === 'scarred' || A.feverDone) ? [g[0].replace(/ \(\d\/\d\)/, ''), g[1]] : g));
     }
     case 'reckoning': {
       const g = [['Find the Ash camp, east of Horse Meadow', () => !!S.found.camp || !!c.korr], ['Face Korr', () => !!c.korr]];
@@ -6362,7 +6377,7 @@ function arcHours(h) {
 function arcFeverFail() {
   const A = S.arc;
   if (S.diff.perma && D().senaFate === 'die' && settings.matureStory !== false) { A.senaWound = 'dead'; endRun('sena'); return; }
-  A.senaWound = 'scarred'; A.fever = 0;
+  A.senaWound = 'scarred'; A.fever = 0; arcMem('fever', 'The fever burned through. Sena lived, and it left her limping.');
   arcSay(ARCD.L.fever.scarred); ARCS.ch = -1; drawQuest(); save();
 }
 function arcFeverSet(v) {
@@ -6413,6 +6428,7 @@ function arcFeverCure() {
   if (A.senaWound !== 'scarred') A.senaWound = 'healed';
   ARCS.ch = -1;
   addClose(5, 'sat with her through the fever');
+  if (A.senaWound !== 'scarred') arcMem('fever', 'You sat with Sena until her fever broke.');
   if (typeof romFirstKiss === 'function') romFirstKiss();   // ROM (phase C): the consent-gated first kiss
   else arcSay(ARCD.L.fever.firstKiss);
   drawQuest(); save();
@@ -6699,7 +6715,9 @@ function arcHooks(G) {
         choice: MAT.choice?.id || null, card: [$('card-sub')?.textContent, $('card-season')?.textContent, $('card-recap')?.textContent] }),
       spot: (id) => arcSpot(id), opts: (id) => ARC_OPTS[id]?.().map((o) => ({ label: o.label, value: o.value, ok: !o.req || !!o.req() })),
       epilogue: () => ARCD.epilogueLines(S.arc, S.rom), memories: () => S.arc.memory.map((m) => m.text), bed: () => arcBed(), camp: () => arcCampPos(),
-      target: () => arcTarget(P.pos), sync: () => { ARCS.ch = -1; }, beats: () => arcBeats(CH[S.ch].id), memTab: () => { $('maptabs').querySelector('[data-mt="mem"]').click(); },
+      target: () => arcTarget(P.pos), sync: () => { ARCS.ch = -1; },
+      skip: () => { subs.length = 0; subT = 0; $('sub').classList.remove('on'); for (const w of ARCS.waits) if (!w.subs) w.t = clock; },   // tests: fast-forward lines and waits
+      season: () => { ARCS.season.snap = true; },    // tests: jump the season tint instead of easing it beats: () => arcBeats(CH[S.ch].id), memTab: () => { $('maptabs').querySelector('[data-mt="mem"]').click(); },
     },
   });
   return G;
@@ -6750,7 +6768,7 @@ function epilogue() {
 // soakTogether (survSoak), aimSolve (survWobble), drawInv (survSkinTag). eat/drinkSkin/fillSkin/heal are SURV-owned.
 const SV = { gh: null, ghF: 0, sec: 0, m: SURV.affMods([]), rng: Math.random, fArm: false, fT: 0, fArmAt: 0, retch: 0, kneelW: 0, kneelT: 0, kneelPose: null,
   limpW: 0, limpPh: 0, limpSide: 1, lean: false, leanSide: 1, leanW: 0, tend: null, boil: null, body: false, bodyFlag: null, bodySel: null, bodyT: 0, hold: null,
-  mdSig: null, mdPrev: {}, drip: 0, sheltered: false, fxT: 0, romActs: false, actsTry: 0, hypoWarn: 0, burnWarn: 0 };
+  mdSig: null, mdPrev: {}, drip: 0, visBleed: 0, sheltered: false, fxT: 0, romActs: false, actsTry: 0, hypoWarn: 0, burnWarn: 0 };
 const SV_SRC = { river: 'river', lake: 'lake', marsh: 'marsh', well: 'well', boiled: 'boiled' };
 const svCtx = (o = {}) => { const d = D(); return { aff: d.aff, ill: d.ill, mode: d.mode, gh: S.gh, last: S.risk?.last ?? null, grace: matGrace(), hp: S.hp, rng: SV.rng, ...o }; };
 const svSkin = () => (S.tools.waterskin ? { n: S.skin, q: S.skinQ } : null);
@@ -6836,6 +6854,7 @@ function survStats(dt, sheltered) {
   if (m.waterK > 1) S.water = Math.max(0, S.water - dt * 0.12 * d.drainK * (m.waterK - 1));
   if (m.warmGainK < 1 && !((E.night > 0.5 || E.storm > 0.5) && !sheltered) && S.warm < 100) S.warm = Math.max(0, S.warm - dt * 5 * (1 - m.warmGainK));
   if (m.regenK < 1 && S.food > 35 && S.water > 35 && S.warm > 0) S.hp = Math.max(0, S.hp - dt * 0.7 * matRegenK() * (1 - m.regenK));
+  if (m.stamRegen < 1 && P.speed < 4 && S.stam > 0) S.stam = Math.max(0, S.stam - dt * 12 * (1 - m.stamRegen));   // hypothermia: slower breath back
   if (m.fever) { const w = clock * 0.07; S.warm = clamp(S.warm + 15 * m.fever * (Math.sin(w) - Math.sin(w - dt * 0.07)), 0, 100); }   // fever: warmth swings ±15
   if (!out) {
     const r = SURV.realTick(S.aff, dt, { aff: d.aff, warm: S.warm, rng: SV.rng });
@@ -6912,6 +6931,7 @@ on('playerHit', (e) => {                             // order 60 (spec §5.1): t
     return;
   }
   if (e.kind === 'fall') return;                      // the landing handles its own
+  if (D().aff === 'off') { if (/bite|claw|gore|cut|pierce/.test(e.kind || '')) SV.visBleed = 10; return; }   // Story: the bleeding is only visual, 10 s
   for (const [id, part, sev] of SURV.hitRolls(e, { aff: D().aff, hp: S.hp, rng: SV.rng })) survAdd(id, part, sev);
 }, 60);
 on('land', (e) => survLand(e.drop, e.water, e.speed), 50);
@@ -6919,7 +6939,7 @@ function survLand(drop, water = false) {
   const r = SURV.landRolls(drop, { aff: D().aff, rng: SV.rng, water });
   if (r.dmg > 0) playerHurt({ dmg: r.dmg, kind: 'fall' });
   let any = false;
-  for (const [id, part, sev] of r.add) any = survAdd(id, part, sev) || any;
+  for (const [id, part, sev] of r.add) any = survAdd(id, part, sev, 'P', { force: drop > 4 }) || any;   // a big drop is not a dice roll: no grace
   if (r.dmg > 0 || any) { A.hit(110, 0.3, 0.5); trauma = Math.min(1, trauma + 0.45); }
   return r;
 }
@@ -7021,7 +7041,8 @@ function survEatRaw() {
 }
 // ----- blood drips while bleeding (GORE's trail splats when GORE is built; dust when Blood is off)
 function svDrip(dt) {
-  const b = SV.m.bleed; if (!b || P.downed > 0) return;
+  if (SV.visBleed > 0) SV.visBleed -= dt;
+  const b = SV.m.bleed || (SV.visBleed > 0 ? 1 : 0); if (!b || P.downed > 0) return;
   if ((SV.drip -= dt) > 0) return;
   SV.drip = [0, 1.6, 0.9, 0.45][b];
   try { const g = window.G?.gore; if (g?.splat) g.splat(P.pos.x + (rand() - 0.5) * 0.4, P.pos.z + (rand() - 0.5) * 0.4, 0.06 + 0.04 * b, settings.blood === 'off' ? 'scuff' : 'trail'); } catch (err) { /* GORE not ready */ }
@@ -7285,6 +7306,7 @@ function survFire(s, t) {
   if (I.grain >= 2) acts.push(['Bake flatbread (2 grain)', () => { I.grain -= 2; I.bread++; survGive('bread', 1); toast('+1 Flatbread'); A.hit(3000, 0.4, 0.2); drawInv(); }]);
   const status = items.length ? `Spit: ${items.length} ${svSpitWord(items)}` : SV.boil?.s === s ? `Boiling… ${Math.round(SV.boil.t / SV.boil.T * 100)}%` : '';
   if (!acts.length) return t(status || 'Campfire — bring raw meat or fish for the spit, or grain to bake');
+  if (items.length && acts[0][1] && /cooked|well done|burning/.test(svSpitWord(items)) && acts[0][0].startsWith('Take')) return t(acts[0][0], acts[0][1]);   // in the green: E takes it off at once, no menu
   if (acts.length === 1) return t(acts[0][0] + (status && !/spit/.test(acts[0][0]) ? ` · ${status}` : ''), acts[0][1]);
   return t(`${acts[0][0]} · ${acts.length - 1} more`, () => {
     choose('fire', 'At the fire', [...acts.map(([label]) => ({ label })), { label: 'Leave it' }], { def: acts.length, note: status })
@@ -8849,7 +8871,7 @@ matTitle();                                          // MAT: content notice, the
 let last = performance.now(), frames = 0, ftAcc = 0, ftN = 0, fpsShown = 0;
 function frame(now) {
   requestAnimationFrame(frame);
-  const raw = (now - last) / 1000, dt = paused ? 0 : Math.min(0.05, raw) * cmbTimeK(raw);   // CMB slow motion (parry, perfect dodge, finisher)
+  const raw = Math.max(0, (now - last) / 1000), dt = paused ? 0 : Math.min(0.05, raw) * cmbTimeK(raw);   // CMB slow motion (parry, perfect dodge, finisher) · MUS fix: a stale first rAF stamp gave raw < 0 (clock went to -18 s)
   last = now; clock += dt;
   hitStop = Math.max(0, hitStop - raw);              // WPN hitstop runs in real time
   // Adaptive resolution: nudge the internal render size inside the preset's range to hold a smooth frame rate.
@@ -9015,6 +9037,7 @@ Object.assign(window.G, {
 });
 Object.assign(window.G, { fpp: fppDebug, fppCamera, fppVm, FP });   // FPP test hooks
 arcHooks(window.G);                                  // ARC story hooks: G.arc, setArc, arcChoose, raid, fever, goalsOf, arcDbg
+cmbHooks(window.G);                                  // CMB hooks: G.cmb, G.spawnRaider, clearFoes, updateFoes, cmbDuel
 // MAT mature foundation hooks (difficulty, bus, damage, choices, death and memorial)
 Object.assign(window.G, {
   mat: {
@@ -9040,6 +9063,7 @@ Object.assign(window.G, {
     boil: () => SV.boil && { kind: SV.boil.kind, t: SV.boil.t, T: SV.boil.T }, tend: () => svTendStart(), lean: (on = true) => (on ? svLeanStart() : svLeanStop()),
     state: () => ({ m: { ...SV.m }, retch: SV.retch, lean: SV.lean, leanW: SV.leanW, tend: SV.tend && { ...SV.tend }, limpW: SV.limpW, kneelW: SV.kneelW, risk: { ...S.risk }, body: SV.body, romActs: SV.romActs }),
     fill: (src) => survFill(src), drink: () => survDrinkSkin(), river: () => survRiverTarget(P.pos), senaActs: SURV_SENA_ACTS, SURV,
+    clock: () => clock, grace: (on) => { if (on === false) S.diff.graceUntil = 0; return matGrace(); },
   },
 });
 // ROM + MUS hooks (romance v2, adaptive music, volume buses)
@@ -9055,6 +9079,6 @@ Object.assign(window.G, {
   music: {
     state: () => MUS.state, force: (s, dur = 20) => musicForce(s, dur), sting: (k) => musicSting(k), volumes: musicVolumes,
     buses: () => ({ m: A.mus ? +A.mus.gain.value.toFixed(3) : settings.music, s: A.sfx ? +A.sfx.gain.value.toFixed(3) : settings.sfx, a: A.amb ? +A.amb.gain.value.toFixed(3) : settings.amb, master: A.out ? A.out.gain.value : settings.volume }),
-    voices: () => MUS.m?.voices() ?? 0, playing: () => MUS.m?.state ?? null, log: () => MUS.m?.M.log.slice() ?? [], snap: musicSnap,
+    voices: () => MUS.m?.voices() ?? 0, playing: () => MUS.m?.state ?? null, log: () => MUS.m?.M.log.slice() ?? [], snap: musicSnap, why: () => MUS.why,
   },
 });
