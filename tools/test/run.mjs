@@ -9,7 +9,8 @@ const PORT = process.env.PORT || 5174, CDP = process.env.CDP || 9333;
 const OUT = process.argv[2], steps = JSON.parse(fs.readFileSync(process.argv[3], 'utf8'));
 fs.mkdirSync(OUT, { recursive: true });
 const prof = fs.mkdtempSync(path.join(os.tmpdir(), 'hb-prof-'));
-const chrome = spawn('google-chrome', ['--headless=new', '--remote-debugging-port=' + CDP + '', '--user-data-dir=' + prof, '--window-size=' + (process.env.WS || '1280,720') + '',
+const CHROME = process.env.CHROME || (process.platform === 'darwin' ? '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome' : 'google-chrome');
+const chrome = spawn(CHROME, ['--headless=new', '--remote-debugging-port=' + CDP + '', '--user-data-dir=' + prof, '--window-size=' + (process.env.WS || '1280,720') + '',
   ...(process.env.GL ? process.env.GL.split(' ') : ['--use-angle=swiftshader', '--enable-unsafe-swiftshader']), '--no-first-run', '--autoplay-policy=no-user-gesture-required', 'about:blank'], { stdio: 'ignore' });
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 await sleep(1500);
