@@ -32,7 +32,7 @@ export const FIT = {
   spear: { back: { p: [-0.09, 0.198, -0.221], r: [-1.8, -0.442, 0.219], s: 0.92 },   // diagonal: tip over the right shoulder, butt by the left hip
     hand: { p: [-0.034, 0.182, 0.34], r: [-0.243, 0, 0], s: 1 },                       // fist 0.35 m behind the balance point
     low: { p: [-0.034, 0.12, 0.1], r: [-0.8, 0, 0], s: 1 } },                          // sprint / one-handed: tip pitched down and forward
-  axe: { hipL: { p: [0.19, 0.054, 0.014], r: [1.676, 0.011, -0.225], s: 0.95 },             // head down by the left thigh, haft end up at the belt
+  axe: { hipL: { p: [0.155, 0.048, -0.08], r: [1.75, 0.36, -0.26], s: 0.95 },              // head down outside and behind the left thigh (WH: 0.14 m clear of the leg at walk and sprint), haft end up at the belt
     hand: { p: [-0.034, 0.093, 0.02], r: [-0.243, 0, -3.142], s: 1 } },                // edge toward the knuckles, head 0.45 m out
   torch: { hipR: { p: [0.126, -0.247, -0.053], r: [-1.714, -0.613, 0.198], s: 1 },     // tucked in the back of the belt, head up behind the right hip
     handL: { p: [0.036, 0.1, -0.02], r: [-0.243, 0.01, 0], s: 1 } },                   // flame up out of the thumb side of the fist

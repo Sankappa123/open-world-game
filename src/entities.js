@@ -32,7 +32,11 @@ export function makeSpear({ flint = false } = {}) {
 export function makeAxe({ flint = false } = {}) {
   const g = new THREE.Group();
   mesh(g, cyl(0.018, 0.022, 0.6, 6), woodM, 0, 0, 0.2).rotation.x = Math.PI / 2;
-  const head = mesh(g, new THREE.BoxGeometry(0.04, 0.2, 0.11), stoneM, 0, -0.04, 0.46);
+  // FPP-world: the head is a wedge (thin cutting edge at -y, flared a little; the butt at +y keeps its thickness), not a block
+  const hg = new THREE.BoxGeometry(0.04, 0.2, 0.11, 1, 2, 1), hp = hg.attributes.position;
+  for (let i = 0; i < hp.count; i++) { const u = (0.1 - hp.getY(i)) / 0.2; hp.setX(i, hp.getX(i) * (1 - 0.82 * u * u)); hp.setZ(i, hp.getZ(i) * (1 + 0.28 * u * u)); }
+  hg.computeVertexNormals();
+  const head = mesh(g, hg, stoneM, 0, -0.04, 0.46);
   mesh(g, cyl(0.026, 0.026, 0.05, 7), lashM, 0, 0, 0.385).rotation.x = Math.PI / 2;
   g.userData.setFlint = (on) => { head.material = on ? flintM : stoneM; head.scale.set(on ? 0.85 : 1, on ? 1.12 : 1, 1); g.userData.flint = !!on; };
   g.userData.setFlint(flint);
@@ -219,6 +223,7 @@ const flameM2 = flameM.clone(); flameM2.color.set(0xffd66a);
 const plankDM = plankM.clone(); plankDM.side = THREE.DoubleSide;
 const thatchDM = thatchM.clone(); thatchDM.side = THREE.DoubleSide;
 const reedM = mat(0xb8a46a, 1), hideM = mat(0x7a5236, 0.95), linenM = mat(0xd8ccb0, 1), fiberM = mat(0xb89a5e, 1), hayM = mat(0xd9bf5a, 1), meatM = mat(0x6e2f22, 0.8), driedM = mat(0x4a2618, 0.9);
+const glassM = new THREE.MeshStandardMaterial({ color: 0x1c2a3a, emissive: 0x0a1424, emissiveIntensity: 1, roughness: 0.25, metalness: 0.1 });   // STORY: a window pane seen from inside
 const emberM = new THREE.MeshStandardMaterial({ color: 0x2a140a, emissive: 0xff6a20, emissiveIntensity: 1.6, roughness: 1 });
 
 function smoke(g, y, n = 8, spread = 1) {
@@ -315,6 +320,11 @@ export const BUILD = {
     for (let i = 0; i < 8; i++) { const a = (i / 8) * 6.283; mesh(hearthG, rockGeo, stoneM, Math.cos(a) * 0.45, 0.1, Math.sin(a) * 0.45).scale.set(0.15, 0.12, 0.14); }
     mesh(hearthG, cyl(0.36, 0.38, 0.05, 12), emberM, 0, 0.06, 0).castShadow = false;
     for (let i = 0; i < 3; i++) mesh(hearthG, cyl(0.04, 0.05, 0.6, 6), woodM, 0, 0.14, 0).rotation.set(Math.PI / 2, i * 1.05, 0, 'YXZ');
+    // STORY: the hearth burns: the campfire's flame cones at ~0.6 scale, flickering (house.update); main's homeLight lights the room
+    const hFlames = [0, 1, 2].map((i) => {
+      const f = new THREE.Mesh(new THREE.ConeGeometry(0.13 - i * 0.025, 0.46 - i * 0.07, 7, 1, true), i % 2 ? flameM2 : flameM);
+      f.position.set(Math.sin(i * 2.1) * 0.06, 0.38 - i * 0.02, Math.cos(i * 2.1) * 0.06); f.castShadow = false; f.userData.noCam = true; hearthG.add(f); return f;
+    });
     // double bed: frame 1.6 x 2.1, mattress top at y 0.55, two pillows, hide blanket over the lower 70%
     const bedG = pivot(g, -0.9, 0.15, -1.25);
     mesh(bedG, new THREE.BoxGeometry(1.6, 0.25, 2.1), plankM, 0, 0.125, 0);
@@ -339,7 +349,9 @@ export const BUILD = {
     const door = mesh(g, new THREE.BoxGeometry(0.95, 2.05, 0.07), plankM, -0.85, 1.2, z + 0.5);
     door.rotation.y = -1.25;
     for (const x of [-2.05, 2.05]) {
-      mesh(g, new THREE.BoxGeometry(0.9, 0.9, t + 0.04), glowM, x, 1.75, z).castShadow = false;
+      // STORY: the warm glow shows only from outside; inside, the pane is dark glass (it used to be one emissive box through the wall)
+      const pane = mesh(g, new THREE.PlaneGeometry(0.9, 0.9), glowM, x, 1.75, z + t / 2 + 0.022); pane.castShadow = false; pane.receiveShadow = false;
+      const glass = mesh(g, new THREE.PlaneGeometry(0.9, 0.9), glassM, x, 1.75, z - t / 2 - 0.022); glass.rotation.y = Math.PI; glass.castShadow = false;
       mesh(g, new THREE.BoxGeometry(1.1, 0.09, t + 0.12), plankM, x, 1.25, z);
       mesh(g, new THREE.BoxGeometry(1.1, 0.09, t + 0.12), plankM, x, 2.25, z);
       mesh(g, new THREE.BoxGeometry(0.06, 0.9, t + 0.1), plankM, x, 1.75, z);
@@ -349,11 +361,14 @@ export const BUILD = {
     roof.geometry.attributes.uv.array.forEach((v, i, a) => { a[i] = v * 0.5; });
     mesh(roofG, boxM(0.7, 1.9, 0.7), brickM, 2, hh + 1.3, -1.2);
     const sm = smoke(g, hh + 2.3, 6, 0.9);
-    let built = 1;
+    let built = 1, ft = 0;
     return { radius: 4.4, label: 'Brick house', setHome, hearthPt: [1.9, 0.7, -1.2], bedHide,   // RST bedHide
       bedPts: [[-1.3, 0.62, -0.32], [-0.5, 0.62, -0.32]], camPt: [0.6, 2.15, 2.1], lookPt: [-0.9, 0.5, -1.2],
       stage(p) { built = p; wallsG.visible = p >= 0.3; roofG.visible = p >= 0.8; door.visible = p >= 0.8; },
-      update(dt) { sm(dt, built >= 1 ? 0.8 : 0); } };
+      update(dt) {
+        sm(dt, built >= 1 ? (hearthG.visible ? 1 : 0.8) : 0);
+        if (hearthG.visible) { ft += dt; hFlames.forEach((f, i) => { f.scale.set(1 + Math.sin(ft * 9 + i * 2) * 0.2, 1 + Math.sin(ft * 13 + i) * 0.28, 1 + Math.cos(ft * 8 + i) * 0.2); f.rotation.y = ft * (i + 1); }); }
+      } };
   },
   farm(g) {
     mesh(g, new THREE.BoxGeometry(5.4, 0.5, 4.4), soilM, 0, -0.14, 0).castShadow = false;

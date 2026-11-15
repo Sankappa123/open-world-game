@@ -9,7 +9,7 @@ import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.j
 import { clamp, lerp, mat } from './util.js';
 import { loadGame, saveGame, deleteGame, saveState, settings, saveSettings } from './save.js';
 import { PRESETS, detectQuality } from './quality.js';
-import { CAVES, depthAt, biome as biomeAt, POIS } from './world.js';   // WP3 caves and landmarks
+import { CAVES, depthAt, biome as biomeAt, POIS, forest } from './world.js';   // WP3 caves and landmarks
 import * as MATD from './mature.js';
 import * as CB from './combat.js'; import { createPredators } from './enemies.js'; import { createTribe } from './tribe.js';   // CMB combat v2, predators, raiders                // MAT mature foundation: difficulty tables, bus, memorial, choice panel
 import * as ROMD from './romance.js';               // ROM romance v2: tiers, lines, rules, pose overrides
@@ -30,7 +30,7 @@ renderer.setPixelRatio(pixelRatio);
 renderer.setSize(innerWidth, innerHeight);
 renderer.shadowMap.enabled = true;
 renderer.shadowMap.type = THREE.PCFShadowMap;
-renderer.shadowMap.autoUpdate = false;        // refreshed from the frame loop: every frame on high, every other frame otherwise
+renderer.shadowMap.autoUpdate = false;        // refreshed from the frame loop: every other frame (every third on low)
 renderer.toneMapping = THREE.ACESFilmicToneMapping;
 document.body.prepend(renderer.domElement);
 const canvas = renderer.domElement;
@@ -48,7 +48,8 @@ const [, , , found] = await Promise.all([loadNature(), loadPeople(), loadAnimals
   const b = $('btn-new');
   b.textContent = 'Some files failed to load · Retry'; b.onclick = () => location.reload();
   $('savenote').textContent = 'Check your connection, then retry. Your saved game is safe.';
-  throw e;
+  console.error('Boot stopped: assets failed to load', e);
+  return new Promise(() => {});                      // the boot stops here, cleanly (loadRetry already logged which file)
 });
 const world = createWorld(scene, renderer, quality());
 const SWIM_Y = -0.1;
@@ -326,7 +327,7 @@ function updateSubs(dt) {
 }
 function drawInv() {
   let h = '';
-  if (hasSpear()) h += `<span class="tool">${S.tools.flintspear ? 'Flint spear' : 'Spear'}</span>`;   // FPP-world: flint tools are named too
+  if (hasSpear()) h += `<span class="tool">${S.tools.flintspear ? 'Flint spear' : 'Spear'}${W.spearOut ? ' · on the ground' : ''}</span>`;   // FPP-world: flint tools are named too; WH: the thrown spear
   if (hasAxe()) h += `<span class="tool">${S.tools.flintaxe ? 'Flint axe' : 'Axe'}</span>`;
   if (S.tools.torch) h += `<span class="tool">Torch${torchOn ? ` · lit ${Math.ceil(S.fuel)}s` : ''}</span>`;
   if (S.tools.cloak) h += '<span class="tool">Fur cloak</span>';
@@ -810,7 +811,10 @@ function seatOn(e, o, boneName, back, up = 0) {
 // whatever the gait does to the seat: legs straddle the barrel (feet down the ribs, knees forward and out), the body
 // leans into the pace and rocks with the stride, Aro's fists hold the reins over the withers (unless a weapon or the lit
 // torch has that hand), Sena's hands rest on Aro's hips. rideW (0..1) blends it in and out with the mount motion.
-const RIDE_SEAT = { P: { back: -0.18, up: 0 }, N: { back: 0.24, up: 0.035 } };   // along the back from Torso2 (+ = toward the tail)
+const RIDE_SEAT = { P: { back: -0.32, up: -0.03 }, N: { back: 0.08, up: 0 } };   // along the back from Torso2 (+ = toward the tail): Aro in the dip behind the withers (Torso2 +0.36 m), Sena 0.4 m behind him
+// The ride clip (Driving_Loop) hunches over a wheel: the riders' spine, neck and head come from the standing idle instead.
+const RIDE_UPRIGHT = (b) => /^(spine_0[123]|neck_01|Head)$/.test(b);
+const RIDE_UP = { P: samplePose(P.h, 'idle', 0, RIDE_UPRIGHT), N: samplePose(N.h, 'idle', 0, RIDE_UPRIGHT) };
 const _rA = new THREE.Vector3(), _rB = new THREE.Vector3(), _rC = new THREE.Vector3(), _rL = new THREE.Vector3();
 function riderOverride(e) {
   return (h, dt) => {
@@ -820,6 +824,7 @@ function riderOverride(e) {
     const root = h.root, b = h.bones, v = Math.abs(P.hv || 0), g = clamp(v / 13, 0, 1), trot = clamp((v - 2.5) / 3, 0, 1);
     e.ridePh = ((e.ridePh || 0) + (dt || 0) * 6.283 * (v < 0.3 ? 0.25 : 0.7 + v * 0.13)) % 6.283;
     const ph = e.ridePh, sn = Math.sin(ph), s2 = Math.sin(ph * 2);
+    applyPose(h, RIDE_UP[e === P ? 'P' : 'N'], w);                                // sit up straight
     root.updateMatrixWorld(true);
     _rL.set(1, 0, 0).transformDirection(root.matrixWorld);                       // the rider's left: the pitch axis
     const lean = ((e === N ? 0.16 : 0.07) + 0.2 * g + 0.035 * trot * s2) * w;
@@ -873,40 +878,65 @@ const tack = (() => {
     const geo = new THREE.CylinderGeometry(1, 1, len, 24, 1, true, -th / 2, th); geo.rotateX(-Math.PI / 2);
     const m = new THREE.Mesh(geo, mat); m.scale.set(sx, sy, 1); m.position.z = z; m.castShadow = true; g.add(m); return m;
   };
-  shell(0.82, 2.0, weave, 0.278, 0.368, 0.1);                                    // blanket (under both seats)
-  shell(0.5, 1.7, hide, 0.29, 0.38, 0.17);                                       // pad under Aro
+  shell(0.82, 2.0, weave, 0.278, 0.368, 0.16);                                   // blanket (under both seats: Aro at +0.36, Sena at -0.08)
+  shell(0.42, 1.7, hide, 0.29, 0.38, 0.34);                                      // pad under Aro
   const girth = new THREE.Mesh(new THREE.CylinderGeometry(1, 1, 0.055, 24, 1, true), weave);
-  girth.geometry.rotateX(-Math.PI / 2); girth.scale.set(0.282, 0.372, 1); girth.position.set(0, 0, 0.3); g.add(girth);
+  girth.geometry.rotateX(-Math.PI / 2); girth.scale.set(0.282, 0.372, 1); girth.position.set(0, 0, 0.44); g.add(girth);
   const rein = () => { const m = new THREE.Mesh(new THREE.CylinderGeometry(0.009, 0.009, 1, 5), rope); m.geometry.translate(0, 0.5, 0); m.geometry.rotateX(Math.PI / 2); m.visible = false; scene.add(m); return m; };
   const nose = new THREE.Mesh(new THREE.TorusGeometry(1, 0.1, 5, 14), rope); nose.visible = false; scene.add(nose);
   scene.add(g);
   return { g, reins: [rein(), rein()], nose };
 })();
 // Head-bone-local noseband (centre, orientation, radius) and bit point; measured on the Quaternius horse (G.tackFit).
-const TACK_NOSE = { p: new THREE.Vector3(0, 0.62, 0.3), q: new THREE.Quaternion(), r: 0.075, bit: new THREE.Vector3(0, 0.62, 0.42) };
+// Offsets are metres in the Head bone's orientation (its world scale is ~48, so localToWorld is not used): +y runs down
+// the face to the muzzle, +z out of the forehead, +x the horse's right. The ring's axis lies along the face (+y).
+const TACK_NOSE = { p: new THREE.Vector3(0, 0.42, 0.0), q: new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1, 0, 0), Math.PI / 2), r: 0.085, bit: new THREE.Vector3(0, 0.47, -0.05) };
+const headPt = (hd, off, out) => { hd.getWorldPosition(out); hd.getWorldQuaternion(_tq); return out.add(_tU.copy(off).applyQuaternion(_tq)); };
 const _tq = new THREE.Quaternion(), _tm = new THREE.Matrix4(), _tF = new THREE.Vector3(), _tB = new THREE.Vector3(), _tU = new THREE.Vector3();
+// WH: riding two-up, Aro's spear would cross Sena's arms on his back: it rides in a rest on the horse's right shoulder
+// instead (horse frame from Torso2: outside both riders' right knees, tip forward and up like a carried lance).
+const spearRest = new THREE.Group(); scene.add(spearRest);
+const SPEAR_REST = { p: new THREE.Vector3(-0.43, -0.12, 0.42), q: new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1, 0, 0), -0.42) };
+function spearRestTick(live) {
+  const sp = P.h.spear, inRest = sp.parent === spearRest;
+  const want = live && P.ride && N.ride && !P.tr && W.st === 'sheathed' && !W.aim && !W.spearOut && !W.props;
+  if (want && !inRest && P.h.slotOf(sp) === 'back') {
+    spearRest.updateMatrixWorld(true); spearRest.attach(sp);
+    const i = P.h.blends.findIndex((x) => x.m === sp); if (i >= 0) P.h.blends.splice(i, 1);
+    sp.userData.rest = { t0: clock, p0: sp.position.clone(), q0: sp.quaternion.clone() }; sp.userData.slot = null;
+  } else if (!want && inRest) { sp.userData.rest = null; P.h.place(sp, 'back', 0.3); }
+  const r = sp.userData.rest;
+  if (sp.parent === spearRest && r) {                // ease into the rest over 0.4 s
+    const e = smooth01((clock - r.t0) / 0.4);
+    sp.position.lerpVectors(r.p0, SPEAR_REST.p, e); sp.quaternion.slerpQuaternions(r.q0, SPEAR_REST.q, e); sp.scale.setScalar(0.92);
+  }
+}
 function updateTack(th) {
-  const on = !!(th && S.tools.saddle && th.root.visible && th.state === 'live');
+  const live = !!(th && th.root.visible && th.state === 'live'), on = live && !!S.tools.saddle;
   tack.g.visible = on; tack.nose.visible = on;
+  if (live) {
+    th.root.updateMatrixWorld(true);
+    th.a.bone('Torso3').getWorldPosition(_tF); th.a.bone('Torso').getWorldPosition(_tB);
+    _tF.sub(_tB).normalize();                                                    // along the back, tail to withers
+    _tU.set(0, 1, 0).addScaledVector(_tF, -_tF.y).normalize();
+    _tB.crossVectors(_tU, _tF);                                                  // the horse's left
+    _tm.makeBasis(_tB, _tU, _tF); tack.g.quaternion.setFromRotationMatrix(_tm);
+    th.a.bone('Torso2').getWorldPosition(tack.g.position);
+    spearRest.position.copy(tack.g.position); spearRest.quaternion.copy(tack.g.quaternion);
+  }
+  spearRestTick(live);
   if (!on) { tack.reins.forEach((r) => (r.visible = false)); return; }
-  th.root.updateMatrixWorld(true);
-  th.a.bone('Torso3').getWorldPosition(_tF); th.a.bone('Torso').getWorldPosition(_tB);
-  _tF.sub(_tB).normalize();                                                      // along the back, tail to withers
-  _tU.set(0, 1, 0).addScaledVector(_tF, -_tF.y).normalize();
-  _tB.crossVectors(_tU, _tF);                                                    // the horse's left
-  _tm.makeBasis(_tB, _tU, _tF); tack.g.quaternion.setFromRotationMatrix(_tm);
-  th.a.bone('Torso2').getWorldPosition(tack.g.position);
   // bridle: a rope noseband round the muzzle (Head bone frame, measured), the bit at its front
   const hd = th.a.bone('Head'); hd.updateWorldMatrix(true, false);
-  hd.localToWorld(tack.nose.position.copy(TACK_NOSE.p));
-  hd.getWorldQuaternion(_tq); tack.nose.quaternion.copy(_tq).multiply(TACK_NOSE.q); tack.nose.scale.setScalar(TACK_NOSE.r);
+  headPt(hd, TACK_NOSE.p, tack.nose.position);
+  tack.nose.quaternion.copy(_tq).multiply(TACK_NOSE.q); tack.nose.scale.setScalar(TACK_NOSE.r);
   const riding = P.ride === th && !P.taming && (P.rideW ?? 1) > 0.6;
   tack.reins.forEach((r, i) => {
     const hand = P.h.bones[i ? 'hand_r' : 'hand_l'];
     r.visible = riding && !(i ? W.aimW > 0.02 || (W.held && W.held !== 'fists' && W.st !== 'sheathed') : W.aimW > 0.02 || torchOn || W.torchW > 0.05);
     if (!r.visible) return;
     hand.localToWorld(_rA.set(i ? -0.03 : 0.03, 0.09, 0));                       // through the fist
-    hd.localToWorld(_rB.copy(TACK_NOSE.bit)); _rB.addScaledVector(_tB, i ? -TACK_NOSE.r : TACK_NOSE.r);
+    headPt(hd, TACK_NOSE.bit, _rB); _rB.addScaledVector(_tB, i ? -TACK_NOSE.r : TACK_NOSE.r);
     r.position.copy(_rA); r.lookAt(_rB); r.scale.set(1, 1, _rA.distanceTo(_rB));
   });
 }
@@ -1081,10 +1111,27 @@ function wolfBrain(o, dist, dx, dz, dt) {
   }
   return dist > 3 ? 6.8 : 3;
 }
+// SAVE-PERF: animal level of detail. Every animal used to be animated, skinned and drawn wherever it was (their meshes
+// have frustumCulled off), shadows included. Now an animal is drawn only within 45 m or on screen within 230 m (past
+// that the fog hides it). One that is not drawn animates at a low rate (the skipped time is caught up, so one-shot
+// clips still end), and beyond 70 m its bone matrices are not refreshed. Brains still run every frame.
+const _af = new THREE.Frustum(), _afm = new THREE.Matrix4(), _afs = new THREE.Sphere();
+let afFrame = -1;
+function animLodDt(o, dt) {
+  if (afFrame !== frames) { afFrame = frames; _af.setFromProjectionMatrix(_afm.multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse)); }
+  const p = o.root.position, d = Math.hypot(p.x - camera.position.x, p.z - camera.position.z);
+  const show = d < 45 || (d < 230 && _af.intersectsSphere(_afs.set(p, 6)));
+  if (o.a.model.visible !== show) o.a.model.visible = show;
+  o.root.matrixWorldAutoUpdate = show || d < 70;
+  o.lodDt = (o.lodDt || 0) + dt;
+  const every = show ? (d > 90 ? 2 : 1) : 8;
+  if ((frames + (o.lodK ??= (Math.random() * 8) | 0)) % every) return 0;   // staggered so the far ones don't all land on one frame
+  const t = o.lodDt; o.lodDt = 0; return t;
+}
 function updateAnimal(o, dt) {
   const p = o.root.position;
-  if (o === P.ride) { o.a.update(dt); return; }     // WP4: the ridden horse is moved by updateRide
-  o.a.update(dt * hsK(o)); wpnAnimalFx(o, dt);       // WPN hitstop, knockback, flinch
+  if (o === P.ride) { if (!o.a.model.visible) o.a.model.visible = true; o.root.matrixWorldAutoUpdate = true; o.lodDt = 0; o.a.update(dt); return; }     // WP4: the ridden horse is moved by updateRide
+  { const ad = animLodDt(o, dt * hsK(o)); if (ad > 0) o.a.update(ad); } wpnAnimalFx(o, dt);   // WPN hitstop, knockback, flinch · SAVE-PERF animal LOD
   if (o.state === 'dead') { o.deadT += dt; if (o.looted && clock > o.respawn) revive(o); return; }
   if (o.brain) { o.brain(o, dt); return; }           // CMB predators (bear, aurochs) own their movement and clips
   if (o.stun > 0) { o.stun -= dt; return; }
@@ -1139,27 +1186,31 @@ rainGeo.setAttribute('position', new THREE.BufferAttribute(rainPos, 3));
 const rain = new THREE.LineSegments(rainGeo, new THREE.LineBasicMaterial({ color: 0xb4c8d8, transparent: true, opacity: 0, depthWrite: false }));
 rain.frustumCulled = false; rain.visible = false; scene.add(rain);
 // WH: wolves live in the pine forest. A pack comes out of the trees: of 12 bearings, the one whose spawn point and the
-// line in toward Aro cross the most pine wins (a little randomness among near-equal ones); none at all falls back to a
-// random bearing. pineNear() is where a leaving wolf heads at dawn.
+// line in toward Aro cross the most pine wins (a little randomness among near-equal ones); none on the ring sends them
+// from the side the nearest woods lie (random only with no woods within 200 m). pineNear() is where a leaving wolf heads at dawn.
+// The 'pine' biome itself is rare (forest noise > 0.55); the pine woods the trees grow in start well below that.
+const pineWoods = (x, z) => Math.abs(x) < LIMIT && Math.abs(z) < LIMIT && (forest(x, z) > 0.2 || biomeAt(x, z) === 'pine') && biomeAt(x, z) !== 'meadow' && biomeAt(x, z) !== 'lake';
 function wolfBearing(cx, cz, r) {
-  let best = rand() * 6.283, bs = 0;
+  let best = rand() * 6.283, bs = 0, pine = false;
   const a0 = rand() * 6.283;
   for (let i = 0; i < 12; i++) {
     const a = a0 + i * 0.5236, sx = Math.sin(a), sz = Math.cos(a);
     let sc = 0;
     for (const [k, wt] of [[1, 3], [0.85, 1.5], [1.2, 1.5], [0.65, 1], [0.45, 0.5]]) {
       const x = cx + sx * r * k, z = cz + sz * r * k;
-      if (Math.abs(x) < LIMIT && Math.abs(z) < LIMIT && biomeAt(x, z) === 'pine') sc += wt;
+      if (pineWoods(x, z)) sc += wt;
     }
+    if (sc > 0) pine = true;
     sc += rand() * 0.4;
     if (sc > bs) { bs = sc; best = a; }
   }
+  if (!pine) { const pn = pineNear(cx, cz, 200); if (pn) best = Math.atan2(pn[0] - cx, pn[1] - cz) + (rand() - 0.5) * 0.7; }   // no pines on the ring: from the side the nearest forest lies
   return best;
 }
-function pineNear(x, z) {
-  for (let r = 20; r <= 120; r += 20) for (let i = 0; i < 10; i++) {
+function pineNear(x, z, max = 120) {
+  for (let r = 20; r <= max; r += 20) for (let i = 0; i < 10; i++) {
     const a = i * 0.628 + r * 0.1, px = x + Math.sin(a) * r, pz = z + Math.cos(a) * r;
-    if (Math.abs(px) < LIMIT && Math.abs(pz) < LIMIT && biomeAt(px, pz) === 'pine') return [px, pz];
+    if (pineWoods(px, pz)) return [px, pz];
   }
   return null;
 }
@@ -1267,6 +1318,22 @@ const GUARD_BONES = (b) => BONESETS.armR(b) || BONESETS.armL(b);
 // Female grip centres sit a little closer to the wrist (smaller hands); her spear rides behind the basket.
 N.h.fitAdj = { spear: { hand: { p: [-0.029, 0.161, 0.34], r: [-0.243, 0, 0], s: 1 }, back: { p: [-0.132, 0.101, -0.384], r: [-1.832, -0.376, 0.218], s: 0.84 } },
   torch: { handL: { p: [0.032, 0.081, -0.019], r: [-0.243, 0.01, 0], s: 1 } } };
+// WH: Aro's spear lies flatter across his back in the saddle (on foot's steep carry stood up past his head like a pole
+// from the side) and along his spine while swimming (it stuck up out of the water). wpnBackFit swaps the variant in.
+const SPEAR_BACK = { ride: { p: [-0.09, 0.17, -0.2], r: [-1.777, -0.748, 0.219], s: 0.92 }, swim: { p: [-0.05, -0.35, -0.19], r: [1.744, -0.1, 0], s: 0.92 } };
+// In the saddle the hip axe hangs straight down the horse's flank (its on-foot carry angles back into Sena's knee).
+const AXE_RIDE = { p: [0.155, 0.048, -0.08], r: [1.493, 0.326, -0.26], s: 0.95 };
+const AXE_SWIM = { p: [0.15, 0.048, -0.02], r: [1.45, 0.15, -0.26], s: 0.95 };   // swimming: along the thigh toward the feet, head tipped to the belly side (under water)
+P.h.fitAdj = { spear: {}, axe: {} };
+function wpnBackFit() {
+  const k = P.swim ? 'swim' : P.ride ? 'ride' : '';
+  if (k === (W.backFit || '')) return;
+  W.backFit = k;
+  if (k) P.h.fitAdj.spear.back = SPEAR_BACK[k]; else delete P.h.fitAdj.spear.back;
+  if (k) P.h.fitAdj.axe.hipL = k === 'ride' ? AXE_RIDE : AXE_SWIM; else delete P.h.fitAdj.axe.hipL;
+  if (P.h.slotOf(P.h.spear) === 'back') P.h.place(P.h.spear, 'back', 0.35);
+  if (P.h.slotOf(P.h.axe) === 'hipL') P.h.place(P.h.axe, 'hipL', 0.35);
+}
 const senaBasket = makeCarryBasket(); senaBasket.userData.kind = 'basket'; senaBasket.visible = false;
 N.h.place(senaBasket, 'back'); N.h.place(N.h.spear, 'back');
 P.h.useGrip(); N.h.useGrip();
@@ -1438,10 +1505,11 @@ function wpnSelect(k) {
   if (!owns(k)) { toast(k === 'axe' ? 'You have no axe yet' : 'You have no spear yet'); return; }
   if (k === 'spear' && W.spearOut) { toast('Your spear is lying where it landed (see the map)'); return; }
   if (W.aim) wpnCancelAim();
-  if (k === W.sel) { if (W.st === 'sheathed' && !P.ride && !P.swim && !wBusy()) wpnDraw(); return; }
+  const canDraw = !P.ride && !P.swim && !wBusy();
+  if (k === W.sel) { if (W.st === 'sheathed' && canDraw) wpnDraw(); return; }
   W.last = W.sel;
   if ((W.st === 'drawn' || W.st === 'drawing') && !P.ride) { W.queued = 'switch:' + k; wpnSheathe(1.6); if (W.st === 'sheathed') wpnAfterSheathe(); }
-  else W.sel = k;
+  else { W.sel = k; if (W.st === 'sheathed' && canDraw) wpnDraw(); }   // WH: from sheathed one press selects and draws (select only in the saddle, the water or busy)
   A.hit(1800, 0.03, 0.04);
   wpnHud();
 }
@@ -1770,6 +1838,9 @@ function wpnUpdate(dt) {
   trauma = Math.max(0, trauma - 1.5 * dt);
   const ok = `${hasAxe()}${hasSpear()}${!!S.tools.flintaxe}${!!S.tools.flintspear}${!!S.tools.torch}`;
   if (ok !== W.ownKey) { W.ownKey = ok; wpnSync(); }
+  if (W.spearOut !== W.invOut) { W.invOut = W.spearOut; drawInv(); }   // WH: the pack line says when the spear lies out
+  wpnBackFit();                                      // WH: the spear's carry on the back (on foot, saddle, water)
+  if (W.restoreDrawn && clock > 0.2) { W.restoreDrawn = false; if (W.st === 'sheathed' && !P.ride && !P.swim && !wBusy() && !W.props) wpnSnapDrawn(); }
   if (!!P.ride !== W.wasRide) { W.wasRide = !!P.ride; if (W.aim) wpnCancelAim(); }
   if (P.cool > 0 && P.wantFace != null && !P.ride && view !== 'fpp') P.face = turn(P.face, P.wantFace, Math.min(1, dt * 18));
   if (keys.KeyQ && W.qDown && !W.qFired && performance.now() - W.qDown >= 300) { W.qFired = true; wpnToggle(true); }
@@ -1872,11 +1943,11 @@ function wpnSync() {
   }
   wpnHud();
 }
-function wpnSave() { S.equip = W.sel; S.lastEquip = W.last; if (!W.spearOut) S.spearAt = null; }
+function wpnSave() { S.equip = W.sel; S.lastEquip = W.last; S.drawn = W.st === 'drawn' || W.st === 'drawing'; if (!W.spearOut) S.spearAt = null; }
 function wpnLoad() {
   S.equip ??= 'fists'; S.lastEquip ??= 'fists';
   W.sel = owns(S.equip) ? S.equip : 'fists'; W.last = owns(S.lastEquip) ? S.lastEquip : 'fists';
-  Object.assign(W, { st: 'sheathed', held: null, aim: null, queued: null, spearOut: false, props: false, stW: 0, lhW: 0, aimW: 0, camK: 0 });
+  Object.assign(W, { st: 'sheathed', held: null, aim: null, queued: null, spearOut: false, props: false, stW: 0, lhW: 0, aimW: 0, camK: 0, invOut: undefined });
   proj.st = null; proj.m.visible = false; if (proj.m.parent !== scene) scene.attach(proj.m);
   const a = S.spearAt;
   if (a && hasSpear()) {
@@ -1885,6 +1956,15 @@ function wpnLoad() {
   } else S.spearAt = null;
   if (W.sel === 'spear' && W.spearOut) W.sel = 'fists';
   W.ownKey = ''; wpnSync();
+  W.restoreDrawn = !!S.drawn;                        // WH: drawn at save time: back in the hand on the first free frame (wpnUpdate)
+}
+// WH: snap the selected weapon into the hand (no draw motion, never the aim): a load that was saved with it drawn.
+function wpnSnapDrawn() {
+  if (!owns(W.sel) || (W.sel === 'spear' && W.spearOut)) return;
+  const m = wMesh(W.sel);
+  if (m) { m.visible = true; P.h.place(m, 'hand'); }
+  W.held = W.sel; W.st = 'drawn'; W.moved = true; W.t = W.T = T_DRAW[W.sel]; W.idleT = W.homeT = W.sprintT = 0; W.manualT = 8;
+  wpnHud();
 }
 // Sitting by the fire: the spear is planted in the ground at the end of Aro's bench (wpnUnSit takes it back).
 function wpnBench(s) {
@@ -1990,7 +2070,7 @@ function vmHold(m, dir, up, at) {
   m.quaternion.setFromRotationMatrix(new THREE.Matrix4().makeBasis(x, y, z)); m.position.copy(z).multiplyScalar(-at);
 }
 vmHold(vmSpear, [-0.1, 0.1, -1], [0, 1, 0], -0.35);           // tip forward, a little in and up
-vmHold(vmAxe, [0.1, 0.78, -0.62], [0, 0.62, 0.78], 0.02);     // haft up and forward, head at the upper right, edge away
+vmHold(vmAxe, [0.12, 0.6, -0.79], [0, 0.79, 0.6], 0.02);     // haft up and forward, head at the upper right, edge away (FPP-world: tipped further forward, so the head shows whole)
 vmHold(vmTorch.root, [-0.07, 0.6, -0.8], [0, 0.8, 0.6], 0.02);
 for (const f of vmTorch.flame.children) f.geometry = new THREE.SphereGeometry(f.geometry.parameters.radius, 18, 14);   // smoother up close
 const vmGlow = new THREE.Sprite(new THREE.SpriteMaterial({ map: puffTex, color: 0xffa040, transparent: true, opacity: 0.55, blending: THREE.AdditiveBlending, depthWrite: false }));
@@ -2055,6 +2135,29 @@ function wpnState() {
 // WP2 construction sites: timed kinds are raised by hand (Aro holds E, Sena works on the far side; faster together).
 const BUILD_TIME = { hut: 16, kiln: 10, house: 36, farm: 5, well: 12, stable: 14 };
 const toWorld = (s, [lx, ly, lz]) => { const c = Math.cos(s.rot || 0), sn = Math.sin(s.rot || 0); return new THREE.Vector3(s.x + lx * c + lz * sn, s.group.position.y + ly, s.z - lx * sn + lz * c); };
+// SAVE-PERF: campfire lights come from a fixed pool of two, always in the scene. Each campfire used to bring its own
+// PointLight, and a new light changes every lit shader, so building a fire (or loading near one) recompiled them all in
+// the middle of play. The fires keep their own lights (out of the scene, still flickered by their update()); the pool
+// copies the two nearest to the camera, which is all the light's 26 m reach ever needs.
+const FIRE_LIGHTS = [0, 1].map(() => { const l = new THREE.PointLight(0xff8336, 0, 26, 1.6); l.position.set(0, -300, 0); scene.add(l); return l; });
+const fireSrc = [];
+function poolFireLight(st) {
+  const ls = []; st.group.traverse((o) => { if (o.isPointLight) ls.push(o); });
+  if (ls.length) st.group.updateMatrixWorld(true);
+  for (const l of ls) { const pos = st.group.localToWorld(l.position.clone()); l.removeFromParent(); fireSrc.push({ st, light: l, pos }); }
+}
+function updateFireLights() {
+  for (let i = fireSrc.length - 1; i >= 0; i--) if (!structs.includes(fireSrc[i].st)) fireSrc.splice(i, 1);
+  const c = camera.position, d2 = (f) => (f.pos.x - c.x) ** 2 + (f.pos.z - c.z) ** 2;
+  const near = fireSrc.length > 2 ? [...fireSrc].sort((a, b) => d2(a) - d2(b)) : fireSrc;
+  FIRE_LIGHTS.forEach((l, i) => {
+    const f = near[i];
+    if (!f) { l.intensity = 0; return; }
+    if (f.st.rise < 1) f.pos = f.st.group.localToWorld(f.light.position.clone());   // still rising out of the ground
+    l.position.copy(f.pos); l.color.copy(f.light.color); l.distance = f.light.distance; l.decay = f.light.decay;
+    l.intensity = f.st.group.visible ? f.light.intensity : 0;
+  });
+}
 function placeStruct(kind, x, z, rot, instant, grow, p) {
   const st = makeStructure(kind);
   if (p != null && BUILD_TIME[kind]) instant = false;            // WP2: a half-built site from a save
@@ -2063,6 +2166,7 @@ function placeStruct(kind, x, z, rot, instant, grow, p) {
   st.group.position.set(x, getHeight(x, z), z);
   st.group.rotation.y = rot;
   scene.add(st.group);
+  poolFireLight(st);                                   // SAVE-PERF: the campfire's light joins the fixed pool (no recompile)
   structs.push(st);
   if (st.solid) st.col = addCollider({ x, z, r: st.radius * (kind === 'house' ? 0.8 : 0.9) });
   // WP2: small local colliders (stable back wall, fence, basket) instead of one solid circle
@@ -2269,6 +2373,7 @@ function horseFaced(p) {
 function findTarget() {
   const p = P.pos;
   const w4 = wp4Target(p); if (P.ride) return w4;     // WP4 horses: ride, feed, offer, tame; only "Dismount" while riding
+  if (w4) { const ct = cmbTarget(p); if (ct) return ct; }   // WH: reviving a downed Sena always beats the horse
   if (w4 && horseFaced(p)) return w4;
   const o = findOtherTarget(p);                       // STORY: sit with Sena, a meal, a revive or a story beat beats a horse he is not facing
   return w4 && !o?.key ? w4 : o;
@@ -2554,7 +2659,7 @@ const hearthNight = () => S.time >= 19 || S.time < 5.5;
 // a floor sit: the seat point, facing the hearth, the sit pose (the root lowering and the legs come from fsW in settle)
 function hearthPlace(e, h, i) {
   const v = hearthSeat(h, i);
-  e.pos.set(v.x, 0, v.z); e.seat = v; e.face = hearthFace(h, v); e.vx = e.vz = 0; e.speed = 0; e.path = null;
+  e.pos.set(v.x, v.y, v.z); e.seat = v; e.face = hearthFace(h, v);   // STORY: y on the floor (the third-person camera looks from P.pos.y; 0 put it under the ground) e.vx = e.vz = 0; e.speed = 0; e.path = null;
   e.floorSit = 1; e.hearthSeat = true; e.fire = null;
   e.h.pose = e === N && N.h.has('sitTalk') && P.sit > 0 ? 'sitTalk' : 'sit';
 }
@@ -2591,7 +2696,7 @@ function hearthSitTogether(h) {
     W.benchSpear = true;
   }
   N.h.pose = N.h.has('sitTalk') ? 'sitTalk' : 'sit';
-  if (view !== 'fpp') { const c = h.hearthW; camYaw = Math.atan2(P.pos.x - c.x, P.pos.z - c.z) - 0.55; camPitch = 0.32; }   // over his shoulder: the fire and her face
+  if (view !== 'fpp') { const c = toWorld(h, [1.7, 0, 2.3]); camYaw = Math.atan2(c.x - P.pos.x, c.z - P.pos.z); camPitch = 0.38; }   // STORY: from the room's door side (it used to swing out through the west wall): his back, the fire and her face
   const L = HEARTH_LINES[cnt('sat_hearth') % HEARTH_LINES.length];
   L.forEach((l) => say(...l));
   S.time = (S.time + 1) % 24; S.c.hearthEve = hearthEve();
@@ -2715,10 +2820,10 @@ const angTo = (a, b) => ((((b - a + Math.PI) % 6.2832) + 6.2832) % 6.2832) - Mat
 // inside the doorway; cam: walk-in, lying (end) and waking shots with their look points.
 const RST_LAY = {
   hut: { mat: 0.09, pillow: 0.17, floor: 0.04, low: true, head: [[-0.36, -1.1], [0.36, -1.1]], solo: [0, -1.1], sit: [[-0.62, -0.3], [0.62, -0.3]],
-    via: [[], []], exit: [[-0.05, 1.05]], door: [[0, 3.0], [0, 1.25]], bed: [1.4, 2.0, -0.4], clear: [0.1, 0.15],
-    cam: { walk: [0.05, 2.2, -1.5], walkLook: [0, 0.5, 1.2], end: [-1.42, 1.38, -0.3], look: [0.15, 0.12, -0.85], wake: [0.15, 1.6, 1.6], wakeLook: [0, 0.85, -0.6], ext: [4.2, 1.5, 7.5], extLook: [0, 3.0, 0] } },
+    via: [[], []], exit: [[-0.05, 1.05], [0, 1.95], [0, 3.4]], door: [[0, 3.0], [0, 1.25]], bed: [1.4, 2.0, -0.4], clear: [0.1, 0.15],   // STORY: he steps out of the door into the morning, so the hand-back is outside, not up into the thatch
+    cam: { walk: [0.05, 2.2, -1.5], walkLook: [0, 0.5, 1.2], end: [-1.42, 1.38, -0.3], look: [0.15, 0.12, -0.85], wake: [0.4, 2.0, 1.9], wakeLook: [0, 1.25, -0.6], ext: [4.2, 1.5, 7.5], extLook: [0, 3.0, 0] } },   // STORY: the wake shot frames the stretch
   house: { mat: 0.565, pillow: 0.65, floor: 0.19, low: false, head: [[-1.28, -1.93], [-0.52, -1.93]], solo: [-1.28, -1.93], sit: [[-1.95, -1.05], [0.15, -1.05]],
-    via: [[[-2.2, 0.15]], []], exit: [[-2.15, 0.1]], door: [[0, 3.4], [0, 1.7]], bed: [1.62, 2.1, -1.25], clear: [0.1, 0.15],
+    via: [[[-2.2, 0.15]], []], exit: [[-2.0, 0.15], [-1.15, 0.9]], door: [[0, 3.4], [0, 1.7]], bed: [1.62, 2.1, -1.25], clear: [0.1, 0.15],
     cam: { walk: [1.75, 2.2, -1.75], walkLook: [-0.4, 1.0, 1.6], end: [-2.5, 2.1, 0.6], look: [-0.8, 0.55, -1.5], wake: [1.1, 1.9, 1.3], wakeLook: [-1.0, 0.95, -0.9], ext: [6.5, 1.8, 11], extLook: [0, 4.2, 0] } },
   houseFloor: { mat: 0.225, pillow: 0.3, floor: 0.19, low: true, head: [[-1.3, -1.85], [-0.5, -1.85]], solo: [-0.9, -1.85], sit: [[-1.58, -1.15], [-0.22, -1.15]],
     via: [[], []], exit: [[-1.1, -0.1]], door: [[0, 3.4], [0, 1.7]], bed: [1.7, 2.1, -1.15], clear: [0.1, 0.15], roll: 'mat',
@@ -2730,7 +2835,7 @@ const RST_LAY = {
 // Pose tuning (G.restTune live-edits it): legs blend toward the standing legs (less splay), knee bend, head turn,
 // Aro's small roll toward Sena, Sena's roll onto her side and her curled legs ([down leg, upper leg]).
 const RT = { legIdle: 0.5, hip: 0.12, knee: 0.3, turn: 0.45, rollA: 0.12, rollN: 1.42, sHip: [0.4, 0.8], sKnee: [0.6, 1.1], sHead: 0.22, sAdd: 0.85,
-  hold: [0.1, 0.07, 0.57], belly: [0.11, 0.06, -0.03], cheek: [0.1, 0.02, 0.1], breathe: 0.03, ankle: 0.065 };
+  hold: [0.1, 0.07, 0.57], belly: [0.11, 0.06, -0.03], cheek: [0.1, 0.02, 0.1], breathe: 0.03, ankle: 0.065, dCap: 0.33, dR: 0.65, dFall: 0.16 };
 const RST_LEGS = (b) => /^(thigh|calf|foot|ball)_/.test(b), _V_UP = new THREE.Vector3(0, 1, 0);
 const DREAM = {
   awaken: [['Sena', '…warm… the sparks look like little stars…'], ['Aro', '(The river never stops talking. Neither does she, in her sleep.)']],
@@ -3065,7 +3170,7 @@ function rstKids(L) {
   kidsToBed(L.s);
   R.kidsIn = false; for (const c of kids) c.inBed = false;
   kids.forEach((c, i) => {
-    if (L.kind === 'house' && S.home.cradle && i === 0) return;
+    if (inCradle(L.s, i) || inNursery(L.s, i)) return;   // STORY: a baby stays in the cradle, a grown girl sleeps in her nursery
     const len = 1.5 * kidScale(c.k), mid = W2(L, [(L.D.head[0][0] + L.D.head[1][0]) / 2, L.D.head[0][1] - 0.05], L.matY + 0.07);
     c.restPos = mid.addScaledVector(L.fwd, len); c.face = L.yaw; c.inBed = true; R.kidsIn = true;
   });
@@ -3086,10 +3191,32 @@ function rstProps(L) {
   }
   rstDrape(0);
 }
+// STORY: the floor-bed kneel (the 'work' clip is Fixing_Kneeling, bent over with the hands on the ground): the spine is
+// pitched back until the torso stands almost upright and the hands rest on the thighs, so going down to the mat (and
+// getting up) reads as kneeling, not crawling. Only while the base pose shows; the lie override blends it away.
+const _kp = new V3(), _kn = new V3(), _kr = new V3(), _kf = new V3(), _kt = new V3(), _kpole = new V3();
+function rstKneelOverride(e) {
+  return (h) => {
+    if (!R.on || !(e.rest > 0) || h.pose !== 'work' || !R.L?.low) return;
+    const w = 1 - smooth01(e.lieW || 0);
+    if (!(w > 0.01)) return;
+    const b = h.bones, yaw = h.root.rotation.y;
+    _kr.set(Math.cos(yaw), 0, -Math.sin(yaw)); _kf.set(Math.sin(yaw), 0, Math.cos(yaw));
+    b.pelvis.getWorldPosition(_kp); b.neck_01.getWorldPosition(_kn); _kn.sub(_kp);
+    const tilt = Math.atan2(_kn.dot(_kf), _kn.y);                                   // forward lean of the torso
+    rotW(b.spine_01, _kr, -(tilt - 0.1) * w);
+    for (const sd of ['l', 'r']) {                                                  // hands on the thighs, elbows out and back
+      const th = b['thigh_' + sd].getWorldPosition(_kt), ca = b['calf_' + sd].getWorldPosition(_kpole);
+      _kt.lerp(ca, 0.6); _kt.y += 0.07; _kt.addScaledVector(_kr, (sd === 'l' ? 1 : -1) * 0.02);
+      b['upperarm_' + sd].getWorldPosition(_kpole); _kpole.addScaledVector(_kf, -0.4).addScaledVector(_kr, (sd === 'l' ? 1 : -1) * 0.3);
+      ik2(h, sd, _kt, _kpole, w);
+    }
+  };
+}
 // Shape the blanket over the sleepers' hips and legs (from the waist down), centred between them and aligned to the bed.
-const DRAPE_BONES = [['spine_01', 0.13], ['pelvis', 0.15], ['thigh_l', 0.11], ['thigh_r', 0.11], ['calf_l', 0.09], ['calf_r', 0.09], ['foot_l', 0.08], ['foot_r', 0.08], ['ball_l', 0.07], ['ball_r', 0.07], ['ball_leaf_l', 0.06], ['ball_leaf_r', 0.06]];
+const DRAPE_BONES = [['spine_01', 0.13], ['pelvis', 0.15], ['thigh_l', 0.11], ['thigh_r', 0.11], ['calf_l', 0.09], ['calf_r', 0.09], ['foot_l', 0.1, 1], ['foot_r', 0.1, 1], ['ball_l', 0.09, 1], ['ball_r', 0.09, 1], ['ball_leaf_l', 0.08, 1], ['ball_leaf_r', 0.08, 1]];   // STORY: feet wider and allowed a little higher, so a curled foot never pokes through
 const DRAPE_MIDS = [['thigh_l', 'calf_l', 0.1], ['thigh_r', 'calf_r', 0.1], ['calf_l', 'foot_l', 0.085], ['calf_r', 'foot_r', 0.085]];
-const _dp = [], DRAPE_CAP = 0.24;                  // STORY: the cover lies over bent knees, it never stands up in a hump
+const _dp = [];                                   // STORY: RT.dCap/dR/dFall: the cover follows the bodies (a side-lying hip is ~0.3 m), never a 0.5 m tent
 function rstDrape(k) {
   const L = R.L, bl = R.blanket;
   if (!L || !bl) return;
@@ -3102,13 +3229,14 @@ function rstDrape(k) {
   _dp.length = 0;
   if (k > 0) for (const e of R.together ? [P, N] : [P]) {
     if (!e.lie) continue;
-    for (const [n, r] of DRAPE_BONES) { const v = e.h.bones[n].getWorldPosition(_re); _dp.push([v.x, v.z, Math.min(DRAPE_CAP, v.y - L.matY + r), r]); }
+    for (const [n, r, ft] of DRAPE_BONES) { const v = e.h.bones[n].getWorldPosition(_re); _dp.push([v.x, v.z, Math.min(RT.dCap + (ft ? 0.07 : 0), v.y - L.matY + r * RT.dR + (ft ? 0.04 : 0)), r]); }
     for (const [a, b2, r] of DRAPE_MIDS) {
       const va = e.h.bones[a].getWorldPosition(_re), vb = e.h.bones[b2].getWorldPosition(_rf).add(va).multiplyScalar(0.5);
-      _dp.push([vb.x, vb.z, Math.min(DRAPE_CAP, vb.y - L.matY + r), r]);
+      _dp.push([vb.x, vb.z, Math.min(RT.dCap, vb.y - L.matY + r * RT.dR), r]);
     }
   }
   for (const c of kids) if (c.rest > 0 && R.kidsIn) for (const n of ['pelvis', 'calf_l', 'calf_r', 'spine_02']) { const v = c.h.bones[n].getWorldPosition(_re); _dp.push([v.x, v.z, v.y - L.matY + 0.07, 0.08]); }
+  rstCradleCover(1);                                 // the baby stays tucked in while her parents get up
   const kk = smooth01(k);
   bl.userData.drape((lx, lz) => {
     const sx = x0 + lx * wid, sz = (zTop + zEnd) / 2 + lz * (zEnd - zTop);                // shelter-local
@@ -3117,10 +3245,36 @@ function rstDrape(k) {
     let h = 0.022;
     for (const [x, z, top, r] of _dp) {
       const d = Math.hypot(_re.x - x, _re.z - z);
-      if (d < r + 0.3) h = Math.max(h, top * (1 - smooth01((d - r * 0.7) / 0.32)) * kk + 0.022);
+      if (d < r + RT.dFall) h = Math.max(h, top * (1 - smooth01((d - r) / RT.dFall)) * kk + 0.022);   // STORY: a full-height core the size of the limb (smoothing keeps feet covered), a shorter fall
     }
     if (out > 0) { const hang = -Math.min(drop, out * 2.2) + 0.012; return h > 0.03 ? Math.max(hang, h) : hang; }   // a foot near the end still lifts it
     return h;
+  }, 2);
+}
+// STORY: a little blanket over the baby in her cradle (house-local cradle at 1.8, 1.2; mattress top 0.6), up to her chest.
+const _cv = [];
+// The grown girl's nursery bed: a hide bedroll (makeBedroll, scaled to her) with the same kind of cover to her chest.
+function rstCradleCover(k) {
+  const c = kids[0], s = R.s, cr = s && inCradle(s, 0), nu = s && inNursery(s, 0);
+  if (R.kidRoll) R.kidRoll.visible = !!(nu && c && c.rest > 0);
+  if (!s || s.kind !== 'house' || !c || !(c.rest > 0) || !(cr || nu)) { if (R.kidBl) R.kidBl.visible = false; return; }
+  if (!R.kidBl) { R.kidBl = makeBlanket(1, 1); scene.add(R.kidBl); }
+  if (nu && !R.kidRoll) { R.kidRoll = makeBedroll(true); R.kidRoll.scale.set(0.5, 1, 0.56); for (const p of R.kidRoll.userData.pillows) { p.position.set(0, 0.07, -0.86); p.scale.set(0.7, 0.75, 1); } scene.add(R.kidRoll); }
+  if (nu) { R.kidRoll.visible = true; R.kidRoll.position.copy(toWorld(s, [-4.8, 0.19, -0.05])); R.kidRoll.rotation.y = s.rot || 0; }
+  const bl = R.kidBl, base = s.group.position.y + (cr ? 0.6 : 0.23), W = cr ? 0.5 : 0.82, Lz = cr ? 0.46 : 0.78;
+  bl.visible = true; bl.position.copy(toWorld(s, cr ? [1.8, 0.6, 1.33] : [-4.8, 0.23, 0.18])); bl.rotation.y = s.rot || 0; bl.scale.set(W, 1, Lz); bl.updateMatrixWorld(true);
+  _cv.length = 0;
+  for (const [n, r] of [['spine_01', 0.06], ['pelvis', 0.06], ['thigh_l', 0.045], ['thigh_r', 0.045], ['calf_l', 0.04], ['calf_r', 0.04], ['foot_l', 0.035], ['foot_r', 0.035]]) {
+    const v = c.h.bones[n].getWorldPosition(_re); _cv.push([v.x, v.z, Math.max(0, v.y - base) + r * 0.8, r]);
+  }
+  const kk = smooth01(k);
+  bl.userData.drape((lx, lz) => {
+    _re.set(lx, 0, lz); bl.localToWorld(_re);
+    let h = 0.012;
+    for (const [x, z, top, r] of _cv) { const d = Math.hypot(_re.x - x, _re.z - z); if (d < r + 0.1) h = Math.max(h, top * (1 - smooth01((d - r) / 0.1)) * kk + 0.012); }
+    if (!cr) return h;                                                              // on the floor bedroll: lies flat at the edges
+    const out = Math.abs(lx) * W - 0.21;                                            // over the cradle's sides: tuck down
+    return out > 0 ? Math.min(h, 0.012 - out * 1.5) : h;
   }, 2);
 }
 // The shelter's camera shot: from where the camera is now to pos/look over dur (cut = jump straight there).
@@ -3212,6 +3366,7 @@ function rstBegin(s, mode = 'dawn', o = {}) {
   for (const e of together ? [P, N] : [P]) {
     e.h.addOverride('lie', 10, rstLieOverride(e)); e.h.addOverride('hold', 30, rstHoldOverride(e));
     e.h.addOverride('breath', 40, rstBreathOverride(e)); e.h.addOverride('stretch', 40, rstStretchOverride(e));
+    if (L.low) e.h.addOverride('kneelUp', 9, rstKneelOverride(e));                    // STORY: kneel upright on a floor bed, not on all fours
   }
   if (s.col) s.col.off = true;                                                             // walk in through the doorway
   const cutP = rstPath(P, L, P.L.sitPos, 0, together ? L.D.via[0] : []), cutN = together && rstPath(N, L, N.L.sitPos, 1.1, L.D.via[1]);
@@ -3352,6 +3507,11 @@ function rstStartWake() {
   setTimeout(() => $('restvig').classList.remove('warm'), 900);
   $('hud').classList.add('cinew');                                                         // toasts come back for the outcome; the rest of the HUD waits
   rstShot(R.L.cam.wake, R.L.cam.wakeLook, 0.01, true);                                    // morning: a cut to the wider view
+  if (R.birth && R.L.kind === 'house' && kids.length && inCradle(R.s, 0)) {               // STORY: the birth morning opens on Lio in her cradle
+    const c = toWorld(R.s, [1.8, 0.62, 1.2]);                                             // from her feet, a little above: her face and hands
+    rstShot(toWorld(R.s, [1.15, 1.3, 2.05]), c, 0.01, true);
+    setTimeout(() => { if (R.on && R.phase === 'wake') rstShot(R.L.cam.wake, R.L.cam.wakeLook, 2.2); }, 3200);   // then a slow move back to the parents
+  }
   if (R.ext) { $('restdip').classList.add('on'); setTimeout(() => $('restdip').classList.remove('on'), 120); }
 }
 function rstWakeTick(dt) {
@@ -3380,9 +3540,13 @@ function rstWakeTick(dt) {
   }
   rstDrape(Math.max(0, 1 - t / 1.2));
   if (!R.wpnWoke && (P.L.exit || t > 3.2)) { R.wpnWoke = true; if (typeof wpnWake === 'function') wpnWake(); }   // WPN: he gathers his things as he heads out
-  if (!R.morning && t > 1.5) { R.morning = true; const m = rstMorningLine(); if (m) say('Sena', m); if (R.out) R.out.line = m; }
+  if (!R.morning && t > 1.5) {
+    R.morning = true;
+    if (R.birth) birthLines();                                                       // STORY: the birth morning
+    else { const m = rstMorningLine(); if (m) say('Sena', m); if (R.out) R.out.line = m; }
+  }
   if (P.L.exit && !R.released) {
-    R.released = true; camYaw = L.yaw + Math.PI; camPitch = L.kind === 'hut' ? 0.1 : 0.2;
+    R.released = true; camYaw = L.yaw + Math.PI; camPitch = L.kind === 'hut' ? 0.24 : 0.2;   // STORY: in the hut, a little above him looking down and out of the door
     camShot = { release: true, from: camPos.clone(), lookFrom: (R.lastLook || look).clone(), k: 0, dur: 1.1 };
   }
   if (P.L.exit && !P.path && !camShot) rstDone();
@@ -3456,8 +3620,9 @@ function rstMorningLine() {
 }
 function rstDone() {
   const s = R.s, tog = R.together;
+  birthLines();                                      // STORY: never leave the birth lines (and the chapter hold) pending
   for (const e of [P, N]) {
-    for (const id of ['lie', 'hold', 'breath', 'stretch']) e.h.removeOverride(id);
+    for (const id of ['lie', 'hold', 'breath', 'stretch', 'kneelUp']) e.h.removeOverride(id);
     e.lie = false; e.lieW = 0; e.stretch = -1; e.h.pose = null; e.restAt = null; e.h.root.rotation.x = 0;
   }
   P.rest = 0; P.speed = 0; P.path = null;
@@ -3490,8 +3655,9 @@ function endRest() {
 function rstAbort() {
   if (!R.on && !R.menu) { for (const e of [P, N]) if (e.lie) e.lie = false; return; }
   if (R.menu) { R.menu = false; $('restmenu').classList.remove('on'); }
-  for (const e of [P, N]) { for (const id of ['lie', 'hold', 'breath', 'stretch']) e.h.removeOverride(id); e.lie = false; e.lieW = 0; e.stretch = -1; e.rest = 0; e.path = null; e.h.pose = null; }
+  for (const e of [P, N]) { for (const id of ['lie', 'hold', 'breath', 'stretch', 'kneelUp']) e.h.removeOverride(id); e.lie = false; e.lieW = 0; e.stretch = -1; e.rest = 0; e.path = null; e.h.pose = null; }
   if (R.on && !MAT.dead) busy = false;              // STORY: rstBegin took busy; an abort hands the controls back (permadeath keeps it)
+  birthLines();                                      // STORY: an aborted birth night still gets its lines and releases the chapter hold
   R.on = false; R.nOut = null; cine(false); if (!torchOn) torch.light.intensity = 0; senaTorch.root.visible = senaLit; $('restvig').classList.remove('on', 'warm'); $('restdip').classList.remove('on');
   if (R.s?.col) R.s.col.off = false;
   if (R.blanket) R.blanket.visible = false;
@@ -3514,6 +3680,7 @@ function rstTick(dt) {
       b.style.right = ($('clock').offsetWidth + 26) + 'px';
     } else b.style.display = 'none';
   }
+  if (R.kidBl?.visible && !(kids[0]?.rest > 0)) { R.kidBl.visible = false; if (R.kidRoll) R.kidRoll.visible = false; }   // STORY: the cradle / nursery cover goes when Lio is up
   if (!R.on && R.s && R.blanket?.visible && Math.hypot(P.pos.x - R.s.x, P.pos.z - R.s.z) > R.s.radius + 7) { R.blanket.visible = false; for (const p of R.props) p.visible = false; if (R.bedHide) R.bedHide.visible = true; }
   if (S.c.apartDay != null && !R.on && !busy && Math.hypot(N.pos.x - P.pos.x, N.pos.z - P.pos.z) < 6) {
     say('Sena', (S.c.apartHome ? APART_HOME : APART)[(S.c.apartDay | 0) % 2]); delete S.c.apartDay; delete S.c.apartHome;
@@ -8048,7 +8215,7 @@ function survGive(k, n) { if (SURV.SPOIL[k] && n > 0) { const L = (S.age[k] ||= 
 // ---------- WP6 family: Lio the child, the birth in sleep(), epilogue extras, free-play goals ----------
 const kids = [];                                     // live child humans, one per S.kids entry
 const liveTameHorse = () => animals.find((o) => o.horse && o.tame && o.state === 'live') || null;   // WP4's horse (null until it lands)
-const kidScale = (k) => (S.village ? 0.62 : 0.5 + 0.1 * clamp((S.day - k.born) / 30, 0, 1));
+const kidScale = (k) => (S.village ? 0.62 : 0.3 + 0.2 * clamp((S.day - k.born) / 30, 0, 1));   // STORY: a newborn fits her cradle (0.3 ≈ 0.5 m); the epilogue girl is 0.62
 function spawnKid(k) {
   if (kids.some((c) => c.k === k)) return null;
   const c = { k, h: makeHuman({ female: true, hair: 'buns', light: true, beard: false, hairColor: 0x4a382c, scale: kidScale(k) }),
@@ -8057,14 +8224,25 @@ function spawnKid(k) {
   return c;
 }
 // Where the child sleeps (local to the hut/house, feet point; heads toward -Z like the parents)
+// STORY: the cradle is for a baby only; a grown girl (kidScale 0.55+) sleeps between her parents under the blanket (rstKids)
+const inCradle = (s, i) => s.kind === 'house' && S.home.cradle && i === 0 && kidScale(kids[i]?.k || S.kids[i] || { born: S.day }) < 0.55;
+// A grown girl with a nursery has her own bedroll there (house-local -4.8, 0; feet point, head toward -Z)
+const inNursery = (s, i) => s.kind === 'house' && S.home.nursery && i === 0 && !inCradle(s, i);
 const kidBed = (s, i) => s.kind === 'house'
-  ? (S.home.cradle && i === 0 ? [1.8, 0.58, 1.58] : S.home.bed ? [-0.9, 0.66, -0.5] : [-0.9, 0.26, -0.55])
+  ? (inCradle(s, i) ? [1.8, 0.6, 1.5] : inNursery(s, i) ? [-4.8, 0.235, 0.5] : S.home.bed ? [-0.9, 0.66, -0.5] : [-0.9, 0.26, -0.55])
   : [0, 0.16, 0.55];
 function kidsToBed(s) {
   kids.forEach((c, i) => {
     c.rest = 1; c.restPos = toWorld(s, kidBed(s, i)); c.face = s.rot || 0;
     c.seat = null; c.play = 0; c.h.pose = null; c.h.straddle = false;
   });
+}
+let birthHold = 0;                                   // STORY: clock time until which the newlife -> village advance waits
+function birthLines() {                              // the wake's morning lines on the birth night (or at rstDone / rstAbort if the wake was cut short)
+  if (!R.birth) return;
+  R.birth = false;
+  say('Sena', 'Look at her hands, Aro. Like the little ones on the cave wall.'); say('Aro', 'Then she will leave her mark too.');
+  birthHold = clock + 9;
 }
 // Called from sleep() mid when Aro and Sena rest together (WP2 hook).
 function maybeBirth() {
@@ -8080,7 +8258,7 @@ function maybeBirth() {
   const c = spawnKid(k);
   if (c) { c.rest = 1; c.restPos = toWorld(s, kidBed(s, 0)); c.face = s.rot || 0; }
   addClose(10, 'Lio is born');
-  setTimeout(() => { say('Sena', 'Look at her hands, Aro. Like the little ones on the cave wall.'); say('Aro', 'Then she will leave her mark too.'); }, 5200);
+  R.birth = true; birthHold = Infinity;              // STORY: the lines play in the wake (rstWakeTick), over a shot of the cradle; the chapter waits for them
 }
 // Seat point on the horse's back for a small rider (WP4 gives animals a bone() helper; else a fixed back height).
 const _kv = new THREE.Vector3();
@@ -8098,6 +8276,10 @@ function updateKids(dt) {
   const horse = S.village ? liveTameHorse() : null, home = structs.find((s) => s.kind === 'house');
   kids.forEach((c, i) => {
     const sc = kidScale(c.k); c.h.root.scale.setScalar(sc);
+    if (!S.village && sc < 0.42 && i === 0 && home && home.rise >= 1 && S.home.cradle && !(P.rest > 0)) {   // STORY: a newborn sleeps in her cradle at home, she does not walk after Sena
+      c.rest = 1; c.restPos = toWorld(home, kidBed(home, 0)); c.face = home.rot || 0; c.seat = null; c.h.straddle = false;
+      settle(c, dt, false); return;
+    }
     if (c.rest > 0) {
       if (P.rest > 0) { settle(c, dt, false); return; }
       c.rest = 0; c.h.root.rotation.x = 0; c.pos.set(N.pos.x - 1, 0, N.pos.z - 1);   // wake with them at the door
@@ -8326,7 +8508,7 @@ function drawMini() {
   { const w = questAt(); if (w) put(w[0], w[1], 'quest', true, 0.8); }
   for (const st of structs) put(st.x, st.z, st.kind, st.kind === 'house' || st.kind === 'fire');
   for (const o of animals) if (o.state === 'live' && o.kind !== 'cow' && !o.horse) put(o.root.position.x, o.root.position.z, o.kind === 'wolf' ? 'wolf' : 'deer');   // WP4: horses are not deer (WP5 draws the tame one)
-  for (const v of villagers) put(v.pos.x, v.pos.z, 'villager');
+  for (const v of villagers) if (!v.indoor) put(v.pos.x, v.pos.z, 'villager');   // STORY: not while indoors for the night
   for (const c of kids) put(c.pos.x, c.pos.z, 'kid', true);   // FPP-world: Lio
   put(N.pos.x, N.pos.z, 'sena', true);
   if (S.pin) put(S.pin.x, S.pin.z, 'pin', true);
@@ -8363,7 +8545,7 @@ function drawMap() {
   { const h = mapHorse(); if (h) { const [x, y] = toMap(h.x, h.z); marker(g, x, y, 'horse', 1.4); if (!P.ride) label(x, y, horseName()); } }
   for (const h of herds) if (seenAt(h.x, h.z)) { const [x, y] = toMap(h.x, h.z); marker(g, x, y, 'deer', 1.6); label(x, y, 'Herd'); }   // WP5: only in seen land
   for (const o of animals) if (o.kind === 'wolf' && o.state === 'live' && seenAt(o.root.position.x, o.root.position.z)) { const [x, y] = toMap(o.root.position.x, o.root.position.z); marker(g, x, y, 'wolf', 1.4); }
-  for (const v of villagers) { const [x, y] = toMap(v.pos.x, v.pos.z); marker(g, x, y, 'villager', 1.2); }
+  for (const v of villagers) { if (v.indoor) continue; const [x, y] = toMap(v.pos.x, v.pos.z); marker(g, x, y, 'villager', 1.2); }
   for (const c of kids) { const [x, y] = toMap(c.pos.x, c.pos.z); marker(g, x, y, 'kid', 1.3); label(x, y, c.k.name || 'Lio'); }   // FPP-world
   { const [x, y] = toMap(N.pos.x, N.pos.z); marker(g, x, y, 'sena', 1.4); label(x, y, 'Sena'); }
   if (S.pin) { const [x, y] = toMap(S.pin.x, S.pin.z); marker(g, x, y, 'pin', 1.7); }
@@ -8630,6 +8812,7 @@ canvas.addEventListener('webglcontextrestored', () => {
   GFX.lost = false; clearTimeout(GFX.timer);
   renderer.shadowMap.needsUpdate = true;
   paintMapBase(true);                                  // the 2D map canvases may have been reset with the GPU too
+  warmShaders();                                       // every program is rebuilt: do it behind the panel, not in play
   gfxPanel(playing ? 'Everything is back. Your game is paused and saved.' : 'Everything is back.', true);
 });
 
@@ -8642,8 +8825,12 @@ function updatePlayer(dt) {
   const mx = (keys.KeyD ? 1 : 0) - (keys.KeyA ? 1 : 0), mz = (keys.KeyW ? 1 : 0) - (keys.KeyS ? 1 : 0);
   camYaw += ((keys.ArrowLeft ? 1 : 0) - (keys.ArrowRight ? 1 : 0)) * dt * 1.8;
   camPitch = clamp(camPitch + ((keys.ArrowDown ? 1 : 0) - (keys.ArrowUp ? 1 : 0)) * dt, pitchMin(), fppPitchMax());   // FPP
-  // Sitting: any movement key (or jump) stands you up early; it ends by itself after a while.
-  if (P.sit > 0) { P.sit -= dt; if (mx || mz || jumpTap || P.sit <= 0) { endSit(P); endSit(N); } }
+  // Sitting: any movement key, jump or a fresh E press (STORY; not the press that sat him down) stands you up early; it ends by itself after a while.
+  if (P.sit > 0) {
+    P.sitSince ??= clock; P.sit -= dt;
+    const eUp = eTap && clock - P.sitSince > 0.6;
+    if (mx || mz || jumpTap || eUp || P.sit <= 0) { endSit(P); endSit(N); P.sitSince = null; if (eUp) tapE = false; }
+  } else P.sitSince = null;
   // WP2: resting in bed (input ignored), kneeling at a construction site (movement stops it), dancing after a shared build
   if (P.rest > 0) { P.vx = P.vz = 0; jumpTap = false; rstUpdate(dt); if (P.rest > 0) { settle(P, dt, false); target = null; $('prompt').style.display = 'none'; return; } }   // RST
   if (P.work > 0) {
@@ -8772,14 +8959,34 @@ function updateSena(dt) {
   }
   settle(N, dt, false);
 }
+// STORY: villagers wander the village by day (never through a house: targets inside a hut or house are refused) and
+// at night each goes in at the door of one of the village houses until morning (hidden inside), so nobody strolls
+// through Aro's home while the family sleeps.
+const inAnyHouse = (x, z) => structs.some((s) => (s.kind === 'house' || s.kind === 'hut') && Math.hypot(s.x - x, s.z - z) < s.radius + 1);
 function updateVillagers(dt) {
-  for (const v of villagers) {
+  const night = S.time >= 20.5 || S.time < 6, home = homeHouse(), vh = structs.filter((s) => s.kind === 'house' && s !== home && s.rise >= 1);
+  villagers.forEach((v, i) => {
+    const vhouse = vh.length ? vh[i % vh.length] : null;
+    if (night && vhouse) {
+      const door = toWorld(vhouse, [0, 0, 3.6]);
+      if (!v.indoor) {
+        const d = Math.hypot(door.x - v.pos.x, door.z - v.pos.z);
+        if (d > 70) v.pos.set(door.x, 0, door.z);                            // far away (or just loaded): already home
+        if (walkTo(v, door.x, door.z, 2.2, dt, 0.5) || d > 70) { v.indoor = true; v.h.root.visible = false; v.speed = 0; }
+        settle(v, dt, false);
+      }
+      return;
+    }
+    if (v.indoor) { v.indoor = false; v.h.root.visible = true; v.wait = 0; if (vhouse) { const door = toWorld(vhouse, [0, 0, 3.6]); v.pos.set(door.x, 0, door.z); } }
     v.wait -= dt;
-    if (v.wait <= 0) { v.wait = 5 + rand() * 9; const a = rand() * 6.283, r = 5 + rand() * 22; v.tx = v.home.x + Math.cos(a) * r; v.tz = v.home.z + Math.sin(a) * r; }
-    if (getHeight(v.tx, v.tz) < 0.8) v.wait = 0;
+    if (v.wait <= 0) {
+      v.wait = 5 + rand() * 9;
+      for (let k = 0; k < 6; k++) { const a = rand() * 6.283, r = 5 + rand() * 22; v.tx = v.home.x + Math.cos(a) * r; v.tz = v.home.z + Math.sin(a) * r; if (!inAnyHouse(v.tx, v.tz)) break; }
+    }
+    if (getHeight(v.tx, v.tz) < 0.8 || inAnyHouse(v.tx, v.tz)) v.wait = 0;
     walkTo(v, v.tx, v.tz, 1.9, dt, 0.6);
     settle(v, dt, false);
-  }
+  });
 }
 function updateStats(dt) {
   const E = world.env, p = P.pos;
@@ -8866,7 +9073,7 @@ function updateCamera(dt, title) {
   const dist = Math.min(camDist * (P.sneak ? 0.8 : 1) * (P.ride ? 1.45 : 1), world.env.cave > 0.15 ? 3 : 99)   // WP4: further back when riding   // WP3: closer in caves
     * (1 - W.camK * (1 - 2.2 / 4.8));                // WPN aim: pulled in over the shoulder
   const shoulder = 0.45 + 0.35 * W.camK;             // WPN
-  look.set(P.pos.x + Math.cos(camYaw) * shoulder, P.pos.y + (P.ride ? 2.6 : 1.7 - P.h.crouch * 0.3), P.pos.z - Math.sin(camYaw) * shoulder);   // WP4 ride height
+  look.set(P.pos.x + Math.cos(camYaw) * shoulder, P.pos.y + (P.ride ? 2.6 : P.floorSit ? 1.0 : 1.7 - P.h.crouch * 0.3), P.pos.z - Math.sin(camYaw) * shoulder);   // WP4 ride height   // STORY: lower over a floor sit (the hearth)
   _v.set(look.x + Math.sin(camYaw) * cp * dist, look.y + Math.sin(camPitch) * dist, look.z + Math.cos(camYaw) * cp * dist);
   _v.y = Math.max(_v.y, getHeight(_v.x, _v.z) + 0.35, 0.7);
   camPos.lerp(_v, 1 - Math.exp(-dt * 16));
@@ -8972,7 +9179,7 @@ const AR_BODY = fpBodyOf(AR);
 // The WPN box fists and forearms give way to the real arms (the weapons, torch and glow stay on the vmR / vmL groups).
 for (const g of [vmR, vmL]) for (let i = 0; i < 3; i++) if (g.children[i]?.isMesh && !g.children[i].userData.kind) g.children[i].visible = false;
 // Torch in first person: dimmer fire light and glow, a darker shaft, held lower and further out.
-(() => { const sh = vmTorch.root.children[0]; if (sh?.isMesh) { sh.material = sh.material.clone(); sh.material.color.multiplyScalar(0.42); } vmTorch.flame.scale.setScalar(0.78); })();
+(() => { const sh = vmTorch.root.children[0]; if (sh?.isMesh) { sh.material = sh.material.clone(); sh.material.color.multiplyScalar(0.42); } vmTorch.flame.scale.setScalar(0.78); vmTorch.root.scale.setScalar(0.74); vmAxe.scale.setScalar(0.86); })();   // FPP-world: a smaller torch, the flame in the lower-left third
 // Reins: two thin straps from the fists to the bridle, drawn in the viewmodel scene.
 const fpRein = [0, 1].map(() => { const m = new THREE.Mesh(new THREE.CylinderGeometry(0.006, 0.006, 1, 5, 1, true), new THREE.MeshStandardMaterial({ color: 0x3a2618, roughness: 0.9 })); m.visible = false; vmScene.add(m); return m; });
 const fitMat = (kind, slot) => { const f = FIT[kind]?.[slot]; if (!f) return null; return new THREE.Matrix4().compose(new THREE.Vector3(...f.p), new THREE.Quaternion().setFromEuler(new THREE.Euler(...f.r)), new THREE.Vector3(f.s ?? 1, f.s ?? 1, f.s ?? 1)); };
@@ -9023,7 +9230,7 @@ function fppFace(dt, moving, dx, dz) {
 function fpSpace() {
   if (busy || camShot || P.ride || P.sit > 0 || P.rest > 0 || P.seat || P.downed > 0) return;
   for (const o of [N, ...villagers]) {
-    if (!o?.pos || o.ride || o.sit > 0 || o.rest > 0 || o.seat || o.downed > 0) continue;
+    if (!o?.pos || o.ride || o.sit > 0 || o.rest > 0 || o.seat || o.downed > 0 || o.indoor) continue;
     const ddx = P.pos.x - o.pos.x, ddz = P.pos.z - o.pos.z, d = Math.hypot(ddx, ddz);
     if (d < 0.55 && d > 1e-4) { P.pos.x = o.pos.x + (ddx / d) * 0.55; P.pos.z = o.pos.z + (ddz / d) * 0.55; }
   }
@@ -9211,6 +9418,10 @@ function fpFromHeld(obj, inv, outP, outQ) {
   _fm2.multiplyMatrices(obj.matrixWorld, inv).decompose(outP, outQ, _fs);
 }
 const fpTmp = { p: new THREE.Vector3(), q: new THREE.Quaternion(), p2: new THREE.Vector3(), q2: new THREE.Quaternion() };
+// FPP-world: the two-handed spear hold (viewmodel camera space): right fist low by the hip, the shaft rising forward and a
+// little across, so the left fist's grip 0.42 m up the shaft is within arm's reach and the head sits just off the crosshair.
+const FP_SPR = { r: new THREE.Vector3(0.16, -0.21, -0.02) };
+FP_SPR.q = new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(-0.1, 0.1, -1).normalize(), new THREE.Vector3(-0.106, 0.132, -0.985).normalize());
 function fppVm(dt) {
   // house wall circles follow the house circle on/off (RST walks in through the door, indoors)
   for (const s of structs) if (s.fpCols && s.col) for (const c of s.fpCols) c.off = !!s.col.off;
@@ -9224,7 +9435,7 @@ function fppVm(dt) {
   const near = on ? 0.06 : 0.15;
   if (camera.near !== near) { camera.near = near; camera.updateProjectionMatrix(); }
   // torch: lower and further out, dimmer light and glow
-  if (vmL.visible && torchOn && !(W.held === 'fists' && W.st !== 'sheathed')) vmL.position.add(_fa.set(-0.05, -0.03, -0.03));
+  if (vmL.visible && torchOn && !(W.held === 'fists' && W.st !== 'sheathed')) vmL.position.add(_fa.set(-0.07, -0.1, -0.04));   // FPP-world: lower and wider (it filled the left third)
   vmFire.intensity *= 0.5;
   if (FP.act && AR_BODY) { if (vmR.visible) vmR.position.y += 0.035; if (vmL.visible && !torchOn) vmL.position.y += 0.035; }   // real hands: a little higher so the wrist shows
   if (torchOn) vmGlow.material.opacity = 0.28 + Math.sin(clock * 17) * 0.05;
@@ -9241,8 +9452,27 @@ function fppVm(dt) {
   }
   FP.lastShot = sw; FP.lastShotT = st;
   if (FP.reach && (!FP.reach.side || (FP.reach.t += dt) > 0.65 || !on)) FP.reach = null;
+  // FPP-world: the spear is held in both hands, like the third-person stance. The right fist drops back toward the hip,
+  // the shaft runs up and forward past the crosshair, and the left fist takes it 0.42 m further up (FIT front grip).
+  // Off while aiming or throwing, with the torch lit, mid draw and at a sprint (one hand, as the body does).
+  const two = on && vmR.visible && W.held === 'spear' && !torchOn && W.sw?.k !== 'throw' && !P.ride && !P.swim;
+  FP.twoW = (FP.twoW || 0) + ((two ? W.vmDraw * (1 - W.aimW) * (1 - smooth01((P.speed - 5) / 1.2)) : 0) - (FP.twoW || 0)) * Math.min(1, dt * 10);
+  if (FP.twoW > 0.01 && vmR.visible && vmSpear.visible) {
+    const w = FP.twoW;
+    vmR.position.add(_fa.copy(FP_SPR.r).sub(VM.r).multiplyScalar(w));
+    vmR.quaternion.slerp(FP_SPR.q, w);
+  }
   if (on) {
     if (vmR.visible) { const k = W.held || (W.aim || W.sw?.k === 'throw' ? 'spear' : 'fists'); fpFromHeld(k === 'spear' ? vmSpear : vmAxe, k === 'spear' ? FPI.spear : FPI.axe, p.p, p.q); R = [p.p.clone(), p.q.clone(), 1]; }
+    if (!vmL.visible && R && FP.twoW > 0.01 && vmSpear.visible) {   // FPP-world: the left fist on the shaft
+      vmSpear.updateWorldMatrix(true, false);
+      const grip = vmSpear.localToWorld(_fb.set(0, 0, -0.35 + 0.42)), ax = _fc.set(0, 0, 1).transformDirection(vmSpear.matrixWorld);
+      const fi = _fa.set(0, 1, 0).applyQuaternion(R[1]), pa = _h3.set(-1, 0, 0).applyQuaternion(R[1]);
+      const q = fpHandBasis('l', -fi.x, fi.y, fi.z, -pa.x, pa.y, pa.z);   // the right fist mirrored ...
+      q.premultiply(_fq2.setFromUnitVectors(_fa.copy(AX_L).applyQuaternion(q), ax));   // ... turned so the shaft runs through it
+      const sc = AR.bones.hand_l.getWorldScale(_h2).x;
+      L = [grip.clone().sub(_fa.copy(GRIP_L).multiplyScalar(sc).applyQuaternion(q)), q, FP.twoW]; FP.gripL = grip.clone();
+    }
     if (vmL.visible) {
       if (torchOn) { fpFromHeld(vmTorch.root, FPI.torch, p.p2, p.q2); L = [p.p2.clone(), p.q2.clone(), 1]; }
       else if (R) {                                      // fists guard: the left fist mirrors the right one (knuckles forward, palm in)
@@ -9340,6 +9570,31 @@ function fppDebug() {
     reach: FP.reach && { ...FP.reach }, arms: AR.root.visible, hideR: fpU.hideR.value, hideL: fpU.hideL.value, near: camera.near, fov: camera.fov, pitch: camPitch };
 }
 
+// ---------- SAVE-PERF: shader warm-up ----------
+// Shaders used to compile the first time something came on screen, so play stuttered for 50-115 ms as the home, a
+// gallop, a sprint or a wolf fight showed new materials. Now every material in the scene (hidden ones too) and the
+// first-person viewmodel compile behind the title screen, again once a save has built its world, and after a graphics
+// reset. One hidden stand-in of each animal kind stays in the scene: it holds that kind's program, so a pack of wolves
+// arriving (or the last one being removed and disposed) never compiles or throws away shaders mid-game.
+const warmRigs = [];
+let warmBusy = null, warmAgain = false;
+function warmShaders() {
+  if (warmBusy) { warmAgain = true; return warmBusy; }   // asked again mid-run (a save built more): one more pass after this one
+  if (GFX.lost || !renderer.compileAsync) return null;
+  if (!warmRigs.length) for (const k of ['deer', 'stag', 'wolf', 'fox', 'cow', 'horse', 'horse_white', 'donkey', 'aurochs', 'bear']) {
+    try {
+      const a = makeAnimal(k); a.root.visible = false; a.root.matrixWorldAutoUpdate = false; a.root.position.set(0, -400, 0);
+      a.root.name = 'warm-' + k; scene.add(a.root); warmRigs.push(a.root);
+    } catch (e) { console.warn('shader warm-up: no', k, e?.message || e); }
+  }
+  const t0 = performance.now();
+  warmBusy = Promise.all([renderer.compileAsync(scene, camera), renderer.compileAsync(vmScene, vmCam)])
+    .then(() => { window.HB_WARM = { ms: Math.round(performance.now() - t0), programs: renderer.info.programs.length }; })
+    .catch((e) => console.warn('shader warm-up', e?.message || e))
+    .finally(() => { warmBusy = null; if (warmAgain) { warmAgain = false; warmShaders(); } });
+  return warmBusy;
+}
+
 // ---------- start ----------
 let starting = false, bootDirty = false;             // SAVE-PERF: start() runs once; a failed load needs a fresh page
 function start(loadSave, diffChoice) {             // MAT: diffChoice {mode, custom} from the new-game modal
@@ -9353,8 +9608,10 @@ function start(loadSave, diffChoice) {             // MAT: diffChoice {mode, cus
     const F = fresh();                               // SAVE-PERF: a null or wrong-typed field (structs: null) falls back to the default
     for (const k in F) { const d = F[k], v = S[k]; if (d !== null && (v == null || typeof d === 'object' && (typeof v !== 'object' || Array.isArray(d) !== Array.isArray(v)))) S[k] = d; }
     if (!Array.isArray(S.felled)) S.felled = [];
-    S.structs = S.structs.filter((x) => x && typeof x.k === 'string' && Number.isFinite(x.x) && Number.isFinite(x.z));
+    S.structs = S.structs.filter((x) => x && typeof x.k === 'string' && typeof BUILD[x.k] === 'function' && Number.isFinite(x.x) && Number.isFinite(x.z));   // SAVE-PERF: an unknown kind (newer or damaged save) is dropped, not fatal
     S.kids = S.kids.filter((x) => x && typeof x === 'object');
+    for (const k of ['horse', 'pin', 'restPend']) if (S[k] != null && (typeof S[k] !== 'object' || Array.isArray(S[k]))) S[k] = null;   // SAVE-PERF: optional objects (no default in fresh())
+    for (const k of ['ch', 'day', 'time', 'hp', 'food', 'water', 'warm', 'stam', 'px', 'pz', 'gh']) if (!Number.isFinite(S[k])) S[k] = fresh()[k];   // SAVE-PERF: a NaN or text number
     S.inv = { ...fresh().inv, ...S.inv };              // older saves lack the newer items
     S.tools = S.tools || {}; S.c = S.c || {};
     S.home = { ...fresh().home, ...S.home }; S.found = S.found || {}; S.stash = S.stash || {}; S.kids = S.kids || [];
@@ -9388,6 +9645,7 @@ function start(loadSave, diffChoice) {             // MAT: diffChoice {mode, cus
   } catch (e) {
     console.error('Save could not be loaded', e);
     starting = false; bootDirty = true;
+    S = fresh();                                     // SAVE-PERF: the title keeps running the world: no half-merged state for it to trip over every frame
     try { localStorage.setItem('hearthborn-save-broken', JSON.stringify(found.data)); } catch {}
     $('savenote').textContent = 'This save could not be loaded. A backup copy was kept in this browser. Try again, or start a new story.';
     $('btn-continue').textContent = 'Try again'; $('btn-continue').onclick = () => location.reload();
@@ -9399,6 +9657,7 @@ function start(loadSave, diffChoice) {             // MAT: diffChoice {mode, cus
   wpnLoad();                                         // WPN weapons into their sockets, the spear lying out
   matStart();                                        // MAT: game clock, Hardcore UI, herd scarcity
   if (loadSave) rstResume();                         // SAVE-PERF: the night a closed page interrupted
+  warmShaders();                                     // SAVE-PERF: the saved structures, kids, villagers and the horse
   if (settings.fullscreen) fullscreen(true);
   lock();
   setTimeout(() => toast('Esc opens the menu · settings, save and quit'), 1500);
@@ -9422,6 +9681,7 @@ if (found) {
   $('savenote').textContent = `Saved ${when} · ${found.from === 'database' ? 'from the save database' : 'from this browser'}`;
 }
 matTitle();                                          // MAT: content notice, the Stones, the new-game cards
+warmShaders();                                       // SAVE-PERF: compile behind the title screen
 { let nc = null; try { nc = sessionStorage.getItem('hb-new'); sessionStorage.removeItem('hb-new'); } catch {}   // SAVE-PERF: New story after a failed load
   if (nc) { let c = {}; try { c = JSON.parse(nc); } catch {} start(false, c.mode ? c : undefined); } }
 
@@ -9436,19 +9696,21 @@ function frame(now) {
     ftAcc += raw; ftN++;
     if (ftN >= 45) {
       const avg = ftAcc / ftN; ftAcc = ftN = 0; fpsShown = 1 / avg;
-      if (avg > 0.03 && pixelRatio > Q.prMin + 0.01) { pixelRatio = Math.max(Q.prMin, pixelRatio - 0.1); renderer.setPixelRatio(pixelRatio); }
-      else if (avg < 0.014 && pixelRatio < Math.min(Q.prMax, devicePixelRatio) - 0.01) { pixelRatio = Math.min(Q.prMax, devicePixelRatio, pixelRatio + 0.05); renderer.setPixelRatio(pixelRatio); }
+      // SAVE-PERF: step down below 50 fps (was 33: anything from 33 to 70 fps kept its resolution, so on a 120 Hz screen
+      // it climbed to prMax and then sat at ~40 fps); step up only with clear headroom (> 80 fps: never on a 60 Hz screen)
+      if (avg > 0.02 && pixelRatio > Q.prMin + 0.01) { pixelRatio = Math.max(Q.prMin, pixelRatio - 0.1); renderer.setPixelRatio(pixelRatio); }
+      else if (avg < 0.0125 && pixelRatio < Math.min(Q.prMax, devicePixelRatio) - 0.01) { pixelRatio = Math.min(Q.prMax, devicePixelRatio, pixelRatio + 0.05); renderer.setPixelRatio(pixelRatio); }
       $('fps').textContent = `${fpsShown.toFixed(0)} fps · ${Math.round(pixelRatio * 100)}%`;
     }
   }
-  renderer.shadowMap.needsUpdate = Q === PRESETS.high || frames % 2 === 0;
+  if (frames % (Q === PRESETS.low ? 3 : 2) === 0) renderer.shadowMap.needsUpdate = true;   // SAVE-PERF: every 2nd frame (3rd on low); the 900-caster pass every frame on high cost ~17% fps. Other code may still ask for one now.
   if (playing && !paused) {
     updatePlayer(dt); updateTorch(dt); updateSena(dt); updateVillagers(dt); updateKids(dt); updateSpear(dt * (hitStop > 0 ? 0.05 : 1)); updateStats(dt); updateSubs(dt); updateEvents(dt); updateMap(); lockHint();
     tick -= dt;
     if (tick <= 0) {
       tick = 0.5;
       const ch = CH[S.ch], gl = goalsOf(ch);         // ARC goalsOf
-      if (!busy && gl.length && gl.every(([, f]) => f()) && !arcHold()) {   // ARC: let a story beat finish first
+      if (!busy && gl.length && gl.every(([, f]) => f()) && !arcHold() && !(clock < birthHold)) {   // ARC: let a story beat finish first; STORY: and the birth morning's lines
         S.ch++; enterChapter();
       }
     }
@@ -9459,6 +9721,7 @@ function frame(now) {
   if (playing && !paused) cmbUpdate(dt);             // CMB raiders, predators, glints, brace, Sena
   updateHorses(dt);                                  // WP4: riders' seats, herd, heart, kicks, peak ride
   updateWorldThings(dt);
+  updateFireLights();                                // SAVE-PERF campfire light pool
   goreFrame(dt);                                     // GORE blood, wounds, trails, focus, butchering, screen blood
   world.env.cave = playing ? depthAt(P.pos.x, P.pos.z) : 0;   // WP3 cave darkness
   if (playing && !paused) updateWP3(dt);
@@ -9573,12 +9836,16 @@ Object.assign(window.G, {
       rootPitch: [P.h.root.rotation.x, N.h.root.rotation.x], hold: [P.L?.hold, N.L?.hold], blanket: R.blanket?.visible };
   },
   get R() { return R; }, rstComfort, rstMorningLine, structCam,
+  camAt(p, l) { camShot = p ? { dolly: true, from: new V3(...p), lookFrom: new V3(...l), pos: new V3(...p), look: new V3(...l), k: 1, dur: 1 } : null; return !!p; },   // STORY test hook: a fixed camera (null = free)
+  birthHold: () => birthHold, kidBed, inCradle, inNursery,
 });
 // WP4 horse hooks
 Object.assign(window.G, {
   horse: () => tameHorse() || null, horses: () => animals.filter((a) => a.horse),
   mount: (o) => mount(o || tameHorse()), dismount: () => dismount(), callHorse, addBond, wp4Target: () => wp4Target(P.pos),
   tapE() { tapE = true; eTap = true; },
+  camD(v) { if (v) camDist = v; return camDist; },  // WH test hook: the orbit distance (screenshots)
+  biome: (x, z) => (pineWoods(x, z) ? 'woods' : biomeAt(x, z)),   // WH test hook: wolf spawns out of the pines
   // skip the minigame: the nearest wild horse (or the one being tamed) becomes yours, and you are on her back
   tame(o) {
     o = o || P.ride || animals.filter((a) => a.horse && !a.tame && !a.foal).sort((a, b) => a.root.position.distanceTo(P.pos) - b.root.position.distanceTo(P.pos))[0];

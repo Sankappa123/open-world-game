@@ -144,6 +144,7 @@ export class Field {
       const meshes = parts.map((p) => {
         const m = new THREE.InstancedMesh(p.geo, p.mat, list.length);
         m.castShadow = shadow; m.receiveShadow = true; m.layers.set(layer);
+        m.matrixAutoUpdate = false; m.matrixWorldAutoUpdate = false;   // SAVE-PERF: never moves (instances carry the transforms): no per-frame matrix work
         scene.add(m);
         return m;
       });
@@ -265,7 +266,7 @@ export function createWorld(scene, renderer, quality = 'medium') {
   const split = (list, k) => Array.from({ length: k }, (_, i) => list.filter((_, j) => j % k === i));
   const decorCells = [];
   const clearings = [], carpets = [];
-  const clear = (x, z, r) => { clearings.push({ x, z, r }); for (const c of carpets) c.gw.fill(1e9); };
+  const clear = (x, z, r) => { clearings.push({ x, z, r }); for (const c of carpets) { c.gw.fill(1e9); c.lx = NaN; } };   // SAVE-PERF lx: re-run the carpet now
 
   const treeNodes = scatter(440, (x, z, h, ny, d) => h > 1.6 && h < 24 && ny > 0.86 && d > 17 && forest(x, z) > -0.12 - (d < 70 ? 0.25 : 0), LIMIT, 0.75, 1.3);
   const pineNodes = scatter(300, (x, z, h, ny, d) => h > 8 && h < 40 && ny > 0.74 && d > 60, LIMIT + 25, 0.8, 1.45);
@@ -340,6 +341,31 @@ export function createWorld(scene, renderer, quality = 'medium') {
   const fields = [sticks, stones, berries, reeds, clay, grainF, ...woods];
   // WP3: the caves (flint and ochre fields go after all the others so saved tree indices stay valid), landmarks, Mirror Lake
   const caves = createCaves(scene, { NAT, rockTex: rockTexture(), addCollider, clear: (x, z, r) => clear(x, z, r), Field, pmat });
+  { // FPP-world: the 2.5 m terrain grid cannot follow the round tube and dome walls, so its slanted triangles poked
+    // into the caves as dark spikes. The terrain shader drops any fragment that lies inside a cave's dome or entrance
+    // tube above the floor (the rock walls behind it then show).
+    const cv = caves.list.slice(0, 2), A = cv.map((k) => new THREE.Vector4(k.x, k.z, k.floor, k.R)), B = cv.map((k) => new THREE.Vector4(k.dir[0], k.dir[1], k.tube[0], k.tube[1]));
+    const C = cv.map((k) => new THREE.Vector2(k.H, k.tube[2]));
+    const tm = terrain.material, prev = tm.onBeforeCompile;
+    tm.onBeforeCompile = (sh, r) => {
+      prev(sh, r);
+      Object.assign(sh.uniforms, { uCaveA: { value: A }, uCaveB: { value: B }, uCaveC: { value: C } });
+      sh.fragmentShader = `uniform vec4 uCaveA[2]; uniform vec4 uCaveB[2]; uniform vec2 uCaveC[2];\n` + sh.fragmentShader.replace('void main() {', `void main() {
+        for (int i = 0; i < 2; i++) {
+          vec2 d = vWp.xz - uCaveA[i].xy; float y = vWp.y - uCaveA[i].z, R = uCaveA[i].w;
+          float r = length(d), s = dot(d, uCaveB[i].xy);
+          if (y - max(0.0, s - (R + 5.0)) * 0.24 < 0.3) continue;   // the floor (and the ramp up out of the mouth) stays
+          float lat = abs(d.x * uCaveB[i].y - d.y * uCaveB[i].x), T = uCaveC[i].y + 0.12;   // a little wider than the wall
+          bool tube = s > uCaveB[i].z && s < uCaveB[i].w - 1.6 && lat * lat + (y + 0.3) * (y + 0.3) < T * T;
+          // (the tube cut stops short of the mouth, where the hillside beside it shows through)
+          // the dome, but not the closed pocket behind the inner seal (around the tube), where nothing would show
+          bool dome = r < R - 0.5 && y < uCaveC[i].x * sqrt(max(0.0, 1.0 - (r * r) / (R * R))) - 0.2 && s < uCaveB[i].z + 0.3;
+          if (dome || tube) discard;
+        }`);
+    };
+    tm.customProgramCacheKey = () => 'hearthborn-terrain-cave';
+    tm.needsUpdate = true;
+  }
   fields.push(caves.flintF, caves.ochreF);
   // SURV: medicinal herbs (yarrow in the meadow and valley, mint at the water's edge, willow on the banks). Appended after
   // flint/ochre so saved tree field indices stay valid; their own seed, so nothing else in the world moves.
@@ -399,7 +425,8 @@ export function createWorld(scene, renderer, quality = 'medium') {
 
   // Flowers, ferns, pebbles and mushrooms: decoration only, hidden beyond the quality preset's decor distance.
   const meadow = (x, z, h, ny, d) => land(x, z, h, ny, d) && h < 26;
-  const decor = (name, n, smin, smax, ok = meadow, max = LIMIT) => new Field(scene, 'decor', NAT[name], scatter(n, ok, max, smin, smax), { shadow: false, cell: 60, tint: 0.08, cull: decorCells });
+  // STORY: kept in bushBodies (world.decor) too, so a hut or house built on top hides the plants under its floor
+  const decor = (name, n, smin, smax, ok = meadow, max = LIMIT) => { const f = new Field(scene, 'decor', NAT[name], scatter(n, ok, max, smin, smax), { shadow: false, cell: 60, tint: 0.08, cull: decorCells }); bushBodies.push(f); return f; };
   decor('flower_3_single', 420, 0.3, 0.5, (x, z, h, ny, d) => meadow(x, z, h, ny, d) && forest(x, z) < 0.1);
   decor('flower_4_single', 320, 0.28, 0.45, (x, z, h, ny, d) => meadow(x, z, h, ny, d) && forest(x + 50, z) < 0);
   decor('flower_3_group', 160, 0.3, 0.5, (x, z, h, ny, d) => meadow(x, z, h, ny, d) && forest(x, z) < 0 && forest(x * 3, z * 3) > 0.15);
@@ -469,6 +496,7 @@ export function createWorld(scene, renderer, quality = 'medium') {
     const meshes = parts.map((p) => {
       const m = new THREE.InstancedMesh(p.geo, p.mat, NG);
       m.frustumCulled = false; m.receiveShadow = true; m.layers.set(1); scene.add(m);
+      m.matrixAutoUpdate = false; m.matrixWorldAutoUpdate = false;   // SAVE-PERF: the instances move, the mesh never does
       return m;
     });
     const gx = new Float32Array(NG), gz = new Float32Array(NG), gw = new Float32Array(NG * 2).fill(1e9), gs = new Float32Array(NG), gcol = new THREE.Color();
@@ -477,7 +505,12 @@ export function createWorld(scene, renderer, quality = 'medium') {
       const v = tintLo + R() * (1 - tintLo) * 1.5, y = R(); gcol.setRGB(v * (0.92 + y * 0.16), v, v * (0.78 + y * 0.1));
       for (const m of meshes) m.setColorAt(i, gcol);
     }
-    const c = { gw, count: NG, L, update(px, pz) {
+    const c = { gw, count: NG, L, lx: NaN, lz: 0, update(px, pz, hide) {
+      // SAVE-PERF: no grass deep inside a cave (none of it shows there, but all ~700k triangles were drawn); the wrap loop over every instance only
+      // runs once the player has moved 0.3 m (an instance only jumps when it crosses the patch edge, where it is faded out)
+      if (meshes[0].visible === !!hide) for (const m of meshes) m.visible = !hide;
+      if (hide || Math.abs(px - c.lx) + Math.abs(pz - c.lz) < 0.3) return;
+      c.lx = px; c.lz = pz;
       const L = c.L, mod = (a) => ((a % L) + L) % L;
       let dirty = false;
       for (let i = 0; i < c.count; i++) {
@@ -493,7 +526,7 @@ export function createWorld(scene, renderer, quality = 'medium') {
     }, setDensity(k) {
       c.count = Math.round(NG * k); c.L = L * Math.sqrt(k);
       for (const m of meshes) m.count = c.count;
-      gw.fill(1e9);
+      gw.fill(1e9); c.lx = NaN;
       if (fade) fade.value.set(c.L * 0.4, c.L * 0.5);
     } };
     carpets.push(c);
@@ -503,7 +536,7 @@ export function createWorld(scene, renderer, quality = 'medium') {
   carpet(NAT.grass_wispy_short, 500, 56, 0.5, 0.9, 0.8);
   carpet(NAT.grass_common_tall, 320, 60, 0.45, 0.8, 0.78);
   carpet(NAT.grass_wispy_tall, 180, 60, 0.5, 0.85, 0.8);
-  const updateGrass = (px, pz) => { for (const c of carpets) c.update(px, pz); };
+  const updateGrass = (px, pz) => { const hide = (env.cave || 0) > 0.7; for (const c of carpets) c.update(px, pz, hide); };   // SAVE-PERF: deep in a cave
 
   const landmarks = createLandmarks(scene, NAT, getHeight, addCollider, { clear, riverX });
   const lakeGeo = new THREE.CircleGeometry(44, 48).rotateX(-Math.PI / 2), lp = lakeGeo.attributes.position, lriv = new Float32Array(lp.count * 2);
@@ -573,12 +606,12 @@ export function createWorld(scene, renderer, quality = 'medium') {
     // FPP-world: but never to pitch black. A warm-grey fill stays (walls read at ~5-10% without a torch), the cave
     // air only thinly hazes (the daylit world through the mouth used to fog to black), and the daylight spilling
     // in at the mouth lights the entrance (caves.mouthLight).
-    caves.mouthLight.intensity = cave > 0 ? 9 * cave * day * (1 - st * 0.5) : 0;
+    caves.mouthLight.intensity = cave > 0 ? 34 * cave * (0.08 + 0.92 * day) * (1 - st * 0.5) : 0;
     if (cave > 0) {
       sun.intensity *= 1 - cave;
-      hemi.intensity *= 1 - 0.82 * cave;
-      hemi.color.lerp(tmp.setHex(0x8c8070), cave * 0.75);
-      hemi.groundColor.lerp(tmp.setHex(0x3a3026), cave * 0.75);
+      hemi.intensity *= 1 - 0.7 * cave;
+      hemi.color.lerp(tmp.setHex(0xa89a86), cave * 0.8);
+      hemi.groundColor.lerp(tmp.setHex(0x4a3e32), cave * 0.8);
       scene.fog.color.lerp(tmp.setHex(0x2a251e).multiplyScalar(0.3 + 0.7 * day), cave);
       scene.fog.density += cave * 0.006;
       renderer.toneMappingExposure *= 1 + 0.25 * cave;

@@ -68,7 +68,7 @@ export function createLandmarks(scene, NAT, getHeight, addCollider, { clear, riv
     const p = geo.attributes.position, nr = geo.attributes.normal, col = new Float32Array(p.count * 3);
     for (let i = 0; i < p.count; i++) {
       const x = p.getX(i), y = p.getY(i), z = p.getZ(i);
-      const n = Math.sin(x * 3.1 + y * 1.7) * Math.cos(z * 2.6 - y * 2.2) * 0.5 + 0.5, v = 1.25 + (n - 0.5) * 0.3;
+      const n = Math.sin(x * 3.1 + y * 1.7) * Math.cos(z * 2.6 - y * 2.2) * 0.5 + 0.5, v = 1.95 + (n - 0.5) * 0.5;   // the rock texture is dark: lift it to a pale weathered grey
       const lichen = Math.max(0, Math.min(1, (nr.getY(i) - 0.35) * 1.6 + (n - 0.62) * 2.2));
       col.set([v * (0.96 - lichen * 0.12), v * (0.92 - lichen * 0.02), v * (0.84 - lichen * 0.3)], i * 3);
     }

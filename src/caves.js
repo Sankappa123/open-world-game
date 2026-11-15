@@ -125,6 +125,7 @@ export function createCaves(scene, { NAT, rockTex, addCollider, clear, Field, pm
     g.name = 'cave-' + k.id;
     scene.add(g);
     const ang = Math.atan2(k.dir[0], k.dir[1]);           // heading of the entrance (x = sin, z = cos)
+    const gap = Math.asin(Math.min(0.9, (TUBE + 0.3) / k.R));   // the rim colliders leave this half-angle open
     // ---- dome: upper hemisphere with an entrance gap, lumpy, scaled (R, H, R) ----
     // FPP-world: the gap is cut to the tube's own round profile on a finer mesh (it used to be a wide wedge of
     // coarse triangles reaching well above the tube, which showed the sky as white holes from inside).
@@ -165,8 +166,9 @@ export function createCaves(scene, { NAT, rockTex, addCollider, clear, Field, pm
     // ---- entrance tube: half cylinder from the inner seal (below) to the mouth ----
     // FPP-world: the seal stands just in front of the dome's gap (lumpy walls move up to ~1 m, hence the margin)
     const ss = Math.min(k.R - SEAL, sMin - 1.2);
-    const s0 = ss - 0.3, s1 = k.R + 5.9, sm = (s0 + s1) / 2;
-    const len = s1 - s0, tube = new THREE.CylinderGeometry(TUBE, TUBE, len, 16, 5, true, -Math.PI / 2, Math.PI);
+    const s0 = ss - 0.3, s1 = k.R + 6.8, sm = (s0 + s1) / 2;   // FPP-world s1: the arch stands just proud of the hillside
+    k.tube = [s0, s1, TUBE];                            // FPP-world: world.js cuts the terrain out of the tube with these
+    const len = s1 - s0, tube = new THREE.CylinderGeometry(TUBE, TUBE, len, 18, 5, true, -Math.PI / 2 - 0.3, Math.PI + 0.6);   // FPP-world: walls run on below the floor (no gap under them)
     tube.rotateX(-Math.PI / 2); lumpy(tube, 0.035, 1.3);
     const tubeM = new THREE.Mesh(tube, rockM);
     tubeM.position.set(k.x + k.dir[0] * sm, k.floor - 0.3, k.z + k.dir[1] * sm);
@@ -176,7 +178,7 @@ export function createCaves(scene, { NAT, rockTex, addCollider, clear, Field, pm
     // ---- FPP-world: the inner seal. A rock wall across the dome in front of its entrance gap, with the tube's arch
     // cut out, each spoke reaching exactly to the dome wall (found by a ray), so no sky shows around the arch. ----
     {
-      const IN = TUBE - 0.08, OUT = k.R + 1;
+      const IN = TUBE - 0.35, OUT = k.R + 1;   // IN: overlaps the lumpy tube end, so no sky shows between them
       const sl = new THREE.RingGeometry(IN, OUT, 40, 6, 0, Math.PI);   // in xy: x across the entrance, y up
       const sp2 = sl.attributes.position;
       domeM.updateMatrixWorld(true);
@@ -210,9 +212,11 @@ export function createCaves(scene, { NAT, rockTex, addCollider, clear, Field, pm
       if (da < gap * 0.92) continue;
       addCollider({ x: k.x + Math.sin(t) * (k.R - 0.6), z: k.z + Math.cos(t) * (k.R - 0.6), r: 0.7 });
     }
-    for (let s = k.R - 0.8; s <= s1 + 0.01; s += 1.3) for (const side of [-1, 1]) {
+    for (let s = ss; s <= s1 + 0.01; s += 1.3) for (const side of [-1, 1]) {   // FPP-world: from the inner seal
       const lx = k.dir[1] * side, lz = -k.dir[0] * side;
       addCollider({ x: k.x + k.dir[0] * s + lx * (TUBE - 0.3), z: k.z + k.dir[1] * s + lz * (TUBE - 0.3), r: 0.7 });
+      // FPP-world: and along the seal wall itself, out to the dome, so nobody walks into the pocket behind it
+      if (s === ss) for (let l = TUBE + 0.9; l < Math.sqrt(Math.max(0, k.R * k.R - ss * ss)); l += 1.2) addCollider({ x: k.x + k.dir[0] * (ss - 0.4) + lx * l, z: k.z + k.dir[1] * (ss - 0.4) + lz * l, r: 0.7 });
     }
     // ---- no grass inside ----
     clear(k.x, k.z, k.R + 3);
