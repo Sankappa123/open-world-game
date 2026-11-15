@@ -18,6 +18,7 @@ export function createTribe(ctx) {
   const _v = new THREE.Vector3(), _v2 = new THREE.Vector3(), _hp = new THREE.Vector3();
   const spears = [];                                 // thrown raider spears in flight / stuck
   let nameI = 0, hist = [];
+  const stats = { picks: 0, kid: 0 };                 // target log (children are never picked)
   const live = () => foes.filter((f) => f.live && !f.fled && f.state === 'live');
   const isKid = (t) => !!t && (t.child || ctx.kids().includes(t));
   const tgtPos = (t) => t.pos || t.root?.position || _v.set(t.x, 0, t.z);
@@ -137,6 +138,7 @@ export function createTribe(ctx) {
     const dN = nOk ? Math.hypot(N.pos.x - f.pos.x, N.pos.z - f.pos.z) : 1e9;
     const t = (P.downed > 0 || ctx.aroDown()) && nOk ? N : dN + 3 < dP ? N : P;
     console.assert(!isKid(t) && (t === P || t === N || t.kind), 'CMB: a raider may only target Aro, Sena or a structure');
+    stats.picks++; if (isKid(t)) stats.kid++;          // acceptance 11: logged, must stay 0
     return t;
   }
 
@@ -421,5 +423,5 @@ export function createTribe(ctx) {
     f.pbar.visible = f.posture > 1 && f.mode === 'combat';
     if (f.pbar.visible) { f.pbar.position.copy(_v).y -= 0.13; f.pbar.userData.set(f.posture / 100, f.posture > 75 ? '#ffcf4a' : '#e8e2d2'); }
   }
-  return { spawnRaider, updateFoes: (dt) => { timers(dt); updateFoes(dt); }, clearFoes, hurtFoe, killFoe, decide, makeTribesman, live, enterCombat, scorch, breakPosture, spears, flee, hist };
+  return { spawnRaider, updateFoes: (dt) => { timers(dt); updateFoes(dt); }, clearFoes, hurtFoe, killFoe, decide, makeTribesman, live, enterCombat, scorch, breakPosture, spears, flee, hist, stats };
 }

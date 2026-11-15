@@ -5471,6 +5471,7 @@ const cmbG = {                                       // CMB test hooks; publishe
   maul: () => C.maul && { n: C.maul.n, t: C.maul.t }, mash: () => { if (C.maul) C.maul.n++; }, senaDown: () => N.downed || 0, senaHp: () => S.nhp,
   reviveSena: () => cmbSenaRevive('P'), decide: (f) => TRIBE.decide(f), pred: PRED, tribe: TRIBE, cloakK: cmbCloakK, finishable: (o) => cmbFinishable(o),
   slow: () => (C.slow > 0 ? C.slowK : 1), timeK: () => C.slowK, settings: () => settings, duel: (x, z, o) => cmbDuel(x, z, o),
+  remove: (o) => remove(o), camShot: () => camShot, targets: () => ({ ...TRIBE.stats }),
 };
 // module-level API for ARC (spec §7 M4 task 12: spawnRaider(x, z, opts) -> foe, foes[], updateFoes(dt), clearFoes())
 function spawnRaider(x, z, opts = {}) { return settings.matureStory === false ? null : TRIBE.spawnRaider(x, z, opts); }   // Mature story Off: no raiders (§5.6)
@@ -6720,7 +6721,8 @@ function arcHooks(G) {
       epilogue: () => ARCD.epilogueLines(S.arc, S.rom), memories: () => S.arc.memory.map((m) => m.text), bed: () => arcBed(), camp: () => arcCampPos(),
       target: () => arcTarget(P.pos), sync: () => { ARCS.ch = -1; },
       skip: () => { subs.length = 0; subT = 0; $('sub').classList.remove('on'); for (const w of ARCS.waits) if (!w.subs) w.t = clock; },   // tests: fast-forward lines and waits
-      season: () => { ARCS.season.snap = true; },    // tests: jump the season tint instead of easing it beats: () => arcBeats(CH[S.ch].id), memTab: () => { $('maptabs').querySelector('[data-mt="mem"]').click(); },
+      season: () => { ARCS.season.snap = true; },    // tests: jump the season tint instead of easing it
+      beats: () => arcBeats(CH[S.ch].id), memTab: () => { $('maptabs').querySelector('[data-mt="mem"]').click(); },
     },
   });
   return G;
