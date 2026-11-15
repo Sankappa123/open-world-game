@@ -66,22 +66,31 @@ The user asked for a 21+ game.
 - They tend to restart or close sessions. Commit WIP before long runs, and commit again at checkpoints.
 - Never start a new game or click "New story" without `/api/` interception. Never touch their real save except at their explicit request.
 
-## Status: STOPPED 2026-11-13 ~17:20 on the office laptop. RESUME HERE
-When the user says "I'm back, continue" (or similar), do this:
-1. Run `git pull` and `git log --oneline -3`. The last commit should be the 17:20 handover. Then `npm install`, then `npm run db` (Docker; without Docker, saves fall back to SQLite).
-2. Optional, if the user wants their own game at home: import their save. Start `npm run dev` (port 5173), then run `curl -X PUT -H 'content-type: application/json' --data @docs/dev/user-save.json localhost:5173/api/save`. That save is day 14, chapter 9 "Hearth and Home", with a tamed horse called Dawn.
-3. Recreate a scratchpad from `docs/dev/`:
-   - `spec-mature.md` → `spec_mature.md`
-   - `spec-weapons-sleep.md` → `spec_ws.md`
-   - `spec-expansion.md` → `spec.md`
-   - `progress-log.md` → `progress.md`
-   - `where-agents-stopped.txt`, `qa-round1-issues.json`, `*_research.json`
-4. Relaunch the two workflows saved in `docs/dev/workflows/`. Replace `SCRATCHPAD` in them with the new scratchpad path, and adjust ports if needed. The machine needs Chrome for the headless tests.
-   - **`A-mature-finish.js`**: finishes the 5 mature packages, then ARC phase C integration, mature QA (Story, Survivor/Hardcore, visual and content limits), fixes, and a retest.
-   - **`B-qa-fix.js`**: QA and fixes for weapons, sleep, first person and the existing systems.
-     - **QA round 1 is already partly done.** Three testers finished (story, first person and world, sleep and home): 47 issues, 12 of them major, all in `docs/dev/qa-round1-issues.json`.
-     - Two testers did not finish: weapons and horses, and save and performance.
-     - So: skip the 3 finished lenses and feed their issues straight to the fixers. Re-run only the weapons-horse and save-perf testers, then fix, then retest.
+## Status (updated 2026-11-15 ~21:00, Aman's Mac). RESUME HERE
+**Where we are:** workflow B (QA and fix for weapons, horses, sleep, home, first person, world, save, perf) is DONE through 2 fix rounds. An independent **verification** run (`docs/dev/workflows/D-B-verify.js`) was started to check every user report and retest issue with fresh screenshots, fix failures and re-verify. If this file still says "verification running", it did not finish; rerun it.
+
+**Next steps, in order:**
+1. **Finish B verification:** run `D-B-verify.js` (replace SCRATCHPAD and PROJECT_ROOT, recreate the scratchpad as in step 3 of the old resume list, and copy `docs/dev/b-retest-issues.json` to `SCRATCHPAD/r2_issues.json` and `docs/dev/b-round2-fixer-reports.json` to `SCRATCHPAD/r2_reports.json`; the user reports are in `docs/dev/user-reports.md`). B is only done when all 4 areas pass.
+2. **Then ask the user which is next:**
+   - (a) the "perfect pass" workflow `docs/dev/workflows/C-B-perfect-pass.js`: per-area reference spec, fixer, 3 judges, loop until pass;
+   - (b) workflow **A** `docs/dev/workflows/A-mature-finish.js`: finish the 5 mature packages GORE, SURV, CMB, ARC phase C, ROM+MUS. Not started; their partial code is on disk.
+3. **Open design question for Deril:** the style of the brick ruins and brick house (deferred by the fixers).
+
+**B commits (2026-11-15):**
+- `4b00e8e`: round 1, about 72 of ~80 issues.
+- `fb631b2`: round 2, 46 retest issues; 3 deferred, about brick style.
+- Key fixes:
+  - riding: upright seat, legs down both sides, Sena two-up with her hands on Aro's waist, reins and bridle, 0.75 s mount and 0.65 s dismount;
+  - the horse E prompt no longer steals "Sit with Sena";
+  - the axe no longer clips the thigh;
+  - the help panel is replaced by an "F1 controls" hint;
+  - save-loss guard: a slow first save no longer hides Continue or deletes the save;
+  - the `makeStructure` unknown-kind crash;
+  - shader-swap perf, texture retry, cave lighting, and the stand-up loop.
+
+**Machine notes (M4 MacBook Air, 16 GB):**
+- It shut down twice under 7-9 agents. Keep about 4-5 agents, with 1 headless Chrome each, and stay on the charger.
+- The scratchpad in /private/tmp is wiped on reboot. Keep anything important in `docs/dev/`.
 
 ### What is done (all committed on `main`; the old `expansion` branch was merged and deleted)
 - **Expansion:** the 12-chapter story with old-save migration, co-op building and home, landmarks and caves, horses, the parchment map with fog of war, the family arc, torch, poultice, cloak, waterskin and fishing.

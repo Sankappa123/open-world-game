@@ -1,0 +1,240 @@
+{
+ "sleep-home-story": [
+  {
+   "title": "Sleeping blanket is still a huge lumpy mound with box-like sides; feet poke through it",
+   "severity": "major",
+   "repro": "New game, then setCh('hearth'), place a house with a bed, time 22:00, G.rest('dawn'). Hold the 'lie' or 'night' phase and use G.restCam('end') or a side camera. Same in the hut (shelter chapter) and on the Echo Hollow cave bed."
+  },
+  {
+   "title": "Epilogue villagers walk through the home's walls, including at night while the family sleeps",
+   "severity": "major",
+   "repro": "Place a house at (0,-14) with bed, hearth, cradle and nursery. setCh('village') without setting S.village first, so the real epilogue places 4 village houses. Set time 20:6 and wait about 25 s, then list the villager roots. Set time 5.95, wait 25-45 s, and check their distance to the home house."
+  },
+  {
+   "title": "From inside the house, the window glass is night-navy with a glow spot in full daylight",
+   "severity": "minor",
+   "repro": "House with a bed, any daytime hour (07:00-16:00). Stand inside or use G.camAt([1,Y+1.7,-13.8],[-2.0,Y+1.6,-11.4])."
+  },
+  {
+   "title": "Hut hand-back camera crops both characters to torsos and heads",
+   "severity": "minor",
+   "repro": "Shelter chapter, hut placed, rest until dawn. Watch the moment R.released turns on after the wake-up stretch."
+  },
+  {
+   "title": "Sitting by the hearth: the game camera puts Aro in front of Sena, so she is mostly hidden",
+   "severity": "minor",
+   "repro": "New Life chapter, house with hearth, time 21:00. Wait for Sena to sit by the hearth, go inside, press 'Sit with Sena by the hearth', and look at the third-person camera."
+  },
+  {
+   "title": "Rest walk-in brings Sena in from the door when she is already sitting by the hearth",
+   "severity": "minor",
+   "repro": "New Life evening with Sena sitting by the hearth inside the house. Press E outside ('Rest until dawn'), then 1."
+  },
+  {
+   "title": "Hot-spring soak ends after 8 seconds and both stand up in the pool (Sena still has her basket on)",
+   "severity": "minor",
+   "repro": "setCh('herd'), time 13:00, teleport next to G.landmarks.spring with Sena close, and press 'Rest in the warm water (with Sena)'. Wait about 10 s."
+  },
+  {
+   "title": "Storm line 'We should not be out in this' plays right after waking up inside the house",
+   "severity": "polish",
+   "repro": "Rest until dawn in the house on a night that turns stormy. Watch the subtitles as the rest ends."
+  },
+  {
+   "title": "House windows show as black voids by day",
+   "severity": "polish",
+   "repro": "At midday, walk up to the house wall in first person and look at a window."
+  },
+  {
+   "title": "Pressing E to stand up from a fire or hearth sit sits you straight back down",
+   "severity": "major",
+   "repro": "Build a campfire, stand at a bench and press E for 'Sit with Sena'. Wait 2 s, then tap E (a 30 ms or 120 ms press). You stay seated, the vignette or closeness logic re-runs, and the sit timer restarts. The same happens on 'Sit with Sena by the hearth'. Only WASD or Space gets you up."
+  },
+  {
+   "title": "With Mature story off, chapter numbers skip (VI \u2192 IX \u2192 X \u2192 XV \u2192 XVI \u2192 XVIII)",
+   "severity": "minor",
+   "repro": "Esc \u203a Content \u203a untick Mature story, then New story. Play past The Wild Herd. The cards and HUD read 'Chapter IX \u00b7 Clay and Flame', 'X \u00b7 A Home of Brick', 'XV \u00b7 Hearth and Home', 'XVI \u00b7 Seeds of Tomorrow', 'XVIII \u00b7 A New Life'."
+  },
+  {
+   "title": "Sena's morning hint builds broken sentences from goal labels ('Let's bound at the stones today.')",
+   "severity": "minor",
+   "repro": "In A New Life with Closeness 60+, rest at home until dawn on an even 'slept' count while 'Bound at the stones' is still open. Sena says: 'Good morning, you. Warm hearth, soft furs\u2026 I could stay here forever. Let's bound at the stones today.'"
+  },
+  {
+   "title": "House windows look like night from inside during the day (dark pane with a glow blob)",
+   "severity": "minor",
+   "repro": "Build the brick house and wake at home, or stand inside at 08:00-14:00. Look at the window next to the door."
+  },
+  {
+   "title": "Birth cradle shot shows an empty corner: no baby, no parents, and the camera sees through the wall",
+   "severity": "minor",
+   "repro": "In A New Life with the cradle and nursery built, rest at home for the third night until 'Welcome your child' triggers. Watch the shot after the fade 'Spring came, and with it a daughter. They named her Lio.'"
+  },
+  {
+   "title": "Epilogue plays inside the dim house, facing the door, with a 'Ride Dawn' prompt through the wall",
+   "severity": "polish",
+   "repro": "Finish A New Life by resting at home. After the 'Many winters pass\u2026' fade and the village flyover, gameplay resumes inside the house. The epilogue card and the lines 'Lio learned to ride\u2026' and 'The valley is ours, Aro. Keep building.' play while Aro faces the doorway."
+  },
+  {
+   "title": "Early goals have no quest marker until the structure exists",
+   "severity": "polish",
+   "repro": "Enter Shelter (or The Hunt before crafting the spear) and look at the minimap."
+  },
+  {
+   "title": "After waking in the hut, the hand-back camera puts Aro's spear shaft across the screen",
+   "severity": "polish",
+   "repro": "In Shelter, rest together in the hut until dawn. When control returns and the 'Into the Dark' card shows, the camera sits right behind Aro's head."
+  },
+  {
+   "title": "Epilogue HUD shows 'Day 2565' after the seven-winters jump",
+   "severity": "polish",
+   "repro": "Load a save in the 'newlife' chapter that reaches the village, or a v1 save with ch 7 and village false. After 'Many winters pass\u2026' the clock chip reads 'Day 2565 \u00b7 09:10'."
+  },
+  {
+   "title": "After a mid-rest save is resumed on load, the hut hand-back leaves the camera jammed against the hut with the spear filling the screen",
+   "severity": "polish",
+   "repro": "Home at 21:30: G.restHold('night'); G.rest('dawn'). Save while frozen, reload, Continue, and wait about 8-13 s after the night finishes."
+  }
+ ],
+ "fpp-world": [
+  {
+   "title": "Echo Hollow cave floor uses the green grass terrain texture",
+   "severity": "minor",
+   "repro": "setCh('cave') and teleport next to G.caves.beds[0] (about -134,-112). Rest until dawn, or just look at the floor in third person."
+  },
+  {
+   "title": "Day counter never advances unless the player sleeps",
+   "severity": "major",
+   "repro": "Start a new game (or load any save) and stay awake past midnight. The HUD goes Day 1 23:00, then Day 1 00:10, then Day 1 08:00 (shots d01, d02, c08, e03). S.day stays the same."
+  },
+  {
+   "title": "Subtitles draw on top of the inventory bar at 1280x720",
+   "severity": "major",
+   "repro": "Load the user save (36 sticks, about 20 item types, so the bar wraps to 3 rows) at 1280x720 and trigger any dialogue (sit at the fire, or the storm warning). The subtitle line renders over the top row of item chips and is hard to read."
+  },
+  {
+   "title": "First-person riding: rein fists at eye height, forearms fill the view when looking down, no horse neck",
+   "severity": "major",
+   "repro": "Tame or mount a horse, press V for first person, and look ahead (pitch about 0.15), then down (pitch 0.6-1.2)."
+  },
+  {
+   "title": "Cave floor reads as green grass inside the dome and tunnel; a cream seam where it meets the terrain",
+   "severity": "minor",
+   "repro": "Teleport into Echo Hollow (inside the entrance, then the centre) at midday, in third or first person, and look at the floor and back toward the entrance."
+  },
+  {
+   "title": "Torch flames look like solid shapes (third person: faceted crystal; first person: yellow egg on a long pole)",
+   "severity": "minor",
+   "repro": "Enter a cave with Sena (she carries a torch), or light your own torch (T) in first person."
+  },
+  {
+   "title": "Map sits left in its panel at 1280x720",
+   "severity": "polish",
+   "repro": "At 1280x720, press M."
+  },
+  {
+   "title": "F1 help panel covers the right end of the inventory bar at 1080p",
+   "severity": "polish",
+   "repro": "Load the user save at 1920x1080 and press F1."
+  },
+  {
+   "title": "Visual consistency: brick ruins and a brick house in a prehistoric valley; peak rock texture stretched",
+   "severity": "polish",
+   "repro": "Visit the ruins (125,-140), the home house, and Lookout Peak's slope."
+  },
+  {
+   "title": "First-person spear still one-handed and has no visible spearhead",
+   "severity": "major",
+   "repro": "New game, give the spear, press V for first person, then press 3 (or G.wpn.select('spear')) and look level or slightly down."
+  },
+  {
+   "title": "Bottom-centre E prompt sits over Aro's head in third person and over the aim arc while aiming",
+   "severity": "minor",
+   "repro": "Stand near Sena with the spear drawn, hold right mouse to aim at the river. Or stand next to the horse or a thrown spear in default third person."
+  },
+  {
+   "title": "First-person forearm is still plain skin",
+   "severity": "polish",
+   "repro": "Press V and draw the axe or spear."
+  },
+  {
+   "title": "Subtitles draw over the inventory panel when the pack spans 3 rows",
+   "severity": "minor",
+   "repro": "Load the day-14 save (3 rows of pack items), walk into Echo Hollow with the torch lit, and wait for Sena's line 'Stay close. I have a light too.'"
+  }
+ ],
+ "weapons-horse": [
+  {
+   "title": "Horse and rider can stand inside a young pine; the first-person view is all green",
+   "severity": "minor",
+   "repro": "Load the herd chapter, tame a horse at the meadow (G.tame()), and gallop for about 6 s through the open woods east of the meadow (I ended near 194,166). The horse stops inside a small pine."
+  },
+  {
+   "title": "Sena's spear stands vertical from her back while seated",
+   "severity": "polish",
+   "repro": "Sit with Sena at the home fire, in third person."
+  },
+  {
+   "title": "Dismount: legs leave the straddle at once and Aro passes through the horse's flank",
+   "severity": "major",
+   "repro": "Mount Dawn, stand still, press E to dismount, and freeze about 0.33 s in (G.tapE(), then G.pause(true) after 330 ms). Side camera."
+  },
+  {
+   "title": "Tame horse walks home on her own after a dismount or a whistle and drifts out of whistle range",
+   "severity": "major",
+   "repro": "(1) Ride about 90 m from the camp fire, dismount, and watch. (2) Stand near her home, whistle (X) from 55 m, and watch after she arrives."
+  },
+  {
+   "title": "First person on horseback: the shoulder-rested spear covers a large diagonal strip of the screen when looking right",
+   "severity": "minor",
+   "repro": "Mount (two-up), press V, and turn the camera right to the yaw clamp (G.yaw = G.P.face, which clamps to about 110 degrees)."
+  },
+  {
+   "title": "First-person riding framing: horse ears fill the view, no neck visible, hands clasped on the poll with no reins",
+   "severity": "minor",
+   "repro": "Mount, press V, and look forward (G.yaw = G.P.face + PI, pitch 0.3)."
+  },
+  {
+   "title": "Wolves still appear in open meadow when the pine woods are more than 46 m away",
+   "severity": "minor",
+   "repro": "G.tp(170,40) (Horse Meadow), then call G.EVENTS.wolves() 3 times and check G.biome() for each wolf's position. Repeat at (60,-120)."
+  },
+  {
+   "title": "Throw arc is very faint against the sky and grass",
+   "severity": "polish",
+   "repro": "Draw the spear, hold right mouse at full charge, and aim level across the meadow."
+  },
+  {
+   "title": "Pack and weapon line says 'Spear \u00b7 on the ground' while the spear is in flight or floating in the river",
+   "severity": "polish",
+   "repro": "Throw the spear into the deep river (spear fishing), or look at the inventory during a long throw."
+  },
+  {
+   "title": "Spear on the back stands about 1.2 m above the head in a sprint",
+   "severity": "polish",
+   "repro": "Spear sheathed, sprint (Shift+W), side camera."
+  },
+  {
+   "title": "Unlooted dead wolves are never removed: carcasses, bone textures and mixers pile up all session",
+   "severity": "minor",
+   "repro": "Load any save after the hunt chapter. Four times: G.EVENTS.wolves(), kill the pack without butchering, and let the night pass. Count G.animals."
+  }
+ ],
+ "save-perf": [
+  {
+   "title": "GLTF texture loads are not retried under load; console errors at boot",
+   "severity": "minor",
+   "repro": "Boot the game while the machine is heavily loaded (load average about 140). The preview server starves and the asset fetches fail."
+  },
+  {
+   "title": "Slow first save request with empty localStorage hides Continue; 'Begin the story' then deletes the database save without asking",
+   "severity": "major",
+   "repro": "Clear site data, or use a new browser profile. Make GET /api/save take more than 4 s; this happens on the first request after `npm run dev` while MongoDB is down (2.5 s connect timeout plus the mongodb import plus opening SQLite), or on a loaded Mac. Open the game: no Continue button, only 'Begin the story'. Click it: start(false) calls deleteGame(), which sends DELETE /api/save. Autosaves then push new snapshots, and the 12-snapshot history trims away the old save within about 4 minutes."
+  },
+  {
+   "title": "Shared materials across instanced and plain meshes swap shader programs on every draw (top frame-time and garbage hotspot)",
+   "severity": "major",
+   "repro": "Load the day-14 save, stand at home (2,8) at 11:00, CPU-profile 300 frames and sample heap allocations for 6 s."
+  }
+ ]
+}
