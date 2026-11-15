@@ -9,7 +9,7 @@ export const CAVES = [
   { id: 'echo', name: 'Echo Hollow', c: [-138, -108], R: 11, H: 6.5 },
   { id: 'flint', name: 'Flint Deep', c: [-40, -192], R: 13, H: 8 },
 ];
-const TUBE = 3.6, RAMP = 22;
+const TUBE = 3.6, RAMP = 22, SEAL = 2.4;   // FPP-world SEAL: the inner wall sits this far inside the dome rim
 // Derived data needs the base land height, so world.js calls this once before it builds the terrain.
 export function initCaves(land) {
   for (const k of CAVES) {
@@ -116,6 +116,8 @@ export function createCaves(scene, { NAT, rockTex, addCollider, clear, Field, pm
   const R = rng(9123);
   const rockM = new THREE.MeshStandardMaterial({ map: rockTex, color: rockTex ? 0x9a9288 : 0x5a554e, roughness: 0.96, side: THREE.DoubleSide });
   const ray = new THREE.Raycaster();
+  // FPP-world: the dressing boulders wear the hill's own rock texture (the pack's mossy atlas read as green-black)
+  const boulderM = new THREE.MeshStandardMaterial({ map: rockTex, color: rockTex ? 0xd8cfc2 : 0x8a8276, roughness: 0.95 });
   const panels = [], bats = [], sconces = [], crystals = [], flintNodes = [], ochreNodes = [], beds = [];
   let paintI = 0;
   for (const k of CAVES) {
@@ -123,16 +125,25 @@ export function createCaves(scene, { NAT, rockTex, addCollider, clear, Field, pm
     g.name = 'cave-' + k.id;
     scene.add(g);
     const ang = Math.atan2(k.dir[0], k.dir[1]);           // heading of the entrance (x = sin, z = cos)
-    const gap = Math.asin(Math.min(0.9, (TUBE + 0.3) / k.R));
     // ---- dome: upper hemisphere with an entrance gap, lumpy, scaled (R, H, R) ----
-    const src = new THREE.IcosahedronGeometry(1, 4), sp = src.attributes.position, out = [];
+    // FPP-world: the gap is cut to the tube's own round profile on a finer mesh (it used to be a wide wedge of
+    // coarse triangles reaching well above the tube, which showed the sky as white holes from inside).
+    // sMin: how far out the gap starts (the seal wall below sits just in front of it).
+    const src = new THREE.IcosahedronGeometry(1, 8), sp = src.attributes.position, out = [];
     const a = new THREE.Vector3(), b = new THREE.Vector3(), c = new THREE.Vector3(), m = new THREE.Vector3();
+    const inTube = (v) => {                              // unit dome point -> inside the tube's cross-section (+ margin)?
+      const X = v.x * k.R, Z = v.z * k.R, y = v.y * k.H - 0.05, s = X * k.dir[0] + Z * k.dir[1], lat = X * k.dir[1] - Z * k.dir[0];
+      return s > 0 && lat * lat + y * y < (TUBE + 0.2) * (TUBE + 0.2) ? s : 0;
+    };
+    let sMin = k.R;
     for (let i = 0; i < sp.count; i += 3) {
       a.fromBufferAttribute(sp, i); b.fromBufferAttribute(sp, i + 1); c.fromBufferAttribute(sp, i + 2);
       m.copy(a).add(b).add(c).divideScalar(3);
       if (m.y < -0.05) continue;
-      const da = Math.abs(((Math.atan2(m.x, m.z) - ang + Math.PI * 3) % (Math.PI * 2)) - Math.PI);
-      if (da < gap && m.y < 0.6) continue;
+      if (inTube(a) || inTube(b) || inTube(c) || inTube(m)) {
+        for (const v of [a, b, c]) sMin = Math.min(sMin, (v.x * k.dir[0] + v.z * k.dir[1]) * k.R);
+        continue;
+      }
       out.push(a.x, a.y, a.z, b.x, b.y, b.z, c.x, c.y, c.z);
     }
     let dome = new THREE.BufferGeometry();
@@ -151,15 +162,46 @@ export function createCaves(scene, { NAT, rockTex, addCollider, clear, Field, pm
     domeM.position.set(k.x, k.floor - 0.35, k.z);
     domeM.castShadow = domeM.receiveShadow = true;
     g.add(domeM);
-    // ---- entrance tube: half cylinder from just inside the rim to the mouth ----
-    const len = 7.5, tube = new THREE.CylinderGeometry(TUBE, TUBE, len, 16, 4, true, -Math.PI / 2, Math.PI);
+    // ---- entrance tube: half cylinder from the inner seal (below) to the mouth ----
+    // FPP-world: the seal stands just in front of the dome's gap (lumpy walls move up to ~1 m, hence the margin)
+    const ss = Math.min(k.R - SEAL, sMin - 1.2);
+    const s0 = ss - 0.3, s1 = k.R + 5.9, sm = (s0 + s1) / 2;
+    const len = s1 - s0, tube = new THREE.CylinderGeometry(TUBE, TUBE, len, 16, 5, true, -Math.PI / 2, Math.PI);
     tube.rotateX(-Math.PI / 2); lumpy(tube, 0.035, 1.3);
     const tubeM = new THREE.Mesh(tube, rockM);
-    const s0 = k.R - 1.6, s1 = k.R + 5.9, sm = (s0 + s1) / 2;
     tubeM.position.set(k.x + k.dir[0] * sm, k.floor - 0.3, k.z + k.dir[1] * sm);
     tubeM.rotation.y = ang;
     tubeM.castShadow = tubeM.receiveShadow = true;
     g.add(tubeM);
+    // ---- FPP-world: the inner seal. A rock wall across the dome in front of its entrance gap, with the tube's arch
+    // cut out, each spoke reaching exactly to the dome wall (found by a ray), so no sky shows around the arch. ----
+    {
+      const IN = TUBE - 0.08, OUT = k.R + 1;
+      const sl = new THREE.RingGeometry(IN, OUT, 40, 6, 0, Math.PI);   // in xy: x across the entrance, y up
+      const sp2 = sl.attributes.position;
+      domeM.updateMatrixWorld(true);
+      const ctr = new THREE.Vector3(k.x + k.dir[0] * ss, k.floor - 0.3, k.z + k.dir[1] * ss);
+      const side = new THREE.Vector3(Math.cos(ang), 0, -Math.sin(ang)), dv = new THREE.Vector3(), reach = new Map();
+      for (let i = 0; i < sp2.count; i++) {
+        const x = sp2.getX(i), y = sp2.getY(i), r = Math.hypot(x, y) || 1, key = Math.round(Math.atan2(y, x) * 1000);
+        if (!reach.has(key)) {
+          dv.copy(side).multiplyScalar(x / r).add(new THREE.Vector3(0, y / r, 0)).normalize();
+          ray.set(ctr, dv); ray.far = OUT * 1.5;
+          const hit = ray.intersectObject(domeM, false)[0];
+          reach.set(key, hit ? hit.distance + 0.05 : k.R * 0.6);
+        }
+        const rr = IN + ((r - IN) / (OUT - IN)) * Math.max(0.2, reach.get(key) - IN), f = rr / r;
+        const nx = x * f, ny = Math.max(y * f, -0.05);
+        sp2.setXYZ(i, nx, ny, (Math.sin(nx * 1.7) + Math.cos(ny * 2.1)) * 0.12 * Math.min(1, (rr - IN) / 0.6));
+      }
+      sl.computeVertexNormals();
+      const su = sl.attributes.uv; for (let i = 0; i < su.count; i++) su.setXY(i, sp2.getX(i) * 0.12, sp2.getY(i) * 0.12);
+      const seal = new THREE.Mesh(sl, rockM);
+      seal.position.copy(ctr);
+      seal.rotation.y = ang;
+      seal.castShadow = seal.receiveShadow = true;
+      g.add(seal);
+    }
     g.updateMatrixWorld(true);
     // ---- colliders: the rim (leaving the gap) and both tube sides ----
     const nr = Math.ceil((Math.PI * 2 * (k.R - 0.6)) / 1.3);
@@ -176,19 +218,21 @@ export function createCaves(scene, { NAT, rockTex, addCollider, clear, Field, pm
     clear(k.x, k.z, k.R + 3);
     for (let s = k.R; s < k.R + 5 + RAMP; s += 2.5) clear(k.x + k.dir[0] * s, k.z + k.dir[1] * s, TUBE + 1);
     // ---- rock dressing: boulders around the arch and over the dome ----
+    // FPP-world: the side rocks flank the mouth (beside and in front of it, never over the arch) and one lintel rock
+    // sits back on top of the arch to frame it, so the entrance reads as an opening, not a slot under a rock pile.
     const rocks = [];
     for (let i = 0; i < 6; i++) {
-      const side = i % 2 ? 1 : -1, s = k.R + 3 + R() * 5, sc = 1.8 + R() * 0.8, l = TUBE + 0.8 + sc * 1.15;
-      rocks.push([k.x + k.dir[0] * s + k.dir[1] * side * l, k.floor + R() * 1.5, k.z + k.dir[1] * s - k.dir[0] * side * l, sc]);
+      const side = i % 2 ? 1 : -1, s = k.R + 6.5 + R() * 4, sc = 1.8 + R() * 0.8, l = TUBE + 1.8 + sc * 1.15;
+      rocks.push([k.x + k.dir[0] * s + k.dir[1] * side * l, k.floor + R() * 0.8 - 0.4, k.z + k.dir[1] * s - k.dir[0] * side * l, sc]);
     }
-    for (let i = 0; i < 2; i++) { const s = k.R + 2 + i * 2.6, sc = 1.6 + R() * 0.5; rocks.push([k.x + k.dir[0] * s, k.floor + TUBE + sc * 0.9, k.z + k.dir[1] * s, sc]); }
+    { const s = k.R + 1.5, sc = 1.6 + R() * 0.5; rocks.push([k.x + k.dir[0] * s, k.floor + TUBE + sc * 1.3, k.z + k.dir[1] * s, sc]); }
     for (let i = 0; i < 6; i++) {
       const t = ang + Math.PI * 0.35 + R() * Math.PI * 1.3, r = k.R * (0.3 + R() * 0.65), sc = 2.5 + R() * 1.5;
       rocks.push([k.x + Math.sin(t) * r, k.floor + k.H * Math.sqrt(Math.max(0.05, 1 - (r / k.R) ** 2)) + sc * 0.6, k.z + Math.cos(t) * r, sc]);
     }
     rocks.forEach(([x, y, z, s], i) => {
       for (const p of NAT['rock_medium_' + (1 + (i % 3))] || []) {
-        const r = new THREE.Mesh(p.geo, p.mat);
+        const r = new THREE.Mesh(p.geo, boulderM);    // FPP-world: the hill's rock, not the green-black pack atlas
         r.position.set(x, y, z); r.scale.set(s, s * (0.7 + R() * 0.4), s); r.rotation.set(R() * 0.4, R() * 6.28, R() * 0.4);
         r.castShadow = r.receiveShadow = true; g.add(r);
       }
@@ -267,6 +311,12 @@ export function createCaves(scene, { NAT, rockTex, addCollider, clear, Field, pm
       bats.push({ cave: k, mesh: bm, list, burst: -1, gone: false });
     }
   }
+  // FPP-world: daylight spilling in at the mouth of whichever cave the player is near. One shared light, always in
+  // the scene (the light count never changes, so nothing recompiles); world.setTime sets its strength from the
+  // daylight and how deep the player is, so walls near the entrance glow and the way out reads from inside.
+  const mouthLight = new THREE.PointLight(0xffe6c4, 0, 30, 1.1);
+  mouthLight.position.set(0, -200, 0);
+  scene.add(mouthLight);
   // Flint and ochre are ordinary resource fields (kinds 'flint' and 'ochre'); world.js appends them after the others.
   const ico = (r, d = 1) => new THREE.IcosahedronGeometry(r, d);
   const fl = (g) => { g.computeVertexNormals(); return g; };
@@ -286,6 +336,8 @@ export function createCaves(scene, { NAT, rockTex, addCollider, clear, Field, pm
   let time = 0;
   function update(dt, px, pz) {
     time += dt;
+    const near = CAVES.find((k) => Math.hypot(px - k.x, pz - k.z) < k.R + 40);
+    if (near) mouthLight.position.set(near.x + near.dir[0] * (near.R + 3), near.floor + 2.6, near.z + near.dir[1] * (near.R + 3));
     for (const s of sconces) if (s.on) { s.flame.scale.set(1 + Math.sin(time * 11) * 0.15, 1.8 + Math.sin(time * 15) * 0.3, 1); s.light.intensity = 4 + Math.sin(time * 13) * 0.6 + Math.sin(time * 31) * 0.3; }
     for (const B of bats) {
       const k = B.cave;
@@ -311,7 +363,7 @@ export function createCaves(scene, { NAT, rockTex, addCollider, clear, Field, pm
   }
   const byId = (id) => CAVES.find((k) => k.id === id);
   return {
-    list: CAVES, panels, beds, sconces, bats, crystals, flintF, ochreF, update,
+    list: CAVES, panels, beds, sconces, bats, crystals, flintF, ochreF, update, mouthLight,
     setSconce(id, on) { const s = sconces.find((s) => s.cave === id); if (!s) return; s.on = on; s.flame.visible = on; s.light.intensity = on ? 4 : 0; },
     burstBats(id) { const B = bats.find((b) => b.cave.id === id); if (B && B.burst < 0 && !B.gone) { B.burst = 0; return true; } return false; },
     batsGone(id) { const B = bats.find((b) => b.cave.id === id); if (B) { B.gone = true; B.mesh.visible = false; } },

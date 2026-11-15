@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import * as SkeletonUtils from 'three/addons/utils/SkeletonUtils.js';
 import { makeSpear, makeAxe } from './entities.js';
+import { loadRetry } from './util.js';
 
 // Rigged human models, hair and animations: Quaternius (CC0). See public/models/CREDITS.txt.
 const LOOPS = { idle: 'Idle_Loop', walk: 'Walk_Loop', run: 'Jog_Fwd_Loop', sprint: 'Sprint_Loop', sneakIdle: 'Crouch_Idle_Loop', sneak: 'Crouch_Fwd_Loop', swim: 'Swim_Fwd_Loop', swimIdle: 'Swim_Idle_Loop', jump: 'Jump_Loop',
@@ -42,7 +43,7 @@ const fitOf = (kind, slot, h) => h?.fitAdj?.[kind]?.[slot] || FIT[kind]?.[slot] 
 
 export async function loadPeople() {
   const loader = new GLTFLoader();
-  const load = (f) => loader.loadAsync('/models/' + f);
+  const load = (f) => loadRetry(() => loader.loadAsync('/models/' + f), f);   // SAVE-PERF retry
   const [male, female, hairM, beard, hairF, buns, buzz, anims, anims2] = await Promise.all(
     ['male.gltf', 'female.gltf', 'hair_simpleparted.gltf', 'hair_beard.gltf', 'hair_long.gltf', 'hair_buns.gltf', 'hair_buzzed.gltf', 'anims.glb', 'anims2.glb']
       .map((f) => (f === 'anims2.glb' ? load(f).catch((e) => { console.warn('anims2.glb not loaded', e); return { scene: null, animations: [] }; }) : load(f))));   // CMB: UAL2 clips (same rig)
@@ -182,7 +183,7 @@ export function makeHuman({ female = false, light = false, tint = 0xffffff, hair
     for (const key of ONCE) act[key]?.setEffectiveWeight(act[key] === cur ? sw : 0);
     if (PACE[state]) act[state].timeScale = THREE.MathUtils.clamp(speed / PACE[state], 0.7, 1.5) * (h.back && state !== 'swim' ? -1 : 1);   // FPP: h.back plays the gait in reverse
     mixer.update(dt);
-    if (h.pose === 'ride' || h.straddle) { bones.thigh_l.rotation.z += 0.45; bones.thigh_r.rotation.z -= 0.45; }
+    if ((h.pose === 'ride' || h.straddle) && !h.legIK) { bones.thigh_l.rotation.z += 0.45; bones.thigh_r.rotation.z -= 0.45; }   // WH: legIK riders get real leg IK instead
     for (let i = h.blends.length - 1; i >= 0; i--) {   // WPN socket blends (before the overrides, which may read them)
       const b = h.blends[i]; b.t += dt;
       const k = Math.min(1, b.t / b.dur), e = k * k * (3 - 2 * k);
@@ -238,7 +239,14 @@ function aimBone(bone, from, to, w) {   // rotate bone in world space so `from` 
 }
 export function ik2(h, side, target, pole, w = 1) {
   if (!(w > 0)) return;
-  const A = h.bones['upperarm_' + side], B = h.bones['lowerarm_' + side], C = h.bones['hand_' + side];
+  ikChain(h.bones['upperarm_' + side], h.bones['lowerarm_' + side], h.bones['hand_' + side], target, pole, w);
+}
+// WH: the same solver for a leg (thigh, calf, foot): the rider's legs down the horse's sides.
+export function ikLeg(h, side, target, pole, w = 1) {
+  if (!(w > 0)) return;
+  ikChain(h.bones['thigh_' + side], h.bones['calf_' + side], h.bones['foot_' + side], target, pole, w);
+}
+function ikChain(A, B, C, target, pole, w) {
   A.updateWorldMatrix(true, true);
   A.getWorldPosition(_a); B.getWorldPosition(_b); C.getWorldPosition(_c);
   const la = _a.distanceTo(_b), lb = _b.distanceTo(_c);

@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { MeshoptSimplifier } from 'three/addons/libs/meshopt_simplifier.module.js';
+import { loadRetry } from './util.js';
 
 // Tree trunks come with ~3000 triangles each. The models are full of texture seams, so an attribute-aware
 // simplifier barely touches them; instead vertices are welded by position only, the index is simplified, and each
@@ -79,7 +80,7 @@ function prepare(m) {
 export async function loadNature() {
   const loader = new GLTFLoader();
   await Promise.all(NAMES.map(async (n) => {
-    const g = await loader.loadAsync('/models/nature/' + n + '.gltf');
+    const url = '/models/nature/' + n + '.gltf', g = await loadRetry(() => loader.loadAsync(url), url);   // SAVE-PERF retry
     g.scene.updateMatrixWorld(true);
     const parts = [];
     const meshes = [];

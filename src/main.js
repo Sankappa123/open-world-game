@@ -4,7 +4,7 @@ import { loadNature, NAT, DEBUG } from './nature.js';
 import { loadAnimals, makeAnimal } from './animals.js';
 import { makeSpear, makeAxe, makeTorch, makeStructure, glowM, BUILD, makeScaffold, makeCarryBasket } from './entities.js';
 import { makeBlanket, makeBedroll } from './entities.js';   // RST bed props
-import { loadPeople, makeHuman, samplePose, applyPose, clipDuration, BONESETS, ik2, FIT } from './people.js';
+import { loadPeople, makeHuman, samplePose, applyPose, clipDuration, BONESETS, ik2, ikLeg, FIT } from './people.js';   // WH ikLeg: riders' legs
 import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';   // WPN viewmodel fists
 import { clamp, lerp, mat } from './util.js';
 import { loadGame, saveGame, deleteGame, saveState, settings, saveSettings } from './save.js';
@@ -42,7 +42,14 @@ addEventListener('resize', () => {
   vmCam.aspect = camera.aspect; vmCam.updateProjectionMatrix();   // WPN viewmodel
 });
 camera.layers.enable(1);
-const [, , , found] = await Promise.all([loadNature(), loadPeople(), loadAnimals(), loadGame()]);
+// SAVE-PERF: every asset load retries (util loadRetry); if one still fails, say so on the title and offer a retry
+// instead of leaving a dead "Loading…" button.
+const [, , , found] = await Promise.all([loadNature(), loadPeople(), loadAnimals(), loadGame()]).catch((e) => {
+  const b = $('btn-new');
+  b.textContent = 'Some files failed to load · Retry'; b.onclick = () => location.reload();
+  $('savenote').textContent = 'Check your connection, then retry. Your saved game is safe.';
+  throw e;
+});
 const world = createWorld(scene, renderer, quality());
 const SWIM_Y = -0.1;
 
@@ -154,6 +161,27 @@ const CH = [
     extra: () => [...ARCD.epilogueLines(S.arc, S.rom).lines, ['', `Lio learned to ride on old ${S.horse?.name || 'Dawn'} before she could run.`], ['', 'From one fire, a village. From a village, everything that came after.'], ['Sena', 'The valley is ours, Aro. Keep building.']],
     onEnter: () => arcEnter('village') },
 ];
+// STORY: quest markers for the early chapters (questAt): the river bank to drink or cut reeds, the nearest herd, the clay
+// and the wild grain, then whatever was built for the next goal. Read lazily, every minimap frame, so it stays cheap.
+function nearNode(kind, far = 260) {
+  let best = null, bd = far;
+  for (const f of world.fields) if (f.kind === kind) for (const n of f.nodes) { if (!n.alive) continue; const d = Math.hypot(n.x - P.pos.x, n.z - P.pos.z); if (d < bd) { bd = d; best = n; } }
+  return best ? [best.x, best.z] : null;
+}
+const structAt = (kind) => { const s = structs.find((t) => t.kind === kind && !t.village); return s ? [s.x, s.z] : null; };
+const bankAt = () => nearNode('reed', 120) || [riverX(P.pos.z), P.pos.z];
+const QUEST_WHERE = {
+  awaken: () => (cnt('drank') < 1 ? bankAt() : null),
+  fire: () => (cnt('fiber') < 2 ? bankAt() : structAt('fire')),
+  hunt: () => {
+    if (cnt('deer') < 1) { let best = null, bd = 1e9; for (const h of herds) { const d = Math.hypot(h.x - P.pos.x, h.z - P.pos.z); if (d < bd) { bd = d; best = h; } } return S.tools.spear && best ? [best.x, best.z] : null; }
+    return cnt('cook') < 1 ? structAt('fire') : null;
+  },
+  shelter: () => structAt('hut'),
+  clay: () => (cnt('clay') < 8 ? nearNode('clay') : structAt('kiln')),
+  seeds: () => (!goalsOf()[0]?.[1]() ? nearNode('grain') : houseAt()),
+};
+for (const c of CH) if (QUEST_WHERE[c.id] && !c.where) c.where = QUEST_WHERE[c.id];
 const chIdx = (id) => CH.findIndex((c) => c.id === id);
 const reached = (id) => S.ch >= chIdx(id);
 const roman = ARCD.roman;                            // ARC: 19 chapters (general roman numerals)
@@ -298,14 +326,14 @@ function updateSubs(dt) {
 }
 function drawInv() {
   let h = '';
-  if (S.tools.spear) h += '<span class="tool">Spear</span>';
-  if (S.tools.axe) h += '<span class="tool">Axe</span>';
+  if (hasSpear()) h += `<span class="tool">${S.tools.flintspear ? 'Flint spear' : 'Spear'}</span>`;   // FPP-world: flint tools are named too
+  if (hasAxe()) h += `<span class="tool">${S.tools.flintaxe ? 'Flint axe' : 'Axe'}</span>`;
   if (S.tools.torch) h += `<span class="tool">Torch${torchOn ? ` · lit ${Math.ceil(S.fuel)}s` : ''}</span>`;
   if (S.tools.cloak) h += '<span class="tool">Fur cloak</span>';
   if (S.tools.waterskin) h += `<span class="tool">Waterskin<b>${S.skin}/3</b>${survSkinTag()}</span>`;   // SURV: where the water came from
   h += matToolsHud();                                // MAT: the mature packages' tools (boil bag, pot, mantle, bear cloak)
   for (const k in ITEMS) if (S.inv[k] > 0) h += `<span>${ITEMS[k]}<b>${S.inv[k]}</b></span>`;
-  $('inv').innerHTML = h || '<span>Your hands are empty</span>';
+  $('inv').innerHTML = h || '<span>Nothing carried</span>';   // FPP-world: describes the pack, not the hands (fists may be raised)
   wpnHud();                                          // WPN chip (owned weapons may have changed)
   $('cross').style.display = 'block';
 }
@@ -359,6 +387,7 @@ function save(opts = {}) {
   S.felled = [];
   world.fields.forEach((f, fi) => { if (f.kind === 'tree') f.nodes.forEach((n, ni) => { if (!n.alive && !n.gone) S.felled.push([fi, ni]); }); });
   S.seen = encodeSeen();                               // WP5 fog of war
+  rstSaveFix();                                        // SAVE-PERF: mid-rest saves wake at the door and finish the night on load
   saveGame(S, opts);
   saveFlash = 2.5; $('savechip').textContent = 'Saving…'; $('savechip').className = 'panel';
 }
@@ -392,16 +421,18 @@ function walkTo(e, tx, tz, speed, dt, stop = 0.4) {
 }
 function settle(e, dt, crouch) {
   const root = e.h.root;
+  if (e.floorSit || e.fsW > 0) floorSitEase(e, dt);  // STORY hearth: easing onto / off the planks
   if (rstSettle(e, dt)) return;                     // RST: Aro and Sena lying in bed, walking in, standing up, kept indoors
   // Lying down (resting in bed): body flat on its back at restPos.
   if (e.rest > 0) { root.position.copy(e.restPos); root.rotation.order = 'YXZ'; root.rotation.set(-Math.PI / 2, e.face, 0); e.h.animate(dt, 0, false, false, false); return; }
   root.rotation.x = 0;
   // Seated on something that moves (horse rider): the caller supplies the world seat point.
-  if (e.seat) { root.position.copy(e.seat); root.rotation.y = e.face; e.h.animate(dt, 0, false, false, false); return; }
+  if (e.seat) { root.position.copy(e.seat); if (e.fsW > 0) root.position.y -= FS.drop * smooth01(e.fsW); root.rotation.y = e.face; e.h.animate(dt, 0, false, false, false); return; }
   const g = getHeight(e.pos.x, e.pos.z);
   e.swim = g < -1.15;                       // deeper than the waist: swim at the surface
   e.pos.y = (e.swim ? SWIM_Y : g) + (e.jy || 0);
   e.h.root.position.copy(e.pos);
+  if (e.fsW > 0) e.h.root.position.y -= FS.drop * smooth01(e.fsW);   // STORY hearth: rising off the floor
   e.h.root.rotation.y = e.face;
   e.h.animate(dt, e.speed, crouch && !e.swim, e.swim, !!e.air);
 }
@@ -488,6 +519,7 @@ function offerFood(o, f) {
 function startTame(o) {
   P.ride = o; P.taming = { calm: 0, t: 10, ph: 0, i: 0 }; P.sneak = false; P.auto = false; P.vx = P.vz = 0; P.hv = 0;
   P.face = o.root.rotation.y; P.pos.copy(o.root.position); wpnStowAll('ride', true);   // WPN
+  P.tr = null; P.rideW = 1;                                 // WH
   o.speed = 0; o.stun = 0; eTap = false;
   $('bar-calm').style.display = ''; $('b-calm').style.width = '0%';
   toast('Press E again and again to calm her'); A.hit(200, 0.3, 0.5);
@@ -523,24 +555,70 @@ function thrownOff(o) {
   toast('Thrown off! She trusts you a little less.'); A.hit(160, 0.3, 0.8);
   alarm(o);
 }
-function mount(o) {
+// anim: the E-key mount climbs on over MOUNT_T (input locked, see rideTrans); loads and story calls seat at once.
+function mount(o, anim = false) {
   if (!o) return;
+  const r0 = P.h.root.position.clone(), f0 = P.h.root.rotation.y, n0 = N.h.root.position.clone(), nf0 = N.h.root.rotation.y;
   P.ride = o; P.taming = null; P.sneak = false; P.air = false; P.jy = 0; P.vy = 0; P.vx = P.vz = 0; P.hv = 0; P.auto = false; P.sit = 0;
   P.face = o.root.rotation.y; P.pos.copy(o.root.position);
   wpnStowAll('ride'); useCool = 0.8; wHeld = 0; hIdle = 0;   // WPN
   Object.assign(o, { call: false, speed: 0, stun: 0, flee: 0 });
   if (placing) { placing = null; ghost.visible = false; }
   if (Math.hypot(N.pos.x - P.pos.x, N.pos.z - P.pos.z) < 10 && nFree()) { N.ride = true; N.node = null; N.act = 0; N.speed = 0; }
+  P.tr = anim ? { on: true, t: 0, dur: MOUNT_T, p0: r0, f0 } : null; P.rideW = anim ? 0 : 1; rideShowT = 4;   // WH
+  N.tr = anim && N.ride ? { on: true, t: -0.3, dur: MOUNT_T, p0: n0, f0: nf0 } : null; N.rideW = N.tr ? 0 : 1;
   $('bar-horse').style.display = ''; A.hit(300, 0.15, 0.25);
 }
-const clearSeat = (e) => { e.seat = null; e.saddle = null; e.pOff = null; e.h.pose = null; e.h.straddle = false; };
-function dismount(thrown = false) {
+const clearSeat = (e) => { e.seat = null; e.saddle = null; e.pOff = null; e.h.pose = null; e.h.straddle = false; e.tr = null; e.rideW = 0; e.h.legIK = false; };
+// ---------- WH: mounting and dismounting motion ----------
+// The E-key mount: from where Aro stands he steps up and swings onto the saddle along a short arc while the straddle
+// (leg IK, reins) blends in; Sena follows 0.3 s later. The E-key dismount is the reverse: the horse stops, Aro slides
+// down her left side (Sena her right) and lands with a small knee dip; dismount() itself runs when the slide ends.
+// Input is locked for the duration (updateRide reads rideBusy). Story and load paths still mount / dismount at once.
+const MOUNT_T = 0.75, DISMOUNT_T = 0.65;
+let rideShowT = 0;                                  // seconds the "Dismount" prompt stays up after mounting or stopping
+const rideBusy = () => !!(P.tr || (N.ride && N.tr && N.tr.on && N.tr.t < N.tr.dur * 0.5));
+function dismountStart() {
+  const o = P.ride; if (!o || P.taming || P.tr) return;
+  const f = P.face, lx = Math.cos(f), lz = -Math.sin(f), hp = o.root.position;
+  const end = (x, z) => { const v = new THREE.Vector3(x, 0, z); collide(v, 0.35); v.y = getHeight(v.x, v.z); return v; };
+  P.tr = { on: false, t: 0, dur: DISMOUNT_T, end: end(hp.x + lx * 1.3, hp.z + lz * 1.3) };
+  if (N.ride) N.tr = { on: false, t: 0, dur: DISMOUNT_T, end: end(hp.x - lx * 1.3, hp.z - lz * 1.3) };
+  P.h.pose = null; useCool = 0.8;                   // the legs come out of the straddle as he slides down
+  A.hit(260, 0.12, 0.2);
+}
+// After seatOn (the root sits on the saddle): move the root along the arc between the ground and the seat.
+function rideTrans(e, dt) {
+  const tr = e.tr; if (!tr) return;
+  tr.t += dt;
+  const k = clamp(tr.t / tr.dur, 0, 1), s = smooth01(k), root = e.h.root;
+  if (tr.on) {
+    if (tr.t < 0) { root.position.copy(tr.p0); root.rotation.y = tr.f0; e.rideW = 0; e.h.legIK = false; return; }
+    const lift = Math.sin(Math.PI * Math.min(1, k * 1.15)) * 0.32;            // up over the horse's back, then down onto it
+    _hn.copy(root.position); root.position.lerpVectors(tr.p0, _hn, s); root.position.y += lift;
+    root.rotation.y = tr.f0 + wrapA(e.face - tr.f0) * smooth01(k * 1.6);
+    e.rideW = smooth01(k * 1.4); e.h.legIK = k > 0.25;
+    if (k >= 1) e.tr = null;
+  } else {
+    if (tr.t < 0) return;
+    const lift = Math.sin(Math.PI * k) * 0.18;
+    root.position.lerpVectors(root.position, tr.end, s); root.position.y += lift;
+    e.rideW = 1 - smooth01(k * 1.5); e.h.legIK = e.rideW > 0.05;
+    if (e === N && k >= 1) N.tr = null;
+    if (e === P && k >= 1) {
+      const nEnd = N.tr && !N.tr.on ? N.tr.end : null;
+      dismount(false, tr.end, nEnd); P.h.crouch = 0.55; if (N.h) N.h.crouch = 0.45;   // the landing dip (animate eases crouch back to 0)
+    }
+  }
+  root.updateMatrixWorld(true);
+}
+function dismount(thrown = false, at = null, nAt = null) {
   const o = P.ride; if (!o) return;
   const f = P.face, rx = Math.cos(f), rz = -Math.sin(f), hp = o.root.position;
   P.ride = null; P.taming = null; P.jy = 0; P.vy = 0; P.air = false; P.vx = P.vz = 0; P.hv = 0; P.speed = 0;
-  P.pos.set(hp.x + rx * (thrown ? 1.8 : 1.3), 0, hp.z + rz * (thrown ? 1.8 : 1.3)); collide(P.pos, 0.35);
+  if (at) P.pos.set(at.x, 0, at.z); else { P.pos.set(hp.x + rx * (thrown ? 1.8 : 1.3), 0, hp.z + rz * (thrown ? 1.8 : 1.3)); collide(P.pos, 0.35); }   // WH: at = where the slide-down landed
   clearSeat(P);
-  if (N.ride) { N.ride = false; N.pos.set(hp.x - rx * 1.3, 0, hp.z - rz * 1.3); collide(N.pos, 0.3); clearSeat(N); N.face = f; N.wait = 4; }
+  if (N.ride) { N.ride = false; if (nAt) N.pos.set(nAt.x, 0, nAt.z); else { N.pos.set(hp.x - rx * 1.3, 0, hp.z - rz * 1.3); collide(N.pos, 0.3); } clearSeat(N); N.face = f; N.wait = 4; }
   Object.assign(o, { speed: 0, walk: false, timer: 8, dir: f });
   o.root.rotation.y = f; o.root.position.y = getHeight(hp.x, hp.z);
   if (o.tame) { o.home = horseHome(); o.a.play('Idle'); }
@@ -591,7 +669,7 @@ function horseWant(o, want, dist, dx, dz, dt) {
 }
 function wp4Target(p) {
   if (!STORY || P.taming) return null;
-  if (P.ride) return { label: `Dismount${S.horse ? ' ' + hName() : ''}`, key: true, act() { if (eTap) dismount(); } };
+  if (P.ride) return { label: `Dismount${S.horse ? ' ' + hName() : ''}`, key: true, act() { if (eTap) dismountStart(); } };   // WH: slides down
   let o = null, bd = 3;
   for (const a of animals) {
     if (!a.horse || a.state !== 'live' || a.foal) continue;
@@ -599,13 +677,11 @@ function wp4Target(p) {
     if (d < bd) { bd = d; o = a; }
   }
   if (!o) return null;
-  if (o.tame) {
+  if (o.tame) {                                     // WH: tap E rides; hold E feeds her (once a day) when there is food
     if (bd > 2.6) return null;
-    const f = horseFood();
-    if (f && S.horse && S.horse.fedDay !== S.day) return { label: `Feed ${hName()} (${f === 'grain' ? '2 grain' : '3 berries'})`, key: true, act() {
-      S.inv[f] -= f === 'grain' ? 2 : 3; drawInv(); S.horse.fedDay = S.day; addBond(10); o.a.play('Eating', true); o.stun = 2; showHeart({ ...o, trust: 3 }); toast(`${hName()} eats from your hand`);
-    } };
-    return { label: `Ride ${hName()}`, key: true, act() { if (eTap) mount(o); } };
+    const f = horseFood(), hungry = !!(f && S.horse && S.horse.fedDay !== S.day);
+    return { label: `Ride ${hName()}${hungry ? ` <span style="opacity:.75;font-size:.86em">· hold E to feed her (${f === 'grain' ? '2 grain' : '3 berries'})</span>` : ''}`, key: true, horse: o, dist: bd,
+      act() { if (!eTap) return; if (hungry) horseE = { o, f, t0: clock }; else mount(o, true); } };
   }
   if (o.foal || S.horse || bd > 2.8) return null;
   if (!P.sneak) return { label: 'Sneak (C) to come closer to the wild horse' };
@@ -613,6 +689,19 @@ function wp4Target(p) {
   const f = horseFood();
   if (!f) return { label: 'Bring 2 grain or 3 berries to offer her' };
   return { label: f === 'grain' ? 'Offer grain' : 'Offer berries', key: true, act() { offerFood(o, f); } };
+}
+// WH: the E press on the tame horse resolves here (updateHorses): released before 0.45 s rides, held feeds.
+let horseE = null;
+function horseETick() {
+  const he = horseE; if (!he) return;
+  if (P.ride || busy || target?.horse !== he.o) { horseE = null; return; }
+  if (!keys.KeyE) { horseE = null; mount(he.o, true); }
+  else if (clock - he.t0 >= 0.45) { horseE = null; feedHorse(he.o, he.f); }
+}
+function feedHorse(o, f) {
+  S.inv[f] -= f === 'grain' ? 2 : 3; drawInv(); S.horse.fedDay = S.day; addBond(10);
+  o.a.play('Eating', true); o.stun = 4.5; o.speed = 0; o.call = false;          // she stands and eats; still there for the ride after
+  o.dir = o.root.rotation.y; P.h.swing(); showHeart({ ...o, trust: 3 }); toast(`${hName()} eats from your hand`); A.tone(740, 0.3, 0.06);
 }
 function refuse(o, why) {
   P.hv = 0;
@@ -632,7 +721,8 @@ function updateRide(dt, mx, mz) {
     return;
   }
   S.stam = clamp(S.stam + dt * 18 * (S.rested > 0 ? 1.5 : 1), 0, 100);   // sitting on the horse: like standing still
-  const can = !menuOpen && !busy, saddle = !!S.tools.saddle, shift = keys.ShiftLeft || keys.ShiftRight;
+  const can = !menuOpen && !busy && !rideBusy(), saddle = !!S.tools.saddle, shift = keys.ShiftLeft || keys.ShiftRight;   // WH: no steering while climbing on or off
+  if (P.tr && !P.tr.on) P.hv *= Math.max(0, 1 - dt * 6);                       // WH: she stops under him as he slides down
   const fwd = Math.max(mz, 0), steer = can && (mx || fwd);
   wHeld = steer ? wHeld + dt : 0;
   let want = 0;
@@ -678,7 +768,7 @@ function updateRide(dt, mx, mz) {
   o.root.position.copy(P.pos); o.root.rotation.y = P.face;
   hIdle = v < 0.3 ? hIdle + dt : 0;
   if (!o.a.busy) {
-    if (v < 0.3) o.a.play(hIdle > 8 ? 'Eating' : 'Idle');
+    if (v < 0.3) o.a.play('Idle');                 // WH: a ridden horse keeps her head up (no grazing under the rider)
     else if (v < 3.5) o.a.play('Walk', false, P.hv / 2.2);
     else if (v < 7) o.a.play('Gallop', false, 0.55);
     else o.a.play('Gallop', false, v / 13 + 0.2);
@@ -690,17 +780,19 @@ function updateRide(dt, mx, mz) {
   wpnUpdate(dt);                                   // WPN stow, aim and throw from the saddle
   settle(P, dt, false);
   useCool -= dt;
-  target = busy || menuOpen ? null : findTarget();
+  target = busy || menuOpen || rideBusy() ? null : findTarget();
+  // WH: "Dismount" shows for a few seconds after mounting and again once she has stood still a moment; E always works
+  rideShowT = v < 0.3 ? (hIdle > 1.2 ? Math.max(rideShowT, 0.5) : rideShowT - dt) : rideShowT - dt;
   const pr = $('prompt');
-  if (target) { pr.style.display = 'block'; pr.innerHTML = (target.key ? '<kbd>E</kbd> ' : '') + target.label; } else pr.style.display = 'none';
+  if (target && rideShowT > 0) { pr.style.display = 'block'; pr.innerHTML = (target.key ? '<kbd>E</kbd> ' : '') + target.label; } else pr.style.display = 'none';
   const use = keys.KeyE || tapE; tapE = false;
   if (use && useCool <= 0 && !busy && !menuOpen && target?.act) { target.act(); useCool = Math.max(useCool, 0.42); drawQuest(); }
 }
 // Seat a rider: the pelvis goes onto the horse's back at the named bone; returns the saddle point.
-function seatOn(e, o, boneName, back) {
+function seatOn(e, o, boneName, back, up = 0) {
   o.root.updateMatrixWorld(true);
   o.a.bone(boneName).getWorldPosition(_hs);
-  _hs.y += 0.65 * o.a.model.scale.y + 0.1;          // the back surface (measured by raycast) is at Torso2 + 0.31; the hip joint sits 0.1 above it
+  _hs.y += 0.65 * o.a.model.scale.y + 0.1 + up;     // the back surface (measured by raycast) is at Torso2 + 0.31; the hip joint sits 0.1 above it
   _hs.x -= Math.sin(P.face) * back; _hs.z -= Math.cos(P.face) * back;
   const root = e.h.root;
   root.updateMatrixWorld(true);
@@ -711,6 +803,112 @@ function seatOn(e, o, boneName, back) {
   root.position.sub(_hp.sub(_hs)); root.updateMatrixWorld(true);
   e.seat = (e.seat || new THREE.Vector3()).copy(root.position); e.face = P.face;
   e.saddle = (e.saddle || new THREE.Vector3()).copy(_hs);
+}
+// ---------- WH: the riders' bodies ----------
+// Order 29 (before the WPN aim at 30, so a spear aim from the saddle still owns the arms). Targets are in each rider's
+// own frame (root: +x left, +y up, +z forward), measured from the hip joints and the pelvis, so they stay on the horse
+// whatever the gait does to the seat: legs straddle the barrel (feet down the ribs, knees forward and out), the body
+// leans into the pace and rocks with the stride, Aro's fists hold the reins over the withers (unless a weapon or the lit
+// torch has that hand), Sena's hands rest on Aro's hips. rideW (0..1) blends it in and out with the mount motion.
+const RIDE_SEAT = { P: { back: -0.18, up: 0 }, N: { back: 0.24, up: 0.035 } };   // along the back from Torso2 (+ = toward the tail)
+const _rA = new THREE.Vector3(), _rB = new THREE.Vector3(), _rC = new THREE.Vector3(), _rL = new THREE.Vector3();
+function riderOverride(e) {
+  return (h, dt) => {
+    const on = e === P ? !!P.ride && !P.taming : !!N.ride;
+    const w = on ? clamp(e.rideW ?? 1, 0, 1) : 0;
+    if (!(w > 0.01) || !h.legIK) return;
+    const root = h.root, b = h.bones, v = Math.abs(P.hv || 0), g = clamp(v / 13, 0, 1), trot = clamp((v - 2.5) / 3, 0, 1);
+    e.ridePh = ((e.ridePh || 0) + (dt || 0) * 6.283 * (v < 0.3 ? 0.25 : 0.7 + v * 0.13)) % 6.283;
+    const ph = e.ridePh, sn = Math.sin(ph), s2 = Math.sin(ph * 2);
+    root.updateMatrixWorld(true);
+    _rL.set(1, 0, 0).transformDirection(root.matrixWorld);                       // the rider's left: the pitch axis
+    const lean = ((e === N ? 0.16 : 0.07) + 0.2 * g + 0.035 * trot * s2) * w;
+    rotW(b.spine_01, _rL, lean * 0.6); rotW(b.spine_02, _rL, lean * 0.4);
+    yawBone(b.spine_01, sn * 0.05 * (0.3 + g) * w);                              // the hips follow the stride
+    rotW(b.neck_01, _rL, -lean * 0.75);                                          // eyes stay on the road
+    const leg = b.thigh_l.getWorldPosition(_rA).distanceTo(b.calf_l.getWorldPosition(_rB)) + _rB.distanceTo(b.foot_l.getWorldPosition(_rC));
+    for (const sd of ['l', 'r']) {
+      const s = sd === 'l' ? 1 : -1;
+      root.worldToLocal(b['thigh_' + sd].getWorldPosition(_rA));
+      _rB.set(_rA.x + s * 0.2 * leg / 0.9, _rA.y - 0.74 * leg / 0.9 + 0.02 * sn * trot, _rA.z + 0.04 + 0.03 * sn * g);
+      _rC.set(_rA.x + s * 0.55, _rA.y - 0.3, _rA.z + 1);
+      ikLeg(h, sd, root.localToWorld(_rB), root.localToWorld(_rC), w);
+      const ft = b['foot_' + sd]; ft.rotateX(-0.25 * w);                         // heels a little down
+    }
+    root.worldToLocal(b.pelvis.getWorldPosition(_rA));
+    const py = _rA.y, pz = _rA.z;
+    if (e === P) {
+      const busyR = W.aimW > 0.02 || (W.held && W.held !== 'fists' && W.st !== 'sheathed'), busyL = W.aimW > 0.02 || torchOn || W.torchW > 0.05;
+      for (const sd of ['l', 'r']) {
+        if (sd === 'r' ? busyR : busyL) continue;
+        const s = sd === 'l' ? 1 : -1;
+        _rB.set(s * 0.11, py + 0.27 + 0.02 * s2 * trot, pz + 0.33 + 0.05 * g + 0.025 * sn * (0.3 + g));
+        _rC.set(s * 0.5, py + 0.02, pz - 0.3);
+        ik2(h, sd, root.localToWorld(_rB), root.localToWorld(_rC), w);
+        applyPose(h, h.fist[sd], w);
+      }
+    } else if (P.h && P.ride) {                                                  // Sena: hands on Aro's hips
+      const pr = P.h.root; pr.updateMatrixWorld(true);
+      for (const sd of ['l', 'r']) {
+        const s = sd === 'l' ? 1 : -1;
+        pr.worldToLocal(P.h.bones.spine_01.getWorldPosition(_rB));
+        _rB.x += s * 0.15; _rB.y += 0.02; _rB.z -= 0.02;
+        pr.localToWorld(_rB);
+        _rC.set(s * 0.45, py - 0.05, pz + 0.05);
+        ik2(h, sd, _rB, root.localToWorld(_rC), w);
+      }
+    }
+  };
+}
+P.h.addOverride('ride', 29, riderOverride(P)); N.h.addOverride('ride', 29, riderOverride(N));
+// ---------- WH: tack (S.tools.saddle): a hide pad on a woven blanket with a girth, a rope bridle and reins ----------
+// The group follows the tame horse's Torso2 bone (about the barrel's centre line) with the back's pitch; the barrel is
+// an ellipse of half width 0.27 and half height 0.36 there (raycast). Reins run from Aro's fists to the bit while he rides.
+const tack = (() => {
+  const g = new THREE.Group(); g.visible = false;
+  const hide = new THREE.MeshStandardMaterial({ color: 0x80593a, roughness: 0.92, side: THREE.DoubleSide });
+  const weave = new THREE.MeshStandardMaterial({ color: 0x6e3b2a, roughness: 1, side: THREE.DoubleSide });
+  const rope = new THREE.MeshStandardMaterial({ color: 0x9a8258, roughness: 1 });
+  const shell = (len, th, mat, sx, sy, z) => {
+    const geo = new THREE.CylinderGeometry(1, 1, len, 24, 1, true, -th / 2, th); geo.rotateX(-Math.PI / 2);
+    const m = new THREE.Mesh(geo, mat); m.scale.set(sx, sy, 1); m.position.z = z; m.castShadow = true; g.add(m); return m;
+  };
+  shell(0.82, 2.0, weave, 0.278, 0.368, 0.1);                                    // blanket (under both seats)
+  shell(0.5, 1.7, hide, 0.29, 0.38, 0.17);                                       // pad under Aro
+  const girth = new THREE.Mesh(new THREE.CylinderGeometry(1, 1, 0.055, 24, 1, true), weave);
+  girth.geometry.rotateX(-Math.PI / 2); girth.scale.set(0.282, 0.372, 1); girth.position.set(0, 0, 0.3); g.add(girth);
+  const rein = () => { const m = new THREE.Mesh(new THREE.CylinderGeometry(0.009, 0.009, 1, 5), rope); m.geometry.translate(0, 0.5, 0); m.geometry.rotateX(Math.PI / 2); m.visible = false; scene.add(m); return m; };
+  const nose = new THREE.Mesh(new THREE.TorusGeometry(1, 0.1, 5, 14), rope); nose.visible = false; scene.add(nose);
+  scene.add(g);
+  return { g, reins: [rein(), rein()], nose };
+})();
+// Head-bone-local noseband (centre, orientation, radius) and bit point; measured on the Quaternius horse (G.tackFit).
+const TACK_NOSE = { p: new THREE.Vector3(0, 0.62, 0.3), q: new THREE.Quaternion(), r: 0.075, bit: new THREE.Vector3(0, 0.62, 0.42) };
+const _tq = new THREE.Quaternion(), _tm = new THREE.Matrix4(), _tF = new THREE.Vector3(), _tB = new THREE.Vector3(), _tU = new THREE.Vector3();
+function updateTack(th) {
+  const on = !!(th && S.tools.saddle && th.root.visible && th.state === 'live');
+  tack.g.visible = on; tack.nose.visible = on;
+  if (!on) { tack.reins.forEach((r) => (r.visible = false)); return; }
+  th.root.updateMatrixWorld(true);
+  th.a.bone('Torso3').getWorldPosition(_tF); th.a.bone('Torso').getWorldPosition(_tB);
+  _tF.sub(_tB).normalize();                                                      // along the back, tail to withers
+  _tU.set(0, 1, 0).addScaledVector(_tF, -_tF.y).normalize();
+  _tB.crossVectors(_tU, _tF);                                                    // the horse's left
+  _tm.makeBasis(_tB, _tU, _tF); tack.g.quaternion.setFromRotationMatrix(_tm);
+  th.a.bone('Torso2').getWorldPosition(tack.g.position);
+  // bridle: a rope noseband round the muzzle (Head bone frame, measured), the bit at its front
+  const hd = th.a.bone('Head'); hd.updateWorldMatrix(true, false);
+  hd.localToWorld(tack.nose.position.copy(TACK_NOSE.p));
+  hd.getWorldQuaternion(_tq); tack.nose.quaternion.copy(_tq).multiply(TACK_NOSE.q); tack.nose.scale.setScalar(TACK_NOSE.r);
+  const riding = P.ride === th && !P.taming && (P.rideW ?? 1) > 0.6;
+  tack.reins.forEach((r, i) => {
+    const hand = P.h.bones[i ? 'hand_r' : 'hand_l'];
+    r.visible = riding && !(i ? W.aimW > 0.02 || (W.held && W.held !== 'fists' && W.st !== 'sheathed') : W.aimW > 0.02 || torchOn || W.torchW > 0.05);
+    if (!r.visible) return;
+    hand.localToWorld(_rA.set(i ? -0.03 : 0.03, 0.09, 0));                       // through the fist
+    hd.localToWorld(_rB.copy(TACK_NOSE.bit)); _rB.addScaledVector(_tB, i ? -TACK_NOSE.r : TACK_NOSE.r);
+    r.position.copy(_rA); r.lookAt(_rB); r.scale.set(1, 1, _rA.distanceTo(_rB));
+  });
 }
 // After the animals loop: the herd's wandering, the heart, the riders' seats, kicks, the 0.5 s tick.
 function updateHorses(dt) {
@@ -730,11 +928,19 @@ function updateHorses(dt) {
   const o = P.ride;
   if (o) {
     if (P.taming) { o.root.updateMatrixWorld(true); }
-    seatOn(P, o, 'Torso2', 0); P.h.pose = 'ride';
-    if (N.ride) { seatOn(N, o, 'Torso', 0.15); N.h.pose = 'sit'; N.h.straddle = true; N.pos.copy(P.pos); }
+    const sp = S.tools.saddle ? 0.03 : 0;                                         // WH: the pad lifts the seat a little
+    seatOn(P, o, 'Torso2', RIDE_SEAT.P.back, RIDE_SEAT.P.up + sp); if (!(P.tr && !P.tr.on)) P.h.pose = 'ride';
+    if (P.taming) P.h.legIK = false; else if (!P.tr) { P.h.legIK = true; P.rideW = 1; }
+    rideTrans(P, dt);
+    if (N.ride) {
+      seatOn(N, o, 'Torso2', RIDE_SEAT.N.back, RIDE_SEAT.N.up + sp); if (!(N.tr && !N.tr.on)) N.h.pose = 'ride'; N.h.straddle = true; N.pos.copy(P.pos);
+      if (!N.tr) { N.h.legIK = true; N.rideW = 1; }
+      rideTrans(N, dt);
+    }
     if (S.horse) $('b-horse').style.width = (S.horse.stam / hMaxStam() * 100) + '%';
   }
   const th = tameHorse();
+  updateTack(th); horseETick();                      // WH saddle, bridle, reins; tap/hold E on the horse
   if (th) {
     kickCool -= dt;
     const hp = th.root.position, f = th.root.rotation.y;
@@ -784,7 +990,16 @@ function wp4Load() {
   if (reached('herd')) spawnWildHerd();
 }
 function remove(o) { if (proj.m.parent === o.root) wpnDropSpear(o);   // WPN
-  scene.remove(o.root); const i = animals.indexOf(o); if (i >= 0) animals.splice(i, 1); }
+  scene.remove(o.root); const i = animals.indexOf(o); if (i >= 0) animals.splice(i, 1);
+  freeGpu(o.root); }
+// SAVE-PERF: a removed animal's per-instance GPU resources are released: each SkeletonUtils clone owns its skeleton's
+// bone texture and GORE clones its materials per instance. Geometry and textures from the GLTF are shared: kept.
+function freeGpu(root) {
+  const sk = new Set(), mats = new Set();
+  root.traverse((m) => { if (m.isSkinnedMesh && m.skeleton) sk.add(m.skeleton); if (m.isSkinnedMesh || m.isMesh && m.morphTargetInfluences) for (const x of [].concat(m.material)) if (x) mats.add(x); });
+  for (const s of sk) s.dispose();
+  for (const x of mats) x.dispose();
+}
 // Live wolves that are not leaving, within r of p (rest rules, auto-draw, auto-sheathe)
 function hostileNear(r, p = P.pos) { return animals.some((o) => (o.kind === 'wolf' || o.hostile) && o.state === 'live' && !o.leave && Math.hypot(o.root.position.x - p.x, o.root.position.z - p.z) < r)
   || foes.some((f) => f.live && !f.fled && Math.hypot(f.pos.x - p.x, f.pos.z - p.z) < r); }   // MAT: predators (o.hostile) and raiders (foes)
@@ -844,7 +1059,12 @@ function wolfBrain(o, dist, dx, dz, dt) {
   o.attacking = Math.max(0, (o.attacking || 0) - dt);
   if (o.pending > 0 && (o.pending -= dt) <= 0 && dist < 2.7 && !busy && !(P.ride && P.speed > 6)) {   // WP4: no bite at a gallop
     if (playerHurt({ dmg: 8, kind: 'bite', from: o }).applied) { A.hit(180, 0.3, 0.9); wpnBitten(); } }   // MAT playerHurt (6 -> 8 × dmgK); WPN shake
-  if (o.leave) { if (!o.avoid) o.dir = Math.atan2(dx, dz); if (dist > 95) remove(o); return 7; }
+  if (o.leave) {                                     // WH: dawn: away from Aro, back into the nearest pines
+    if (o.den === undefined) o.den = pineNear(p.x, p.z);
+    if (!o.avoid) o.dir = o.den && Math.hypot(o.den[0] - p.x, o.den[1] - p.z) > 6 && dist > 10 ? Math.atan2(o.den[0] - p.x, o.den[1] - p.z) : Math.atan2(dx, dz);
+    if (o.den && Math.hypot(o.den[0] - p.x, o.den[1] - p.z) <= 6) o.den = [o.den[0] + dx / (dist || 1) * 30, o.den[1] + dz / (dist || 1) * 30];   // deeper in, still away from him
+    if (dist > 95) remove(o); return 7;
+  }
   const safe = P.swim || torchOn || structs.some((s) => s.kind === 'fire' && s.rise >= 1 && Math.hypot(s.x - P.pos.x, s.z - P.pos.z) < 8);
   if (safe) {                               // fire and deep water keep them circling at a distance
     o.ang = (o.ang ?? Math.atan2(dx, dz)) + dt * 0.25;
@@ -918,6 +1138,31 @@ const rainGeo = new THREE.BufferGeometry();
 rainGeo.setAttribute('position', new THREE.BufferAttribute(rainPos, 3));
 const rain = new THREE.LineSegments(rainGeo, new THREE.LineBasicMaterial({ color: 0xb4c8d8, transparent: true, opacity: 0, depthWrite: false }));
 rain.frustumCulled = false; rain.visible = false; scene.add(rain);
+// WH: wolves live in the pine forest. A pack comes out of the trees: of 12 bearings, the one whose spawn point and the
+// line in toward Aro cross the most pine wins (a little randomness among near-equal ones); none at all falls back to a
+// random bearing. pineNear() is where a leaving wolf heads at dawn.
+function wolfBearing(cx, cz, r) {
+  let best = rand() * 6.283, bs = 0;
+  const a0 = rand() * 6.283;
+  for (let i = 0; i < 12; i++) {
+    const a = a0 + i * 0.5236, sx = Math.sin(a), sz = Math.cos(a);
+    let sc = 0;
+    for (const [k, wt] of [[1, 3], [0.85, 1.5], [1.2, 1.5], [0.65, 1], [0.45, 0.5]]) {
+      const x = cx + sx * r * k, z = cz + sz * r * k;
+      if (Math.abs(x) < LIMIT && Math.abs(z) < LIMIT && biomeAt(x, z) === 'pine') sc += wt;
+    }
+    sc += rand() * 0.4;
+    if (sc > bs) { bs = sc; best = a; }
+  }
+  return best;
+}
+function pineNear(x, z) {
+  for (let r = 20; r <= 120; r += 20) for (let i = 0; i < 10; i++) {
+    const a = i * 0.628 + r * 0.1, px = x + Math.sin(a) * r, pz = z + Math.cos(a) * r;
+    if (Math.abs(px) < LIMIT && Math.abs(pz) < LIMIT && biomeAt(px, pz) === 'pine') return [px, pz];
+  }
+  return null;
+}
 const EVENTS = {
   storm() {
     EV.storm = 75 + rand() * 45;
@@ -925,7 +1170,7 @@ const EVENTS = {
     say('Sena', 'The sky is turning. We should not be out in this.');
   },
   wolves() {
-    const n = MATD.packSize(D(), reached('house')), a = rand() * 6.283;   // MAT: pack size by difficulty (+1 after the house)
+    const n = MATD.packSize(D(), reached('house')), a = wolfBearing(P.pos.x, P.pos.z, 46);   // MAT: pack size by difficulty (+1 after the house); WH: out of the pines
     for (let i = 0; i < n; i++) { const [x, z] = landSpot(P.pos.x + Math.sin(a) * 46, P.pos.z + Math.cos(a) * 46, 0, 12); spawn('wolf', x, z); }
     PRED.pack(animals.slice(-n));                    // CMB: an alpha leads the pack after the house (always on Hardcore)
     banner('Wolves', 'A pack has caught your scent. Stay by the fire — or fight.');
@@ -1830,6 +2075,7 @@ function placeStruct(kind, x, z, rot, instant, grow, p) {
   } else st.stage?.(1);
   world.clear(x, z, st.radius + 0.4);
   for (const f of world.fields) for (const n of f.nodes) if (n.alive && Math.hypot(n.x - x, n.z - z) < st.radius + 0.6) { n.gone = true; f.set(n, false); }
+  for (const f of world.decor || []) for (const n of f.nodes) if (n.alive && Math.hypot(n.x - x, n.z - z) < st.radius + 0.5 + 0.8 * n.s) f.set(n, false);   // the berry bush bodies (and their colliders) go too
   return st;
 }
 let placing = null;
@@ -1889,7 +2135,12 @@ function applyHome() {
   const h = homeHouse();
   if (!h) return;
   h.setHome?.(S.home);
-  if (S.home.nursery && !h.annexCol) { const w = toWorld(h, [-4.8, 0, 0]); h.annexCol = addCollider({ x: w.x, z: w.z, r: 1.7 }); }
+  if (S.home.nursery && !h.annexCol) {
+    const w = toWorld(h, [-4.8, 0, 0]); h.annexCol = addCollider({ x: w.x, z: w.z, r: 1.7 });
+    world.clear(w.x, w.z, 2.4);                                                    // no grass through the nursery floor
+    for (const f of world.fields) for (const n of f.nodes) if (n.alive && Math.hypot(n.x - w.x, n.z - w.z) < 2.3) { n.gone = true; f.set(n, false); }
+    for (const f of world.decor || []) for (const n of f.nodes) if (n.alive && Math.hypot(n.x - w.x, n.z - w.z) < 2.4 + 0.8 * n.s) f.set(n, false);
+  }
 }
 function homeUpgrade(r) {
   const h = homeHouse();
@@ -2006,9 +2257,23 @@ function take(n) {
   n.field.set(n, false);
   if (NODE[n.field.kind]?.[2] || n.field.kind === 'tree') respawns.push({ n, at: clock + (NODE[n.field.kind]?.[2] ? matRespawnAt(n.field.kind) : 420) });   // MAT nodeK scarcity
 }
+// STORY: a horse standing by must not steal the fire, the hearth or the bed. Its prompt wins only when Aro faces it.
+function horseFaced(p) {
+  const fx = Math.sin(P.face), fz = Math.cos(P.face);
+  return animals.some((a) => {
+    if (!a.horse || a.state !== 'live') return false;
+    const dx = a.root.position.x - p.x, dz = a.root.position.z - p.z, d = Math.hypot(dx, dz);
+    return d < 3 && (d < 0.8 || (dx * fx + dz * fz) / d > 0.5);
+  });
+}
 function findTarget() {
   const p = P.pos;
-  const w4 = wp4Target(p); if (w4 || P.ride) return w4;   // WP4 horses: ride, feed, offer, tame; only "Dismount" while riding
+  const w4 = wp4Target(p); if (P.ride) return w4;     // WP4 horses: ride, feed, offer, tame; only "Dismount" while riding
+  if (w4 && horseFaced(p)) return w4;
+  const o = findOtherTarget(p);                       // STORY: sit with Sena, a meal, a revive or a story beat beats a horse he is not facing
+  return w4 && !o?.key ? w4 : o;
+}
+function findOtherTarget(p) {
   const wt = wpnTarget(p); if (wt) return wt;          // WPN take back the thrown spear
   const ct = cmbTarget(p); if (ct) return ct;          // CMB revive Sena, decide a surrender, finish
   let best = null, bd = 1e9;
@@ -2083,7 +2348,8 @@ function soakTogether() {
   const sp = LMK.spring, a = Math.atan2(P.pos.x - sp.x, P.pos.z - sp.z);
   const seat = (e, off) => {
     const x = sp.x + Math.sin(a + off) * 2.2, z = sp.z + Math.cos(a + off) * 2.2;
-    e.pos.set(x, sp.y + 0.2, z); e.seat = new THREE.Vector3(x, sp.y + 0.2, z); e.soak = true;
+    const y = (sp.water ?? sp.y + 0.6) - 0.86;                                     // pelvis ~0.3 m under the surface, shoulders above
+    e.pos.set(x, y, z); e.seat = new THREE.Vector3(x, y, z); e.soak = true;
     e.face = Math.atan2(sp.x - x, sp.z - z); e.sit = 8; e.vx = e.vz = 0;
   };
   seat(P, 0); seat(N, 0.45);
@@ -2200,7 +2466,7 @@ function structTarget(s) {
     case 'kiln':
       if (S.inv.clay >= 2 && S.inv.wood >= 1) return t('Fire bricks (2 clay + 1 timber)', () => { S.inv.clay -= 2; S.inv.wood--; s.heat = 1; give('brick', 4); A.hit(180, 0.7, 0.5); });
       return t('Kiln — needs 2 clay and 1 timber');
-    case 'hut': case 'house': return rstPrompt(s, t);   // RST rest menu (rules: wolves, just woke, nap by day)
+    case 'hut': case 'house': return (s.kind === 'house' && hearthTarget(s, t)) || rstPrompt(s, t);   // STORY: sit by the hearth first, then rest   // RST rest menu (rules: wolves, just woke, nap by day)
     // WP2 placeables
     case 'rack': return survRack(s, t);              // SURV: dried meat that never spoils; 3 game hours on Survivor/Hardcore, rain stops it
     case 'basket': return survBasket(s, t);          // SURV: food ages travel with it (spoils x0.5, x0.35 in a cave)
@@ -2251,9 +2517,142 @@ function sitTogether(s) {
 function endSit(e) {
   e.sit = 0;
   if (e === P) wpnUnSit();                           // WPN the spear back on the back
+  if (e.floorSit) {                                  // STORY hearth: she keeps her place by the hearth; else ease up off the floor (no chair clip)
+    if (e === N && N.hearth?.phase === 'sit') return;
+    e.floorSit = 0; e.seat = null; e.hearthSeat = false;
+    if (e.h.pose === 'sit' || e.h.pose === 'sitTalk') { e.h.pose = null; e.h.swing('standUp'); }   // the root rises with fsW
+    return;
+  }
   if (e.h.pose !== 'sit' && e.h.pose !== 'sitTalk') return;
   e.h.pose = null; e.h.swing('standUp');
   if (e.fire) { const a = Math.atan2(e.pos.x - e.fire[0], e.pos.z - e.fire[1]); e.pos.x += Math.sin(a) * 0.5; e.pos.z += Math.cos(a) * 0.5; e.fire = null; }   // stand clear of the bench log
+}
+// ---------- STORY hearth: Sena's evenings by the hearth, and "Sit with Sena by the hearth" ----------
+// Two floor seats on an arc 1.65 m from the hearth (house-local; the hearth is at 1.9, -1.2), both facing it: Aro on the
+// room side, Sena toward the bed. The floor sit is the chair-sit clip with the legs stretched toward the fire (an override)
+// and the root lowered onto the planks; it eases in and out (fsW), so nobody snaps onto or off the floor.
+const HEARTH_SEATS = [[0.79, 0.02], [0.32, -0.72]], FS = { drop: 0.45, hip: 0.32, knee: 1.0 };
+const _fsA = new THREE.Vector3();
+function floorSitOverride(e) {
+  return (h) => {
+    const w = smooth01(e.fsW || 0);
+    if (!(w > 0)) return;
+    const b = h.bones, yaw = h.root.rotation.y;
+    _fsA.set(Math.cos(yaw), 0, -Math.sin(yaw));
+    for (const sd of ['l', 'r']) { rotW(b['thigh_' + sd], _fsA, -FS.hip * w); rotW(b['calf_' + sd], _fsA, -FS.knee * w); }
+  };
+}
+function floorSitEase(e, dt) {
+  if (!e.fsOv) { e.fsOv = true; e.h.addOverride('floorSit', 12, floorSitOverride(e)); }
+  e.fsW = clamp((e.fsW || 0) + (e.floorSit && e.seat ? dt : -dt) / 0.55, 0, 1);
+}
+const hearthHouse = () => { const h = S.home.hearth && homeHouse(); return h && h.rise >= 1 ? h : null; };
+const hearthSeat = (h, i) => { const v = toWorld(h, [HEARTH_SEATS[i][0], 0, HEARTH_SEATS[i][1]]); v.y = h.group.position.y + 0.19; return v; };
+const hearthFace = (h, v) => { const c = h.hearthW ??= toWorld(h, h.hearthPt); return Math.atan2(c.x - v.x, c.z - v.z); };
+const hearthEve = () => (S.time < 6 ? S.day - 1 : S.day);                  // the evening a late-night hour belongs to
+const hearthNight = () => S.time >= 19 || S.time < 5.5;
+// a floor sit: the seat point, facing the hearth, the sit pose (the root lowering and the legs come from fsW in settle)
+function hearthPlace(e, h, i) {
+  const v = hearthSeat(h, i);
+  e.pos.set(v.x, 0, v.z); e.seat = v; e.face = hearthFace(h, v); e.vx = e.vz = 0; e.speed = 0; e.path = null;
+  e.floorSit = 1; e.hearthSeat = true; e.fire = null;
+  e.h.pose = e === N && N.h.has('sitTalk') && P.sit > 0 ? 'sitTalk' : 'sit';
+}
+const HEARTH_LINES = [
+  [['Sena', 'Come, sit. The fire is warmest right here.'], ['Aro', 'Our own fire, under our own roof.']],
+  [['Sena', 'Listen to it crackle. Like the first fire by the river, only it never rains on this one.']],
+  [['Sena', 'When the little one comes, we will sit here, all three of us.'], ['Aro', 'And I will tell her how we made the first fire.']],
+  [['Sena', 'Warm hands, a full belly, and you. I have everything.']],
+];
+// E target at the home house: offered while Sena sits by the hearth, or in the evening with her close, once per evening
+// (so the rest prompt comes back for the night); never from beside the bed when he is already inside.
+function hearthTarget(s, t) {
+  const h = hearthHouse();
+  if (!h || s !== h || busy || P.ride || N.ride || romApart()) return null;
+  const by = N.hearth?.phase === 'sit', near = Math.hypot(N.pos.x - h.x, N.pos.z - h.z) < 15 && nFreeish();
+  if (!(by || (near && S.time >= 17 && S.time < 23.5))) return null;
+  if (S.c.hearthEve === hearthEve() && !by) return null;
+  if (S.c.hearthEve === hearthEve() && rstNight()) return null;            // already sat tonight: E rests instead
+  if (R.inside === h) { const [x, z] = rstLocal(h, P.pos); if (Math.hypot(x + 0.9, z + 1.25) < Math.hypot(x - 1.9, z + 1.2)) return null; }
+  return t('Sit with Sena by the hearth', () => hearthSitTogether(h));
+}
+const nFreeish = () => !(N.rest > 0) && !N.working && !(N.downed > 0) && !N.soak && !N.ride;
+function hearthSitTogether(h) {
+  if (busy || P.ride) return;
+  dipCut();                                                                // a quick fade from black hides the step inside
+  N.hearth = { phase: 'sit', t: 0 }; N.node = null; N.act = 0; N.working = false; N.workSite = null; N.dance = 0;
+  hearthPlace(P, h, 0); hearthPlace(N, h, 1);
+  P.auto = false; P.sneak = false; P.sit = N.sit = 10; P.sitT = 0;
+  R.inside = h; if (h.col) h.col.off = true;                               // he stands up inside and leaves by the door (rstInside)
+  wpnStowAll('sit', true);
+  if (hasSpear() && !W.spearOut && !W.props) {                             // the spear lies on the planks beside him
+    const sp = P.h.spear, sv = P.seat.clone().addScaledVector(_fsA.set(Math.cos(P.face), 0, -Math.sin(P.face)), -0.55);
+    scene.attach(sp); sp.scale.setScalar(1); sp.position.set(sv.x, sv.y + 0.03, sv.z); sp.rotation.set(Math.PI / 2, P.face, 0, 'YXZ');
+    W.benchSpear = true;
+  }
+  N.h.pose = N.h.has('sitTalk') ? 'sitTalk' : 'sit';
+  if (view !== 'fpp') { const c = h.hearthW; camYaw = Math.atan2(P.pos.x - c.x, P.pos.z - c.z) - 0.55; camPitch = 0.32; }   // over his shoulder: the fire and her face
+  const L = HEARTH_LINES[cnt('sat_hearth') % HEARTH_LINES.length];
+  L.forEach((l) => say(...l));
+  S.time = (S.time + 1) % 24; S.c.hearthEve = hearthEve();
+  if (S.c.hearthDay !== S.day) { S.c.hearthDay = S.day; addClose(3, 'sat by the hearth'); }
+  bump('sat_hearth'); drawQuest();
+}
+function dipCut() {
+  const el = $('restdip');
+  el.style.transition = 'none'; el.classList.add('on'); void el.offsetWidth;
+  el.style.transition = 'opacity 0.45s'; setTimeout(() => { el.classList.remove('on'); setTimeout(() => { el.style.transition = ''; }, 500); }, 90);
+}
+// Sena's evening at home (updateSena): at night, with the hearth built and Aro within 40 m of the house, she goes in by the
+// door, sits on her side of the hearth and stays until morning, until he is far away, or until the rest takes her to bed.
+// Inside, her feet stand on the floor (jy) and she walks a fixed path (the house collider is solid from outside).
+function senaHearth(dt) {
+  const h = hearthHouse(), H = N.hearth;
+  const want = h && hearthNight() && Math.hypot(P.pos.x - h.x, P.pos.z - h.z) < 40 && !N.fetch && !romApart();
+  if (!H) {
+    if (!want || !nFree()) return false;
+    N.hearth = { phase: 'go', t: 0 }; N.node = null; N.act = 0;
+    return senaHearth(dt);
+  }
+  H.t += dt;
+  const out = toWorld(h || { x: N.pos.x, z: N.pos.z, rot: 0 }, [0, 0, 4.25]);
+  if (!h) { N.hearth = null; N.floorSit = 0; N.seat = null; N.jy = 0; return false; }
+  if (!want && H.phase !== 'out') {                                        // morning, or Aro walked off: up and out by the door
+    if (H.phase === 'go') { N.hearth = null; return false; }
+    N.floorSit = 0; N.seat = null; N.hearthSeat = false; if (N.h.pose === 'sit' || N.h.pose === 'sitTalk') N.h.pose = null;
+    Object.assign(H, { phase: 'out', t: 0, up: 0.6 });
+    N.path = [toWorld(h, [0, 0, 1.7]), toWorld(h, [0, 0, 3.4]), out];
+  }
+  const floorY = h.group.position.y + 0.19;
+  const inJy = () => { N.jy = rstIn(h, N.pos) ? floorY - getHeight(N.pos.x, N.pos.z) : 0; };
+  if (H.phase === 'go') {                                                  // to the doorstep (outside the walls' collider)
+    const d = Math.hypot(out.x - N.pos.x, out.z - N.pos.z);
+    if (walkTo(N, out.x, out.z, d > 12 ? 6.6 : 3.2, dt, 0.35) || H.t > 25) {
+      if (H.t > 25) N.pos.set(out.x, 0, out.z);
+      Object.assign(H, { phase: 'in', t: 0 }); N.path = [toWorld(h, [0, 0, 3.4]), toWorld(h, [0, 0, 1.7]), toWorld(h, [HEARTH_SEATS[1][0] - 0.25, 0, HEARTH_SEATS[1][1] + 0.55]), hearthSeat(h, 1)];
+    }
+    N.jy = 0;
+  } else if (H.phase === 'in') {
+    if (rstWalk(N, dt, 1.5) || H.t > 12) {
+      hearthPlace(N, h, 1); H.phase = 'sit'; H.t = 0; N.jy = 0;
+      if (S.c.hearthLine !== hearthEve() && Math.hypot(P.pos.x - h.x, P.pos.z - h.z) < 25) { S.c.hearthLine = hearthEve(); say('Sena', ['I have the fire going. Come in when you are ready.', 'Come and sit with me by the hearth, Aro.'][cnt('hearth_eve') % 2]); bump('hearth_eve'); }
+    } else inJy();
+  } else if (H.phase === 'sit') {
+    N.speed = 0;
+    if (!N.seat) hearthPlace(N, h, 1);
+    if (!(N.sit > 0) && N.h.pose !== 'sit') N.h.pose = 'sit';
+  } else if (H.phase === 'out') {
+    if ((H.up -= dt) > 0) { N.speed = 0; N.jy = floorY - getHeight(N.pos.x, N.pos.z); return true; }   // getting up off the floor first
+    if (rstWalk(N, dt, 1.6) || H.t > 12) { N.hearth = null; N.jy = 0; N.path = null; N.speed = 0; N.wait = 2; return false; }
+    inJy();
+  }
+  return true;
+}
+// Leave the hearth state cleanly when something else takes Sena (the rest, a scene, a fight, a rescue).
+function senaHearthDrop() {
+  if (!N.hearth) return;
+  N.hearth = null; N.hearthSeat = false; N.floorSit = 0; N.seat = null; N.jy = 0; N.path = null;
+  if (N.h.pose === 'sit' || N.h.pose === 'sitTalk') N.h.pose = null;
 }
 const MEAL_LINES = ['Mm. It tastes better when we share it.', 'Here, you take the bigger half. You worked harder today.', 'Eat slowly, Aro. The day is not going anywhere.', 'Thank you. Sit with me while we eat.'];
 function shareMeal(k) {
@@ -2330,7 +2729,7 @@ const RST_LAY = {
 };
 // Pose tuning (G.restTune live-edits it): legs blend toward the standing legs (less splay), knee bend, head turn,
 // Aro's small roll toward Sena, Sena's roll onto her side and her curled legs ([down leg, upper leg]).
-const RT = { legIdle: 0.5, hip: 0.12, knee: 0.3, turn: 0.45, rollA: 0.12, rollN: 1.42, sHip: [0.45, 1.25], sKnee: [0.6, 1.35], sHead: 0.22, sAdd: 0.85,
+const RT = { legIdle: 0.5, hip: 0.12, knee: 0.3, turn: 0.45, rollA: 0.12, rollN: 1.42, sHip: [0.4, 0.8], sKnee: [0.6, 1.1], sHead: 0.22, sAdd: 0.85,
   hold: [0.1, 0.07, 0.57], belly: [0.11, 0.06, -0.03], cheek: [0.1, 0.02, 0.1], breathe: 0.03, ankle: 0.065 };
 const RST_LEGS = (b) => /^(thigh|calf|foot|ball)_/.test(b), _V_UP = new THREE.Vector3(0, 1, 0);
 const DREAM = {
@@ -2348,6 +2747,7 @@ const DREAM = {
   village: [['Sena', '…so many fires in the valley now…'], ['Aro', '(From one fire, all of this.)']],
 };
 const APART = ['You didn\'t come home last night. I kept the fire going for you.', 'Next time, sleep where I can hear you breathing.'];
+const APART_HOME = ['I couldn\'t get back before dark. Was the bed cold without me?', 'I was too far from home when the night came. I missed you, Aro.'];   // STORY: Aro slept at home, Sena was away
 const WOLF_LINE = 'Not now — I can hear them out there.', FIRST_HOME = 'Our own bed, under our own roof. I could stay like this until the snow melts.';
 const rstNight = () => S.time >= 18 || S.time < 5.5;
 const rstKind = (s) => (s.kind === 'house' && !S.home.bed ? 'houseFloor' : s.kind);
@@ -2689,23 +3089,23 @@ function rstProps(L) {
 // Shape the blanket over the sleepers' hips and legs (from the waist down), centred between them and aligned to the bed.
 const DRAPE_BONES = [['spine_01', 0.13], ['pelvis', 0.15], ['thigh_l', 0.11], ['thigh_r', 0.11], ['calf_l', 0.09], ['calf_r', 0.09], ['foot_l', 0.08], ['foot_r', 0.08], ['ball_l', 0.07], ['ball_r', 0.07], ['ball_leaf_l', 0.06], ['ball_leaf_r', 0.06]];
 const DRAPE_MIDS = [['thigh_l', 'calf_l', 0.1], ['thigh_r', 'calf_r', 0.1], ['calf_l', 'foot_l', 0.085], ['calf_r', 'foot_r', 0.085]];
-const _dp = [];
+const _dp = [], DRAPE_CAP = 0.24;                  // STORY: the cover lies over bent knees, it never stands up in a hump
 function rstDrape(k) {
   const L = R.L, bl = R.blanket;
   if (!L || !bl) return;
   const D = L.D, solo = !R.together, [bw, bl2, bz] = D.bed;
   const x0 = solo ? D.solo[0] : (D.head[0][0] + D.head[1][0]) / 2, bx = (D.head[0][0] + D.head[1][0]) / 2;   // blanket centre, bed centre
-  const wid = solo ? 1.05 : bw + 0.34, zTop = D.head[0][1] + 0.5, zEnd = bz + bl2 / 2 + 0.16;
+  const wid = solo ? 1.05 : bw + 0.34, zTop = D.head[0][1] + 0.72, zEnd = bz + bl2 / 2 + 0.16;
   const drop = Math.min(0.42, D.mat - D.floor - 0.01);                                                        // how far the edges hang
   bl.position.copy(W2(L, [x0, (zTop + zEnd) / 2], L.matY)); bl.rotation.y = L.yaw; bl.scale.set(wid, 1, zEnd - zTop);
   bl.updateMatrixWorld(true);
   _dp.length = 0;
   if (k > 0) for (const e of R.together ? [P, N] : [P]) {
     if (!e.lie) continue;
-    for (const [n, r] of DRAPE_BONES) { const v = e.h.bones[n].getWorldPosition(_re); _dp.push([v.x, v.z, v.y - L.matY + r, r]); }
+    for (const [n, r] of DRAPE_BONES) { const v = e.h.bones[n].getWorldPosition(_re); _dp.push([v.x, v.z, Math.min(DRAPE_CAP, v.y - L.matY + r), r]); }
     for (const [a, b2, r] of DRAPE_MIDS) {
       const va = e.h.bones[a].getWorldPosition(_re), vb = e.h.bones[b2].getWorldPosition(_rf).add(va).multiplyScalar(0.5);
-      _dp.push([vb.x, vb.z, vb.y - L.matY + r, r]);
+      _dp.push([vb.x, vb.z, Math.min(DRAPE_CAP, vb.y - L.matY + r), r]);
     }
   }
   for (const c of kids) if (c.rest > 0 && R.kidsIn) for (const n of ['pelvis', 'calf_l', 'calf_r', 'spine_02']) { const v = c.h.bones[n].getWorldPosition(_re); _dp.push([v.x, v.z, v.y - L.matY + 0.07, 0.08]); }
@@ -2798,6 +3198,7 @@ function rstBegin(s, mode = 'dawn', o = {}) {
   busy = true; cine(true); $('prompt').style.display = 'none';
   subs.length = 0; subT = 0; $('sub').classList.remove('on');                              // a clean slate for the night's lines
   P.restAt = N.restAt = s;
+  senaHearthDrop(); for (const e of [P, N]) { e.floorSit = 0; e.fsW = 0; e.hearthSeat = false; }   // STORY hearth: up off the floor and to bed
   for (const e of together ? [P, N] : [P]) {
     e.sit = 0; e.work = 0; e.dance = 0; e.h.pose = null; e.vx = e.vz = 0; e.seat = null; e.soak = false; e.h.straddle = false; e.stretch = -1; e.path = null; e.jy = 0;
     e.rest = 1;
@@ -3023,7 +3424,7 @@ function rstApply() {
       if (R.eve) addClose(1, 'a good evening together');
     } else if (S.c.napDay !== S.day) { S.c.napDay = S.day; addClose(1, 'a quiet rest together'); }
     if (dawn && typeof maybeBirth === 'function') { maybeBirth(); rstKids(R.L); }          // WP6: kids, and Lio's birth
-  } else if (dawn) S.c.apartDay = S.day;
+  } else if (dawn) { S.c.apartDay = S.day; S.c.apartHome = s === homeHouse() ? 1 : 0; }   // STORY: where Aro slept picks her line
   emit('rested', { hours: h, mode: R.mode, together: R.together, tier: dawn ? R.tier : null });   // MAT bus: SURV healing, ROM night, ARC vigil
   // save with everyone standing outside the door, so a reload never starts inside a solid hut or house
   const kp = P.pos.clone(), kn = N.pos.clone();
@@ -3090,6 +3491,7 @@ function rstAbort() {
   if (!R.on && !R.menu) { for (const e of [P, N]) if (e.lie) e.lie = false; return; }
   if (R.menu) { R.menu = false; $('restmenu').classList.remove('on'); }
   for (const e of [P, N]) { for (const id of ['lie', 'hold', 'breath', 'stretch']) e.h.removeOverride(id); e.lie = false; e.lieW = 0; e.stretch = -1; e.rest = 0; e.path = null; e.h.pose = null; }
+  if (R.on && !MAT.dead) busy = false;              // STORY: rstBegin took busy; an abort hands the controls back (permadeath keeps it)
   R.on = false; R.nOut = null; cine(false); if (!torchOn) torch.light.intensity = 0; senaTorch.root.visible = senaLit; $('restvig').classList.remove('on', 'warm'); $('restdip').classList.remove('on');
   if (R.s?.col) R.s.col.off = false;
   if (R.blanket) R.blanket.visible = false;
@@ -3114,13 +3516,34 @@ function rstTick(dt) {
   }
   if (!R.on && R.s && R.blanket?.visible && Math.hypot(P.pos.x - R.s.x, P.pos.z - R.s.z) > R.s.radius + 7) { R.blanket.visible = false; for (const p of R.props) p.visible = false; if (R.bedHide) R.bedHide.visible = true; }
   if (S.c.apartDay != null && !R.on && !busy && Math.hypot(N.pos.x - P.pos.x, N.pos.z - P.pos.z) < 6) {
-    say('Sena', APART[(S.c.apartDay | 0) % 2]); delete S.c.apartDay;
+    say('Sena', (S.c.apartHome ? APART_HOME : APART)[(S.c.apartDay | 0) % 2]); delete S.c.apartDay; delete S.c.apartHome;
   }
 }
 function rstLoad() {
   S.restTier ??= S.rested > 0 ? 'Well rested' : null;
   rstBuffT = 0;
-  for (const s of structs) if ((s.kind === 'hut' || s.kind === 'house') && s.rise >= 1 && rstIn(s, P.pos)) { R.inside = s; if (s.col) s.col.off = true; break; }
+  for (const s of structs) if ((s.kind === 'hut' || s.kind === 'house') && s.rise >= 1 && rstIn(s, P.pos)) {
+    R.inside = s; if (s.col) s.col.off = true;
+    camYaw = (s.rot || 0) + Math.PI; camPitch = 0.18;  // SAVE-PERF: loaded indoors, the camera looks across the room to the door, not into a corner
+    break;
+  }
+}
+// SAVE-PERF: a save written during a rest (the page closed mid-night) must not lose the night or reload with the
+// camera wedged in the bed corner: everyone is saved standing at the door, and an unfinished night is recorded
+// as restPend so start() plays the rest again from the door and skips straight to the morning.
+function rstSaveFix() {
+  if (!R.on || !R.L) { S.restPend = undefined; return; }
+  if (R.L.door) { const d = R.L.door[0]; S.px = d.x; S.pz = d.z; S.nx = d.x + R.L.right.x * 1.2; S.nz = d.z + R.L.right.z * 1.2; }
+  S.yaw = R.L.yaw + Math.PI; S.pitch = 0.18;
+  S.restPend = R.applied ? undefined : { mode: R.mode, t0: R.t0, day: R.dayDone ? S.day - 1 : S.day };   // the time-lapse replays from when they lay down
+}
+function rstResume() {                                 // start(): finish a night that a closed page interrupted
+  const p = S.restPend; S.restPend = undefined;
+  if (!p || !Number.isFinite(p.t0)) return;
+  S.gh = Math.max(0, S.gh - MATD.clockDelta(p.t0, S.time));   // undo the part of the night already played, so nothing counts twice
+  S.time = p.t0; S.day = p.day ?? S.day; MAT.lastT = S.time;
+  const s = rstNearest();
+  if (s && rstBegin(s, p.mode === 'nap' ? 'nap' : 'dawn', { force: true })) { S.c.restSeen = 1; R.skip = true; }
 }
 
 // The nearest finished hut or house (or the cave bed within 6 m) for G.rest / G.sleep.
@@ -4198,8 +4621,8 @@ function goreHooks() {
 const ROMP = ROMD.makePoses(THREE, ik2);
 const ROM = {
   // pose and camera tuning (G.rom.T live-edits it). lips/brow/cheek: points in each Head bone's local frame.
-  T: { handY: -0.12, handFwd: 0.08, handGap: 0.55, apart: 0.32, lean: 0.06, leanN: 0.02, kissLean: 0.05, headYaw: 0.35, headRoll: 0.1, pitchP: 0.18, pitchN: 0.1, tilt: 0.14,
-    handUpP: -0.12, handSideP: 0.14, handBackP: 0.12, handUpN: 0.1, handSideN: 0.12, handBackN: 0.08,
+  T: { handY: -0.04, handFwd: 0.08, handGap: 0.55, apart: 0.26, lean: 0.06, leanN: 0.02, kissLean: 0.05, headYaw: 0.45, headRoll: 0.1, pitchP: 0.18, pitchN: 0.1, tilt: 0.14,
+    handUpP: -0.12, handSideP: 0.14, handBackP: 0.09, handUpN: 0.1, handSideN: 0.12, handBackN: 0.08,
     lipsP: [0, 0.07, 0.11], lipsN: [0, 0.07, 0.1], browP: [0, 0.15, 0.1], browN: [0, 0.14, 0.09], cheekN: [0.06, 0.1, 0.06], gap: 0.015, shoulderUp: 0.1, armUp: 0.05, armBack: 0.04,
     camDist: 1.9, camY: 1.5, kissDist: 1.5, hideBack: true },
   P, N, w: 0, mode: null, kissK: 0, browK: 0, armsW: 1, peck: false, handW: 0, benchW: 0, benchHead: false, benchSideP: 'l', bench: false,
@@ -6744,10 +7167,17 @@ function spawnVillagers() {
   });
 }
 const spawnVillagersIfMissing = () => { if (!villagers.length) spawnVillagers(); };
+// STORY: the epilogue skips seven winters (Lio is a girl of seven who rides; Book II picks her up at eighteen).
+const EPI_YEARS = 7;
+function ensureLio() {                                // a migrated or skipped save reaching the epilogue without its daughter
+  if (!S.kids.length) { S.kids.push({ name: 'Lio', female: true, born: S.day - (S.village ? EPI_YEARS * 365 : 0) }); if (!cnt('born')) bump('born'); }
+  for (const k of S.kids) spawnKid(k);                // no-op for kids already in the world
+  for (const c of kids) c.h.root.scale.setScalar(kidScale(c.k));   // the grown size, if she was spawned as a baby
+}
 function epilogue() {
-  if (S.village) { spawnVillagersIfMissing(); return; }    // never place the village or skip 400 days twice
+  if (S.village) { spawnVillagersIfMissing(); ensureLio(); return; }    // never place the village or skip the years twice
   fadeTo('Many winters pass…', () => {
-    if (S.village) { spawnVillagersIfMissing(); return; }
+    if (S.village) { spawnVillagersIfMissing(); ensureLio(); return; }
     const home = structs.find((s) => s.kind === 'house') || structs.find((s) => s.kind === 'fire') || { x: 0, z: 0 };
     let made = 0;
     for (let i = 0; i < 40 && made < 4; i++) {
@@ -6756,7 +7186,7 @@ function epilogue() {
       if (structs.some((s) => Math.hypot(s.x - x, s.z - z) < s.radius + 6)) continue;
       placeStruct('house', x, z, Math.atan2(home.x - x, home.z - z), true); made++;
     }
-    S.village = true; S.time = 8; S.day += 400;
+    S.village = true; S.time = 8; S.day += EPI_YEARS * 365; ensureLio();
     Object.assign(S, { food: 90, water: 90, warm: 100, hp: 100 });   // final test: the years-long skip left hunger/thirst near empty
     spawnVillagers(); epilogueExtras(home); save();   // WP6: Lio grown, on the horse; final camera shot
   }, 3500);
@@ -7730,9 +8160,16 @@ function sideGoals() {
 // ---------- map, minimap and pins ----------
 const MS = 512, mapBase = document.createElement('canvas');
 mapBase.width = mapBase.height = MS;
-{
+// SAVE-PERF: the parchment base is painted into a CPU-backed canvas (willReadFrequently) so a GPU reset cannot wipe
+// it (it used to leave a blank map and minimap for the rest of the session), and it is repainted on a 2D
+// contextrestored event or after a WebGL restore just in case.
+const mapBaseG = mapBase.getContext('2d', { willReadFrequently: true });
+let mapBaseImg = null;
+function paintMapBase(check = false) {
+  if (check && mapBaseImg && !mapBaseG.isContextLost?.() && mapBaseG.getImageData(MS >> 1, MS >> 1, 1, 1).data[3] === 255) return;
+  if (mapBaseImg) { mapBaseG.putImageData(mapBaseImg, 0, 0); return; }
   // WP5 map: parchment base (paper mixed with the height colours, biome tints, contours, hill shading), drawn once.
-  const g = mapBase.getContext('2d'), im = g.createImageData(MS, MS);
+  const g = mapBaseG, im = g.createImageData(MS, MS);
   const HM = new Float32Array(MS * MS);
   for (let j = 0; j < MS; j++) for (let i = 0; i < MS; i++) HM[j * MS + i] = getHeight((i / MS - 0.5) * SIZE, (j / MS - 0.5) * SIZE);
   const BR = 128, BIO = [];
@@ -7767,7 +8204,10 @@ mapBase.width = mapBase.height = MS;
   g.putImageData(im, 0, 0);
   g.fillStyle = 'rgba(92,104,50,0.75)';
   for (const f of world.fields) if (f.kind === 'tree') for (const n of f.nodes) { g.beginPath(); g.arc((n.x / SIZE + 0.5) * MS, (n.z / SIZE + 0.5) * MS, 1.5, 0, 6.3); g.fill(); }
+  mapBaseImg = g.getImageData(0, 0, MS, MS);           // kept, so a repaint is one putImageData
 }
+paintMapBase();
+mapBase.addEventListener?.('contextrestored', () => paintMapBase());
 // WP5 fog of war: a 64x64 bit grid of 10 m cells, saved as base64 in S.seen.
 const FOG_N = 64, SEEN = new Uint8Array(FOG_N * FOG_N / 8), fog64 = document.createElement('canvas'), fogBig = document.createElement('canvas');
 fog64.width = fog64.height = FOG_N; fogBig.width = fogBig.height = 512;
@@ -7858,8 +8298,8 @@ function marker(g, x, y, kind, s = 1) {
   } else if (ICON[kind]) {
     g.fillStyle = ICON[kind][0]; g.beginPath(); g.rect(x - 4.5 * s, y - 4.5 * s, 9 * s, 9 * s); g.fill(); g.stroke();
   } else {
-    g.fillStyle = { sena: '#ff8fb8', wolf: '#ff4a3c', deer: '#c98f55', villager: '#9fd0ff' }[kind] || '#ccc';
-    g.beginPath(); g.arc(x, y, (kind === 'sena' ? 4.5 : 3.2) * s, 0, 6.3); g.fill(); g.stroke();
+    g.fillStyle = { sena: '#ff8fb8', wolf: '#ff4a3c', deer: '#c98f55', villager: '#9fd0ff', kid: '#7fe0a0' }[kind] || '#ccc';   // FPP-world: kid = Lio
+    g.beginPath(); g.arc(x, y, (kind === 'sena' ? 4.5 : kind === 'kid' ? 3.8 : 3.2) * s, 0, 6.3); g.fill(); g.stroke();
   }
 }
 const mini = $('mini').getContext('2d'), MR = 100, RANGE = 75;
@@ -7887,6 +8327,7 @@ function drawMini() {
   for (const st of structs) put(st.x, st.z, st.kind, st.kind === 'house' || st.kind === 'fire');
   for (const o of animals) if (o.state === 'live' && o.kind !== 'cow' && !o.horse) put(o.root.position.x, o.root.position.z, o.kind === 'wolf' ? 'wolf' : 'deer');   // WP4: horses are not deer (WP5 draws the tame one)
   for (const v of villagers) put(v.pos.x, v.pos.z, 'villager');
+  for (const c of kids) put(c.pos.x, c.pos.z, 'kid', true);   // FPP-world: Lio
   put(N.pos.x, N.pos.z, 'sena', true);
   if (S.pin) put(S.pin.x, S.pin.z, 'pin', true);
   if (S.spearAt) put(S.spearAt.x, S.spearAt.z, 'pin', false, 0.8);   // WPN the thrown spear
@@ -7904,10 +8345,10 @@ function drawMap() {
   const g = bg;
   g.drawImage(mapBase, 0, 0, BS, BS);
   updateFog(); g.imageSmoothingEnabled = true; g.drawImage(fogBig, 0, 0, BS, BS);   // WP5 fog of war
-  const label = (x, y, t, big2) => {   // WP5: serif italic ink labels on the parchment
-    g.font = `italic ${big2 ? 600 : 500} ${big2 ? 23 : 18}px Georgia, 'Times New Roman', serif`; g.textAlign = 'center'; g.textBaseline = 'top';
-    g.lineWidth = 3.5; g.strokeStyle = 'rgba(240,228,198,0.85)'; g.strokeText(t, x, y + 10); g.fillStyle = '#3a2a18'; g.fillText(t, x, y + 10);
-  };
+  // WP5: serif italic ink labels on the parchment. FPP-world: they are queued and drawn after the markers, each
+  // moved to the first free slot around its marker (below, above, right, left) so names never print on top of each other.
+  const labels = [];
+  const label = (x, y, t, big2) => labels.push({ x, y, t, big2 });
   for (const q of POIS) if (q.x != null) {
     const [x, y] = toMap(q.x, q.z);
     if (S.found[q.id]) { marker(g, x, y, q.icon, 2); label(x, y, q.name, true); }
@@ -7920,14 +8361,34 @@ function drawMap() {
     else if (!seen[st.kind] && st.kind !== 'house' && st.kind !== 'hut' && st.kind !== 'fence' && st.kind !== 'path') { seen[st.kind] = 1; label(x, y, ICON[st.kind]?.[1] || st.kind); }
   }
   { const h = mapHorse(); if (h) { const [x, y] = toMap(h.x, h.z); marker(g, x, y, 'horse', 1.4); if (!P.ride) label(x, y, horseName()); } }
-  { const w = questAt(); if (w) { const [x, y] = toMap(w[0], w[1]); marker(g, x, y, 'quest', 1.5); } }
   for (const h of herds) if (seenAt(h.x, h.z)) { const [x, y] = toMap(h.x, h.z); marker(g, x, y, 'deer', 1.6); label(x, y, 'Herd'); }   // WP5: only in seen land
   for (const o of animals) if (o.kind === 'wolf' && o.state === 'live' && seenAt(o.root.position.x, o.root.position.z)) { const [x, y] = toMap(o.root.position.x, o.root.position.z); marker(g, x, y, 'wolf', 1.4); }
   for (const v of villagers) { const [x, y] = toMap(v.pos.x, v.pos.z); marker(g, x, y, 'villager', 1.2); }
+  for (const c of kids) { const [x, y] = toMap(c.pos.x, c.pos.z); marker(g, x, y, 'kid', 1.3); label(x, y, c.k.name || 'Lio'); }   // FPP-world
   { const [x, y] = toMap(N.pos.x, N.pos.z); marker(g, x, y, 'sena', 1.4); label(x, y, 'Sena'); }
   if (S.pin) { const [x, y] = toMap(S.pin.x, S.pin.z); marker(g, x, y, 'pin', 1.7); }
   if (S.spearAt) { const [x, y] = toMap(S.spearAt.x, S.spearAt.z); marker(g, x, y, 'pin', 0.8); label(x, y, 'Spear'); }   // WPN
-  const [px, py] = toMap(P.pos.x, P.pos.z);
+  const [px, py] = toMap(P.pos.x, P.pos.z), qw = questAt(), qm = qw && toMap(qw[0], qw[1]);
+  { // FPP-world: place the labels; the player arrow and the quest diamond count as taken
+    const taken = [[px - 13, py - 13, px + 13, py + 13]];
+    if (qm) taken.push([qm[0] - 10, qm[1] - 13, qm[0] + 10, qm[1] + 13]);
+    const free = (r) => r[0] >= 0 && r[2] <= BS && r[1] >= 0 && r[3] <= BS && !taken.some((t) => r[0] < t[2] && r[2] > t[0] && r[1] < t[3] && r[3] > t[1]);
+    g.textAlign = 'center'; g.textBaseline = 'top'; g.lineWidth = 3.5;
+    for (const L of labels) {
+      g.font = `italic ${L.big2 ? 600 : 500} ${L.big2 ? 23 : 18}px Georgia, 'Times New Roman', serif`;
+      const w = g.measureText(L.t).width + 4, h = L.big2 ? 25 : 20, hw = w / 2 + 14;
+      let at = null;
+      for (const [dx, dy] of [[0, 10], [0, -10 - h], [hw, -h / 2], [-hw, -h / 2], [0, 12 + h], [0, -12 - 2 * h]]) {
+        const r = [L.x + dx - w / 2, L.y + dy, L.x + dx + w / 2, L.y + dy + h];
+        if (free(r)) { at = r; break; }
+      }
+      if (!at) { if (!L.big2) continue; at = [L.x - w / 2, L.y + 10, L.x + w / 2, L.y + 10 + h]; }   // place names always show
+      taken.push(at);
+      const cx = (at[0] + at[2]) / 2;
+      g.strokeStyle = 'rgba(240,228,198,0.85)'; g.strokeText(L.t, cx, at[1]); g.fillStyle = '#3a2a18'; g.fillText(L.t, cx, at[1]);
+    }
+  }
+  if (qm) marker(g, qm[0], qm[1], 'quest', 1.5);    // FPP-world: the quest diamond sits above the labels
   g.save(); g.translate(px, py); g.rotate(Math.PI - P.face); marker(g, 0, 0, 'player', 1.6); g.restore();
   // WP5 journal
   const names = POIS.filter((q) => S.found[q.id]).map((q) => q.name);
@@ -7939,7 +8400,7 @@ function toggleMap(on = !mapOpen) {
   if (!playing || busy || (menuOpen && !mapOpen)) return;
   mapOpen = menuOpen = on;
   $('map').classList.toggle('on', on);
-  if (on) { document.exitPointerLock?.(); drawMap(); } else lock();
+  if (on) { document.exitPointerLock?.(); $('lg-kid').style.display = kids.length ? '' : 'none'; drawMap(); } else lock();   // FPP-world: Lio's legend row once she is born
 }
 big.addEventListener('mousedown', (e) => {
   const r = big.getBoundingClientRect(), x = ((e.clientX - r.left) / r.width - 0.5) * SIZE, z = ((e.clientY - r.top) / r.height - 0.5) * SIZE;
@@ -7951,10 +8412,16 @@ big.addEventListener('mousedown', (e) => {
 // A pillar of light marks the pin in the world.
 const beacon = new THREE.Mesh(new THREE.CylinderGeometry(0.7, 0.7, 70, 16, 1, true), new THREE.MeshBasicMaterial({ color: 0xb46bff, transparent: true, opacity: 0.4, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide, fog: false }));
 beacon.visible = false; scene.add(beacon);
+let miniT = 0, miniX = 1e9, miniZ = 0, miniYaw = 0;
 function updateMap() {
   // WP5 fog tick: reveal around the player every 0.5 s (wider while riding)
   if (clock >= fogT) { fogT = clock + 0.5; reveal(P.pos.x, P.pos.z, P.ride ? 70 : 45); }
-  drawMini();
+  // SAVE-PERF: the minimap redraws at ~12 Hz, and at once when the player moves 0.5 m or the camera turns 2°
+  const nowMs = performance.now();
+  if (nowMs >= miniT || Math.abs(P.pos.x - miniX) + Math.abs(P.pos.z - miniZ) > 0.5 || Math.abs(camYaw - miniYaw) > 0.035) {
+    miniT = nowMs + 80; miniX = P.pos.x; miniZ = P.pos.z; miniYaw = camYaw;
+    drawMini();
+  }
   if (mapOpen) drawMap();
   beacon.visible = !!S.pin;
   if (S.pin) { beacon.position.set(S.pin.x, getHeight(S.pin.x, S.pin.z) + 35, S.pin.z); beacon.material.opacity = 0.3 + Math.sin(clock * 3) * 0.1; }
@@ -8002,8 +8469,10 @@ addEventListener('keydown', (e) => {
   if (rstKey(e)) return;                             // RST: the rest menu (1/2/E/Esc) and skipping the sequence
   if (cmbKey(e)) return;                             // CMB: Alt dodge roll, E mash in the bear's maul
   if (survKey(e)) return;                            // SURV: I opens the body screen (1-6 treat, I/Esc close)
+  if (e.code === 'F1') { e.preventDefault(); if (!e.repeat) toggleHelp(); return; }   // FPP-world: the controls list
   if (e.code === 'Escape') {
     if (W.aim) { wpnCancelAim(); return; }            // WPN: Esc first cancels a spear aim
+    if (!$('help').classList.contains('min')) { toggleHelp(false); return; }   // FPP-world: Esc closes the open controls list first
     if (e.repeat) return;
     if (paused) pause(false); else if (mapOpen) toggleMap(false); else if (menuOpen) toggleMenu(false); else if (!busy) pause(true);
     return;
@@ -8076,11 +8545,22 @@ function applyLook(dt) {
   camYaw -= lookX * k;
   camPitch = clamp(camPitch + lookY * k * 0.9 * inv, pitchMin(), fppPitchMax());   // FPP: 1.45 in first person
   lookX = lookY = 0;
+  fppYawLimit(dt);                                   // FPP-world: seated / riding head-turn limit
+}
+// FPP-world: in first person while riding, sitting or seated, the head turns at most ~110 degrees (riding) or ~120
+// (seated) from the body; a soft spring at the edge, a hard stop a little past it. Turn the horse or stand up to look
+// further. Third person stays free.
+function fppYawLimit(dt) {
+  if (view !== 'fpp' || camShot || !Number.isFinite(P.face) || !(P.ride || P.sit > 0 || P.seat)) return;
+  const lim = P.ride ? 1.92 : 2.09, rel = wrapA(camFace() - P.face), over = Math.abs(rel) - lim;
+  if (over <= 0) return;
+  const sg = Math.sign(rel), back = Math.max(over - 0.12, over * Math.min(1, dt * 10));   // never more than 0.12 rad past the edge
+  camYaw -= sg * back;
 }
 
 // ---------- pause menu and settings ----------
 function pause(on) {
-  if (!playing || (on && (busy || menuOpen))) return;
+  if (!playing || (on && (busy || menuOpen)) || GFX.lost) return;   // SAVE-PERF: no unpausing behind the graphics-reset panel
   paused = on;
   $('pause').classList.toggle('on', on);
   if (on) { document.exitPointerLock?.(); save(); for (const k in keys) keys[k] = false; }
@@ -8111,6 +8591,47 @@ function applyQuality() {
   $('opt-qual-v').textContent = settings.quality === 'auto' ? `auto → ${quality()}` : '';
 }
 bindSettings();
+
+// SAVE-PERF: WebGL context loss (GPU driver reset, laptop sleep/wake, memory pressure). Without a handler the screen
+// stayed white while the game kept running. Now the game pauses, saves, and says what happened; three.js re-uploads
+// everything when the browser restores the context, and if it never comes back the player reloads from the save.
+const GFX = { lost: false, wasPaused: false, timer: 0, el: null };
+function gfxPanel(msg, ready) {
+  if (!GFX.el) {
+    GFX.el = document.createElement('div'); GFX.el.id = 'gfxlost';
+    GFX.el.style.cssText = 'position:fixed;inset:0;display:grid;place-content:center;background:rgba(0,0,0,0.72);z-index:20;text-align:center';
+    GFX.el.innerHTML = '<div class="panel" style="padding:22px 26px;width:min(440px,92vw)"><h3 class="serif" style="margin:0 0 8px;font-size:24px;font-weight:normal;color:var(--gold)">Graphics were reset</h3>'
+      + '<p id="gfx-msg" style="margin:0 0 14px;color:var(--dim)"></p><div style="display:flex;gap:8px;justify-content:center">'
+      + '<button id="gfx-go" class="mat-btn">Continue</button><button id="gfx-reload" class="mat-btn quiet">Reload</button></div></div>';
+    document.body.append(GFX.el);
+    GFX.el.querySelector('#gfx-go').onclick = gfxResume;
+    GFX.el.querySelector('#gfx-reload').onclick = () => { save({ now: true }); location.reload(); };
+  }
+  GFX.el.style.display = 'grid';
+  GFX.el.querySelector('#gfx-msg').textContent = msg;
+  GFX.el.querySelector('#gfx-go').style.display = ready ? '' : 'none';
+}
+function gfxResume() {
+  if (GFX.lost) return;
+  GFX.el.style.display = 'none';
+  paused = GFX.wasPaused; last = performance.now();
+  if (!paused) lock();
+}
+canvas.addEventListener('webglcontextlost', (e) => {
+  e.preventDefault();                                  // tells the browser we want the context back
+  GFX.lost = true; GFX.wasPaused = paused; paused = true;
+  document.exitPointerLock?.(); for (const k in keys) keys[k] = false;
+  save({ now: true });
+  gfxPanel(playing ? 'The game is paused and saved. Waiting for the graphics to come back…' : 'Waiting for the graphics to come back…', false);
+  clearTimeout(GFX.timer);
+  GFX.timer = setTimeout(() => { if (GFX.lost) gfxPanel('The graphics did not come back. Reload to carry on from your save.', false); }, 6000);
+});
+canvas.addEventListener('webglcontextrestored', () => {
+  GFX.lost = false; clearTimeout(GFX.timer);
+  renderer.shadowMap.needsUpdate = true;
+  paintMapBase(true);                                  // the 2D map canvases may have been reset with the GPU too
+  gfxPanel(playing ? 'Everything is back. Your game is paused and saved.' : 'Everything is back.', true);
+});
 
 // ---------- per-frame updates ----------
 let target = null, useCool = 0, tick = 0, saveT = 0;
@@ -8210,12 +8731,14 @@ function updateSena(dt) {
   if (romSena(dt)) return;                           // ROM: scenes, hand in hand, a talk
   if (N.ride && !P.ride) { N.ride = false; N.seat = null; N.h.pose = null; N.h.straddle = false; }
   if (N.ride) { N.speed = 0; N.node = null; settle(N, dt, false); return; }   // WP4: riding behind Aro (seated by updateHorses)
-  if (N.sit > 0) { N.sit -= dt; N.speed = 0; if (N.sit <= 0) endSit(N); settle(N, dt, false); return; }
+  if (N.sit > 0) { N.sit -= dt; N.speed = 0; if (N.hearth) N.hearth.seen = clock; if (N.sit <= 0) endSit(N); settle(N, dt, false); return; }
   // WP2: resting (endRest wakes her with Aro), dancing after a shared build, then working at a construction site
   if (N.rest > 0) { if (!R.on && !R.nOut) N.speed = 0; settle(N, dt, false); return; }   // RST: the sequence walks her
   if (N.dance > 0) { N.dance -= dt; N.speed = 0; if (N.dance <= 0 && N.h.pose === 'dance') N.h.pose = null; settle(N, dt, false); return; }
   if (senaBuild(dt)) { settle(N, dt, false); return; }
   if (N.fetch && wpnSenaFetch(dt)) { settle(N, dt, false); return; }   // WPN: she brings back a forgotten spear
+  if (N.hearth && clock - (N.hearth.seen ?? clock) > 0.5) senaHearthDrop();   // STORY: something else had her (a scene, the rest): start over
+  if (senaHearth(dt)) { N.hearth && (N.hearth.seen = clock); settle(N, dt, false); return; }   // STORY: evenings by the home hearth
   const dP = Math.hypot(N.pos.x - P.pos.x, N.pos.z - P.pos.z);
   const fire = structs.find((s) => s.kind === 'fire');
   const night = world.env.night > 0.6 && fire && Math.hypot(fire.x - P.pos.x, fire.z - P.pos.z) < 40;
@@ -8304,7 +8827,7 @@ function updateWorldThings(dt) {
     if (E.day > 0.5 && E.storm < 0.4 && rand() < dt * 0.35) A.chirp(0.012 + rand() * 0.03);
   }
   saveFlash = Math.max(0, saveFlash - dt);
-  $('savechip').style.opacity = Math.min(1, saveFlash);
+  { const el = $('savechip'), o = el.textContent ? String(Math.min(1, saveFlash)) : '0'; if (el.style.opacity !== o) el.style.opacity = o; }   // SAVE-PERF: never an empty pill
 }
 const camPos = new THREE.Vector3(0, 8, 14), look = new THREE.Vector3();
 function updateCamera(dt, title) {
@@ -8818,12 +9341,20 @@ function fppDebug() {
 }
 
 // ---------- start ----------
+let starting = false, bootDirty = false;             // SAVE-PERF: start() runs once; a failed load needs a fresh page
 function start(loadSave, diffChoice) {             // MAT: diffChoice {mode, custom} from the new-game modal
-  if (playing) return;                               // a double click on Continue used to rebuild every saved structure twice
+  if (playing || starting) return;                   // a double click on Continue used to rebuild every saved structure twice
+  if (bootDirty) { try { sessionStorage.setItem('hb-new', JSON.stringify(diffChoice || {})); } catch {} location.reload(); return; }   // SAVE-PERF: a failed load left a half-built world
+  starting = true;
   A.init();
-  if (loadSave && found) {
+  if (loadSave && found) try {                       // SAVE-PERF: a broken save shows a message instead of a dead title
     const data = found.data;
     S = Object.assign(fresh(), data);
+    const F = fresh();                               // SAVE-PERF: a null or wrong-typed field (structs: null) falls back to the default
+    for (const k in F) { const d = F[k], v = S[k]; if (d !== null && (v == null || typeof d === 'object' && (typeof v !== 'object' || Array.isArray(d) !== Array.isArray(v)))) S[k] = d; }
+    if (!Array.isArray(S.felled)) S.felled = [];
+    S.structs = S.structs.filter((x) => x && typeof x.k === 'string' && Number.isFinite(x.x) && Number.isFinite(x.z));
+    S.kids = S.kids.filter((x) => x && typeof x === 'object');
     S.inv = { ...fresh().inv, ...S.inv };              // older saves lack the newer items
     S.tools = S.tools || {}; S.c = S.c || {};
     S.home = { ...fresh().home, ...S.home }; S.found = S.found || {}; S.stash = S.stash || {}; S.kids = S.kids || [];
@@ -8838,6 +9369,7 @@ function start(loadSave, diffChoice) {             // MAT: diffChoice {mode, cus
     }
     S.ch = Math.max(0, Math.min(CH.length - 1, S.ch | 0));
     matLoad(data);                                   // MAT: nested merges, old saves without difficulty, story v2 -> v3
+    if (CH[S.ch].epilogue && !S.village && (data.storyV || 1) >= 2 && data.chId !== 'village') S.ch = chIdx('village') - 1;   // STORY: a corrupt index never jumps into the epilogue
     if ((data.worldV || 1) < 2) { S.felled = []; S.worldV = 2; }   // new terrain features shift the node scatter; trees regrow (cosmetic)
     for (const s of S.structs) { const st = placeStruct(s.k, s.x, s.z, s.r, true, s.g, s.p); if (s.h && st.hang) st.hang.push(...s.h); }   // WP2 site progress, rack
     applyHome();                                       // WP2 home upgrades on the house mesh
@@ -8853,16 +9385,34 @@ function start(loadSave, diffChoice) {             // MAT: diffChoice {mode, cus
     CH[S.ch].onEnter?.();
     if (CH[S.ch].epilogue && !S.village) epilogue();   // saved mid-fade: finish the epilogue (guarded, runs once)
     drawQuest(); toast(`Welcome back · day ${S.day} (loaded from ${found.from})`);
+  } catch (e) {
+    console.error('Save could not be loaded', e);
+    starting = false; bootDirty = true;
+    try { localStorage.setItem('hearthborn-save-broken', JSON.stringify(found.data)); } catch {}
+    $('savenote').textContent = 'This save could not be loaded. A backup copy was kept in this browser. Try again, or start a new story.';
+    $('btn-continue').textContent = 'Try again'; $('btn-continue').onclick = () => location.reload();
+    return;
   } else { deleteGame(); matNew(diffChoice); showChapter(); }   // MAT: the chosen difficulty
-  playing = true;
+  playing = true; starting = false;
   $('title').classList.add('off'); $('hud').classList.add('on');
   drawInv(); applyQuality();
   wpnLoad();                                         // WPN weapons into their sockets, the spear lying out
   matStart();                                        // MAT: game clock, Hardcore UI, herd scarcity
+  if (loadSave) rstResume();                         // SAVE-PERF: the night a closed page interrupted
   if (settings.fullscreen) fullscreen(true);
   lock();
   setTimeout(() => toast('Esc opens the menu · settings, save and quit'), 1500);
+  helpNudge();                                       // FPP-world: draw the eye to the F1 controls chip
 }
+// FPP-world: the controls list. A small "F1 controls" chip by default; F1 opens the full list, which closes itself
+// after 25 s (or on F1 / Esc) so it never sits over the weapon hand, the E prompt, subtitles or the pack.
+let helpT = 0;
+function toggleHelp(on = $('help').classList.contains('min')) {
+  const el = $('help');
+  el.classList.toggle('min', !on); el.classList.remove('nudge');
+  clearTimeout(helpT); if (on) helpT = setTimeout(() => toggleHelp(false), 25000);
+}
+function helpNudge() { const el = $('help'); el.classList.remove('nudge'); void el.offsetWidth; el.classList.add('nudge'); }
 $('btn-new').textContent = 'Begin the story';
 $('btn-new').onclick = (ev) => matNewGame(ev);      // MAT: the 21+ notice, then the difficulty modal
 if (found) {
@@ -8872,6 +9422,8 @@ if (found) {
   $('savenote').textContent = `Saved ${when} · ${found.from === 'database' ? 'from the save database' : 'from this browser'}`;
 }
 matTitle();                                          // MAT: content notice, the Stones, the new-game cards
+{ let nc = null; try { nc = sessionStorage.getItem('hb-new'); sessionStorage.removeItem('hb-new'); } catch {}   // SAVE-PERF: New story after a failed load
+  if (nc) { let c = {}; try { c = JSON.parse(nc); } catch {} start(false, c.mode ? c : undefined); } }
 
 let last = performance.now(), frames = 0, ftAcc = 0, ftN = 0, fpsShown = 0;
 function frame(now) {
@@ -9041,6 +9593,7 @@ Object.assign(window.G, {
   rideState() { return { ride: !!P.ride, taming: P.taming && { ...P.taming }, hv: P.hv, speed: P.speed, nRide: !!N.ride, seat: P.saddle && P.saddle.toArray(), face: P.face }; },
 });
 Object.assign(window.G, { fpp: fppDebug, fppCamera, fppVm, FP });   // FPP test hooks
+Object.assign(window.G, { remove: (o) => remove(o), gfx: GFX, paintMapBase });   // SAVE-PERF test hooks
 arcHooks(window.G);                                  // ARC story hooks: G.arc, setArc, arcChoose, raid, fever, goalsOf, arcDbg
 cmbHooks(window.G);                                  // CMB hooks: G.cmb, G.spawnRaider, clearFoes, updateFoes, cmbDuel
 // MAT mature foundation hooks (difficulty, bus, damage, choices, death and memorial)

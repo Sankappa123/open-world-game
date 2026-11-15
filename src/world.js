@@ -33,6 +33,17 @@ export function land(x, z) {
 const HILLS = [[...LM.echoHill, 55, 30, 0], [...LM.flintHill, 60, 36, 0], [...LM.peak, 60, 42, 6], [...LM.tree, 18, 4, 5], [...LM.stones, 14, 2.2, 6]];
 const dist = (x, z, p) => Math.hypot(x - p[0], z - p[1]);
 const meadowMask = (x, z) => 1 - smooth(45, 75, dist(x, z, LM.meadow));
+// FPP-world: Mirror Lake sits in a wide, gentle bowl with an irregular shore (it used to be a perfect 12 m-deep
+// circular pit). The hills within ~100 m ease down to a low rim, then a shallow shelf runs into the water; the
+// radius wobbles +-15% with the bearing. The water disc (radius 44) always meets dry land before its edge.
+const LAKE_R = 104;
+let legacyLake = false;                              // the old pit, only for scatter decisions (see createWorld)
+function lakeBasin(h, x, z, dl) {
+  const a = Math.atan2(z - LM.lake[1], x - LM.lake[0]);
+  const e = dl / (1 + 0.15 * (Math.sin(a * 2 + 1.1) * 0.55 + Math.sin(a * 3 - 0.4) * 0.3 + Math.sin(a * 5 + 2) * 0.15));
+  h = lerp(h, Math.min(h, 3 + fbm(x * 0.03, z * 0.03, 2) * 0.8), 1 - smooth(45, 88, e));
+  return lerp(h, -1.8, 1 - smooth(18, 44, e));
+}
 function features(h, x, z) {
   const base = h;
   for (const [hx, hz, r, hh, top] of HILLS) {
@@ -42,7 +53,8 @@ function features(h, x, z) {
   const mm = meadowMask(x, z);
   if (mm > 0) h = lerp(h, 4.5 + fbm(x * 0.02, z * 0.02, 2) * 1.2, 0.85 * mm);
   const dl = dist(x, z, LM.lake);
-  if (dl < 40) h = lerp(h, -1.8, 1 - smooth(26, 40, dl));
+  if (legacyLake) { if (dl < 40) h = lerp(h, -1.8, 1 - smooth(26, 40, dl)); }
+  else if (dl < LAKE_R) h = lakeBasin(h, x, z, dl);
   const ds = dist(x, z, LM.spring);
   if (ds < 8) h = lerp(h, base - 0.9, 1 - smooth(5, 8, ds));
   return caveCarve(h, x, z);
@@ -78,6 +90,19 @@ export function getHeight(x, z) {
 }
 export function slopeY(x, z) {
   const dx = getHeight(x + 1.5, z) - getHeight(x - 1.5, z), dz = getHeight(x, z + 1.5) - getHeight(x, z - 1.5);
+  return 3 / Math.hypot(dx, 3, dz);
+}
+// FPP-world: the terrain as it was before the Mirror Lake reshape. The scatter (trees, rocks, sticks...) still
+// decides on it, so its shared random stream, every node's index (saved felled trees) and the whole world layout
+// stay exactly as in existing saves. Only the nodes' heights follow the new ground.
+const H0 = new Float32Array(N1 * N1);
+function getHeight0(x, z) {
+  const fx = clamp((x + SIZE / 2) / CELL, 0, SEG - 0.001), fz = clamp((z + SIZE / 2) / CELL, 0, SEG - 0.001);
+  const ix = fx | 0, iz = fz | 0, tx = fx - ix, tz = fz - iz, i = iz * N1 + ix;
+  return lerp(lerp(H0[i], H0[i + 1], tx), lerp(H0[i + N1], H0[i + N1 + 1], tx), tz);
+}
+function slopeY0(x, z) {
+  const dx = getHeight0(x + 1.5, z) - getHeight0(x - 1.5, z), dz = getHeight0(x, z + 1.5) - getHeight0(x, z - 1.5);
   return 3 / Math.hypot(dx, 3, dz);
 }
 
@@ -149,6 +174,9 @@ export function createWorld(scene, renderer, quality = 'medium') {
   geo.rotateX(-Math.PI / 2);
   const pos = geo.attributes.position;
   for (let i = 0; i < pos.count; i++) { const h = rawHeight(pos.getX(i), pos.getZ(i)); pos.setY(i, h); H[i] = h; }
+  H0.set(H); legacyLake = true;                      // FPP-world: the pre-reshape ground near the lake, for the scatter
+  for (let i = 0; i < pos.count; i++) { const x = pos.getX(i), z = pos.getZ(i); if (dist(x, z, LM.lake) < LAKE_R + CELL * 2) H0[i] = rawHeight(x, z); }
+  legacyLake = false;
   geo.computeVertexNormals();
   const nor = geo.attributes.normal, col = new Float32Array(pos.count * 3), splat = new Float32Array(pos.count * 3);
   for (let i = 0; i < pos.count; i++) {
@@ -212,16 +240,25 @@ export function createWorld(scene, renderer, quality = 'medium') {
   const scatter = (n, ok, max = LIMIT, smin = 0.8, smax = 1.3) => {
     const out = [];
     for (let t = 0; out.length < n && t < n * 60; t++) {
-      const x = (R() * 2 - 1) * max, z = (R() * 2 - 1) * max, h = getHeight(x, z);
-      if (ok(x, z, h, slopeY(x, z), Math.hypot(x, z)) && !keepOut(x, z)) out.push({ x, y: h, z, s: lerp(smin, smax, R()), r: R() * 6.283, t: R() });
+      const x = (R() * 2 - 1) * max, z = (R() * 2 - 1) * max, h = getHeight0(x, z);   // FPP-world: decided on the legacy ground
+      if (ok(x, z, h, slopeY0(x, z), Math.hypot(x, z)) && !keepOut(x, z)) out.push(onGround({ x, y: h, z, s: lerp(smin, smax, R()), r: R() * 6.283, t: R() }));
     }
     return out;
+  };
+  // FPP-world: a node sits on the current ground; one the reshaped lake would drown moves up the bank to the shore.
+  const onGround = (n) => {
+    n.y = getHeight(n.x, n.z);
+    if (n.y < 0.3 && getHeight0(n.x, n.z) >= 0.3) {
+      const dx = n.x - LM.lake[0], dz = n.z - LM.lake[1], d = Math.hypot(dx, dz) || 1;
+      for (let r = d; r < d + 40 && n.y < 0.3; r += 0.5) { n.x = LM.lake[0] + (dx / d) * r; n.z = LM.lake[1] + (dz / d) * r; n.y = getHeight(n.x, n.z); }
+    }
+    return n;
   };
   const river_ = (n, band, zmax, ok, smin, smax, gap = 0) => {
     const out = [];
     for (let t = 0; out.length < n && t < n * 80; t++) {
-      const z = (R() * 2 - 1) * zmax, x = riverX(z) + (R() < 0.6 ? -1 : 1) * (band + R() * 9), h = getHeight(x, z);
-      if (ok(h) && !keepOut(x, z) && !(gap && out.some((o) => Math.hypot(o.x - x, o.z - z) < gap))) out.push({ x, y: h, z, s: lerp(smin, smax, R()), r: R() * 6.283, t: R() });
+      const z = (R() * 2 - 1) * zmax, x = riverX(z) + (R() < 0.6 ? -1 : 1) * (band + R() * 9), h = getHeight0(x, z);
+      if (ok(h) && !keepOut(x, z) && !(gap && out.some((o) => Math.hypot(o.x - x, o.z - z) < gap))) out.push(onGround({ x, y: h, z, s: lerp(smin, smax, R()), r: R() * 6.283, t: R() }));
     }
     return out;
   };
@@ -271,8 +308,12 @@ export function createWorld(scene, renderer, quality = 'medium') {
     ...scatter(5, (x, z, h, ny, d) => land(x, z, h, ny, d) && d > 9 && d < 30, 30, 0.7, 1),
     ...scatter(90, (x, z, h, ny, d) => land(x, z, h, ny, d) && d > 30 && h < 20, LIMIT, 0.7, 1),
   ];
-  split(bushNodes.map((n) => ({ ...n })), 2).forEach((nodes, i) =>
-    new Field(scene, 'bush', NAT[i ? 'bush_common_flowers' : 'bush_common'], nodes, { tint: 0.08, cell: 160 }).nodes.forEach((n) => addCollider({ x: n.x, z: n.z, r: 0.5 * n.s })));
+  // the bushes' bodies are decor, not resource fields; main's placeStruct hides (and un-collides) the ones a building covers
+  const bushBodies = split(bushNodes.map((n) => ({ ...n })), 2).map((nodes, i) => {
+    const f = new Field(scene, 'bush', NAT[i ? 'bush_common_flowers' : 'bush_common'], nodes, { tint: 0.08, cell: 160 });
+    f.nodes.forEach((n) => { n.col = addCollider({ x: n.x, z: n.z, r: 0.5 * n.s }); });
+    return f;
+  });
   const berries = new Field(scene, 'berry', one(merge(berryParts)), bushNodes, { shadow: false, cell: 128 });
 
   const rr = rng(8), reedParts = [];
@@ -281,7 +322,8 @@ export function createWorld(scene, renderer, quality = 'medium') {
     reedParts.push(part(new THREE.ConeGeometry(0.028, h, 4), rr() > 0.4 ? 0x6f8040 : 0x8c8a4c, x, h / 2, z, tx, 0, tz));
     if (i % 3 === 0) reedParts.push(part(new THREE.CapsuleGeometry(0.035, 0.16, 2, 6), 0x4e3421, x - tz * h * 0.8, h * 0.82, z + tx * h * 0.8, tx, 0, tz));
   }
-  const reeds = new Field(scene, 'reed', one(merge(reedParts)), river_(190, 10, LIMIT, (h) => h > -0.25 && h < 0.75, 0.8, 1.25), { tint: 0.12, cell: 128 });
+  const reedPart = one(merge(reedParts));
+  const reeds = new Field(scene, 'reed', reedPart, river_(190, 10, LIMIT, (h) => h > -0.25 && h < 0.75, 0.8, 1.25), { tint: 0.12, cell: 128 });
   const clayGeo = flat(merge([
     part(lumpy(ico(1, 2), 0.14, 2.4), 0x96573a, 0, 0.05, 0, 0, 0, 0, 1.1, 0.32, 1.1),
     part(lumpy(ico(0.3, 1), 0.2, 6), 0xa7623f, 0.5, 0.25, 0.2), part(lumpy(ico(0.24, 1), 0.2, 6), 0x8a4e33, -0.4, 0.24, -0.3),
@@ -370,6 +412,19 @@ export function createWorld(scene, renderer, quality = 'medium') {
   decor('mushroom_common', 140, 0.8, 1.4, (x, z, h, ny, d) => meadow(x, z, h, ny, d) && nearTree(x, z));
   for (const name of ['pebble_round_1', 'pebble_round_2', 'pebble_round_3'])
     new Field(scene, 'decor', NAT[name], river_(120, 6, LIMIT, (h) => h > -0.3 && h < 1.6, 0.5, 1.6), { shadow: false, cell: 80, tint: 0.1, cull: decorCells });
+  { // FPP-world: Mirror Lake's shore, reeds in the shallows and pebbles on the bank (own random stream, so the
+    // shared scatter stream and the saved node indices stay as they were)
+    const lr = rng(178), reedL = [], pebL = [];
+    for (let t = 0; t < 6000 && (reedL.length < 150 || pebL.length < 180); t++) {
+      const a = lr() * 6.283, d = 16 + lr() * 28, x = LM.lake[0] + Math.cos(a) * d, z = LM.lake[1] + Math.sin(a) * d, h = getHeight(x, z);
+      const n = { x, y: h, z, s: 0.5 + lr() * 0.8, r: lr() * 6.283, t: lr() };
+      if (h > -0.4 && h < 0.3) { if (reedL.length < 150) reedL.push(n); }
+      else if (h >= 0.05 && h < 1.0 && pebL.length < 180) { n.y -= 0.03; pebL.push(n); }
+    }
+    for (const n of reedL) n.s += 0.35;
+    new Field(scene, 'decor', reedPart, reedL, { shadow: false, tint: 0.12, cell: 60, cull: decorCells });
+    split(pebL, 3).forEach((nodes, i) => new Field(scene, 'decor', NAT['pebble_round_' + (i + 1)], nodes, { shadow: false, cell: 60, tint: 0.1, cull: decorCells }));
+  }
 
   // ---------- grass that follows the player ----------
   const bladeTex = canvasTex(256, (g, S) => {
@@ -515,11 +570,17 @@ export function createWorld(scene, renderer, quality = 'medium') {
     u.uLight.value = lerp(0.12, 1, day) * (1 - st * 0.45);
     renderer.toneMappingExposure = lerp(0.8, 0.68, day);
     const cave = env.cave || 0;                     // WP3: inside a cave the sky light fades out
+    // FPP-world: but never to pitch black. A warm-grey fill stays (walls read at ~5-10% without a torch), the cave
+    // air only thinly hazes (the daylit world through the mouth used to fog to black), and the daylight spilling
+    // in at the mouth lights the entrance (caves.mouthLight).
+    caves.mouthLight.intensity = cave > 0 ? 9 * cave * day * (1 - st * 0.5) : 0;
     if (cave > 0) {
       sun.intensity *= 1 - cave;
-      hemi.intensity *= 1 - 0.92 * cave;
-      scene.fog.color.lerp(tmp.setHex(0x050403), cave);
-      scene.fog.density += cave * 0.02;
+      hemi.intensity *= 1 - 0.82 * cave;
+      hemi.color.lerp(tmp.setHex(0x8c8070), cave * 0.75);
+      hemi.groundColor.lerp(tmp.setHex(0x3a3026), cave * 0.75);
+      scene.fog.color.lerp(tmp.setHex(0x2a251e).multiplyScalar(0.3 + 0.7 * day), cave);
+      scene.fog.density += cave * 0.006;
       renderer.toneMappingExposure *= 1 + 0.25 * cave;
       u.uLight.value *= 1 - cave;
     }
@@ -532,5 +593,5 @@ export function createWorld(scene, renderer, quality = 'medium') {
     caves.update(dt, px, pz); landmarks.update(dt, px, pz);
     for (const c of decorCells) { const on = Math.hypot(c.x - px, c.z - pz) < Q.decor; for (const m of c.meshes) m.visible = on; }
   }
-  return { fields, env, setTime, update, clear, setQuality, river, atmosphere, water: river.mesh, caves, landmarks, lake };
+  return { fields, decor: bushBodies, env, setTime, update, clear, setQuality, river, atmosphere, water: river.mesh, caves, landmarks, lake };
 }

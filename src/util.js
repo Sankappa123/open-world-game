@@ -109,3 +109,15 @@ export function boxM(w, h, d) {
   }
   return g;
 }
+
+// Asset loads retry with backoff (0.6 s, 1.8 s) before giving up: one slow or dropped request on a busy
+// machine or flaky connection must not kill the whole boot. fn() starts a fresh load each attempt.
+export async function loadRetry(fn, label = '', tries = 3) {
+  for (let i = 1; ; i++) {
+    try { return await fn(); } catch (e) {
+      if (i >= tries) { console.error(`Could not load ${label} after ${tries} tries`, e); throw e; }
+      console.warn(`Retrying ${label} (${i}/${tries - 1})`, e?.message || e);
+      await new Promise((r) => setTimeout(r, 600 * 3 ** (i - 1)));
+    }
+  }
+}

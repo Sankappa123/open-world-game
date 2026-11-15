@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { rng, part, merge, lumpy, canvasTex, brickTex, boxM } from './util.js';
+import { rockTexture } from './terrain.js';
 
 // WP3 landmarks. Every feature is more than 95 m from home (the origin), so player-built homes never move.
 export const LM = {
@@ -59,13 +60,35 @@ export function createLandmarks(scene, NAT, getHeight, addCollider, { clear, riv
   addCollider({ x: tx, z: tz, r: 2.4 });
 
   // ---- Standing Stones: a ring of eight, one fallen, a flat stone in the middle ----
+  // FPP-world: the pack's mossy rock atlas renders near-black on these tall slabs, so the stones get their own
+  // weathered grey-ochre surface: the terrain's rock texture, tinted per vertex, with pale lichen on the upward faces.
+  const stoneM = new THREE.MeshStandardMaterial({ map: rockTexture(), vertexColors: true, roughness: 0.95 });
+  const stoneTint = (geo) => {
+    geo = geo.clone();
+    const p = geo.attributes.position, nr = geo.attributes.normal, col = new Float32Array(p.count * 3);
+    for (let i = 0; i < p.count; i++) {
+      const x = p.getX(i), y = p.getY(i), z = p.getZ(i);
+      const n = Math.sin(x * 3.1 + y * 1.7) * Math.cos(z * 2.6 - y * 2.2) * 0.5 + 0.5, v = 1.25 + (n - 0.5) * 0.3;
+      const lichen = Math.max(0, Math.min(1, (nr.getY(i) - 0.35) * 1.6 + (n - 0.62) * 2.2));
+      col.set([v * (0.96 - lichen * 0.12), v * (0.92 - lichen * 0.02), v * (0.84 - lichen * 0.3)], i * 3);
+    }
+    geo.setAttribute('color', new THREE.BufferAttribute(col, 3));
+    return geo;
+  };
+  const tinted = {};
+  const stone = (name, x, y, z, sx, sy, sz, ry, rx = 0, rz = 0) => {
+    const g = new THREE.Group();
+    for (const geo of (tinted[name] ||= (NAT[name] || []).map((p) => stoneTint(p.geo)))) g.add(shade(new THREE.Mesh(geo, stoneM)));
+    g.position.set(x, y, z); g.scale.set(sx, sy, sz); g.rotation.set(rx, ry, rz);
+    root.add(g); return g;
+  };
   const [sx, sz] = LM.stones;
   for (let i = 0; i < 8; i++) {
     const a = (i / 8) * Math.PI * 2, x = sx + Math.cos(a) * 9, z = sz + Math.sin(a) * 9, y = getHeight(x, z);
-    if (i === 5) nat('rock_medium_2', x, y + 0.5, z, 1.3, 3.8, 1.3, a, 0, Math.PI / 2 - 0.1);
-    else { nat('rock_medium_2', x, y - 0.4, z, 1.3, 3.8, 1.3, a, (R() - 0.5) * 0.08, (R() - 0.5) * 0.08); addCollider({ x, z, r: 0.9 }); }
+    if (i === 5) stone('rock_medium_2', x, y + 0.5, z, 1.3, 3.8, 1.3, a, 0, Math.PI / 2 - 0.1);
+    else { stone('rock_medium_2', x, y - 0.4, z, 1.3, 3.8, 1.3, a, (R() - 0.5) * 0.08, (R() - 0.5) * 0.08); addCollider({ x, z, r: 0.9 }); }
   }
-  nat('rock_medium_1', sx, getHeight(sx, sz) - 0.1, sz, 1.6, 0.35, 1.6);
+  stone('rock_medium_1', sx, getHeight(sx, sz) - 0.1, sz, 1.6, 0.35, 1.6);
 
   // ---- Old Ruins: broken brick walls and a fallen beam ----
   const [rx, rz] = LM.ruins, ry = getHeight(rx, rz);
@@ -101,7 +124,7 @@ export function createLandmarks(scene, NAT, getHeight, addCollider, { clear, riv
 
   // ---- Hot Spring: warm water in a ring of stones, with steam ----
   const [hx, hz] = LM.spring, basin = getHeight(hx, hz);
-  const water = new THREE.Mesh(new THREE.CircleGeometry(6.6, 36).rotateX(-Math.PI / 2), new THREE.MeshStandardMaterial({ color: 0x7fc6c8, transparent: true, opacity: 0.8, roughness: 0.15, depthWrite: false }));
+  const water = new THREE.Mesh(new THREE.CircleGeometry(6.6, 36).rotateX(-Math.PI / 2), new THREE.MeshStandardMaterial({ color: 0x9fd0cb, transparent: true, opacity: 0.88, roughness: 0.2, depthWrite: false }));
   water.position.set(hx, basin + 0.6, hz); water.renderOrder = 2; root.add(water);
   for (let i = 0; i < 16; i++) {
     const a = (i / 16) * Math.PI * 2 + R() * 0.2, r = 7.3 + R() * 0.6, x = hx + Math.cos(a) * r, z = hz + Math.sin(a) * r;
@@ -110,7 +133,7 @@ export function createLandmarks(scene, NAT, getHeight, addCollider, { clear, riv
   const steamT = canvasTex(64, (g, S) => { const gr = g.createRadialGradient(S / 2, S / 2, 0, S / 2, S / 2, S / 2); gr.addColorStop(0, 'rgba(255,255,255,0.8)'); gr.addColorStop(1, 'rgba(255,255,255,0)'); g.fillStyle = gr; g.fillRect(0, 0, S, S); });
   const steam = [];
   for (let i = 0; i < 10; i++) {
-    const s = new THREE.Sprite(new THREE.SpriteMaterial({ map: steamT, transparent: true, opacity: 0.22, depthWrite: false, color: 0xeef4f4 }));
+    const s = new THREE.Sprite(new THREE.SpriteMaterial({ map: steamT, transparent: true, opacity: 0.38, depthWrite: false, color: 0xeef4f4 }));
     s.userData = { a: R() * 6.28, r: R() * 4.5, t: R() * 6 }; root.add(s); steam.push(s);
   }
 
@@ -137,7 +160,7 @@ export function createLandmarks(scene, NAT, getHeight, addCollider, { clear, riv
         s.visible = near; if (!near) continue;
         const u = s.userData; u.t += dt * 0.35; if (u.t > 6) { u.t = 0; u.a = R() * 6.28; u.r = R() * 4.5; }
         s.position.set(hx + Math.cos(u.a) * u.r + u.t * 0.2, basin + 0.7 + u.t * 0.6, hz + Math.sin(u.a) * u.r);
-        s.scale.setScalar(1.2 + u.t * 0.5); s.material.opacity = 0.22 * Math.sin((u.t / 6) * Math.PI);
+        s.scale.setScalar(1.2 + u.t * 0.5); s.material.opacity = 0.38 * Math.sin((u.t / 6) * Math.PI);   // reads as a hot spring by day too
       }
       if (Math.hypot(cx - px, cz - pz) < 260) { const p = bannerGeo.attributes.position; for (let i = 0; i < p.count; i++) { const x = p.getX(i); p.setZ(i, Math.sin(time * 3 + x * 2.5) * 0.12 * x); } p.needsUpdate = true; }
     },

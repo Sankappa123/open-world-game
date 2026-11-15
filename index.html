@@ -29,7 +29,14 @@
   #inv span { padding: 4px 9px; border-radius: 4px; background: rgba(255, 255, 255, 0.07); font-size: 12px; color: var(--dim); white-space: nowrap; }
   #inv span b { color: var(--ink); margin-left: 5px; }
   #inv span.tool { color: var(--gold); }
-  #help { position: absolute; right: 18px; bottom: 18px; padding: 9px 12px; font-size: 12px; color: var(--dim); line-height: 1.7; }
+  #help { position: absolute; right: 18px; bottom: 18px; padding: 9px 12px; font-size: 12px; color: var(--dim); line-height: 1.7; z-index: 3; }
+  /* FPP-world: the controls list is a one-line chip by default (F1 opens it), so it never covers the weapon hand, prompts, subtitles or the pack */
+  #help .hh { display: none; }
+  #help.min { padding: 3px 9px; line-height: 1.5; font-size: 11px; opacity: 0.75; }
+  #help.min .hh { display: block; } #help.min .hb { display: none; }
+  #help.min.nudge { animation: helpnudge 2.4s ease-in-out 3; }
+  @keyframes helpnudge { 0%, 100% { opacity: 0.75; } 50% { opacity: 1; box-shadow: 0 0 0 1px var(--gold); } }
+  #help .hb .hx { float: right; margin-left: 12px; color: var(--gold); }
   kbd { font: inherit; color: var(--ink); background: rgba(255, 255, 255, 0.12); border-radius: 3px; padding: 0 5px; }
   #cross { position: absolute; left: 50%; top: 50%; width: 6px; height: 6px; margin: -3px; border-radius: 50%; border: 1px solid rgba(255, 255, 255, 0.8); display: none; }
   #prompt { position: absolute; left: 50%; top: 58%; transform: translateX(-50%); padding: 6px 14px; display: none; white-space: nowrap; }
@@ -317,7 +324,8 @@
   </div>
   <div id="inv" class="panel"></div>
   <div id="wpn" class="panel" style="display:none"><div class="slots"><span data-k="fists"><kbd>1</kbd><i>Fists</i></span><span data-k="axe"><kbd>2</kbd><i>Axe</i></span><span data-k="spear"><kbd>3</kbd><i>Spear</i></span></div><small>hold <kbd>Q</kbd> draw / sheathe · tap <kbd>Q</kbd> swap</small></div>
-  <div id="help" class="panel">
+  <div id="help" class="panel min">
+    <div class="hh"><kbd>F1</kbd> controls</div><div class="hb"><span class="hx"><kbd>F1</kbd> close</span>
     <kbd>W A S D</kbd> move &nbsp;<kbd>Shift</kbd> sprint &nbsp;<kbd>Space</kbd> jump<br />
     <kbd>C</kbd> / hold <kbd>Ctrl</kbd> sneak &nbsp;<kbd>V</kbd> first / third person<br />
     <kbd>E</kbd> use · sit with Sena &nbsp;<kbd>F</kbd> eat &nbsp;<kbd>Tab</kbd> craft &amp; build<br />
@@ -330,7 +338,7 @@
     <kbd>Alt</kbd> dodge roll · <kbd>E</kbd> finish a staggered foe · spear held on a charge: brace   <!-- CMB --><br />
     hold <kbd>Z</kbd> hunter's focus: read blood trails · hold <kbd>E</kbd> butcher<br />
     <kbd>Esc</kbd> menu · settings · save
-  </div>
+  </div></div>
   <div id="fps"></div>
 </div>
 <div id="vignette"></div>
@@ -378,7 +386,7 @@
   <div id="maptabs"><button data-mt="map" class="on">Map</button><button data-mt="mem">Memories</button></div><!-- ARC: the Memories tab -->
   <div id="mapview">
   <canvas id="mapcanvas" width="820" height="820"></canvas>
-  <div class="legend"><span><i style="background:#fff"></i>You</span><span><i style="background:#ff8fb8"></i>Sena</span><span><i style="background:#c08850"></i>Horse</span><span><i style="background:#e8b830;border-radius:0;transform:rotate(45deg) scale(.8)"></i>Quest</span><span><i style="background:#4a4550;border-radius:5px 5px 0 0"></i>Cave</span><span><i style="background:#7a6a5a;border-radius:0"></i>Landmark</span><span><i style="background:#6fb0c8"></i>Ford</span><span><i style="background:#c98f55"></i>Deer</span><span><i style="background:#ff4a3c"></i>Wolves</span><span><i style="background:#b05cff"></i>Pin</span><span><i style="background:#e8dcc0;border-radius:0"></i>Buildings</span></div>
+  <div class="legend"><span><i style="background:#fff"></i>You</span><span><i style="background:#ff8fb8"></i>Sena</span><span id="lg-kid" style="display:none"><i style="background:#7fe0a0"></i>Lio</span><span><i style="background:#c08850"></i>Horse</span><span><i style="background:#e8b830;border-radius:0;transform:rotate(45deg) scale(.8)"></i>Quest</span><span><i style="background:#4a4550;border-radius:5px 5px 0 0"></i>Cave</span><span><i style="background:#7a6a5a;border-radius:0"></i>Landmark</span><span><i style="background:#6fb0c8"></i>Ford</span><span><i style="background:#c98f55"></i>Deer</span><span><i style="background:#ff4a3c"></i>Wolves</span><span><i style="background:#b05cff"></i>Pin</span><span><i style="background:#e8dcc0;border-radius:0"></i>Buildings</span></div>
   <small id="mapinfo"></small></div>
   <div id="memories" hidden></div>
   <small>Press <kbd>M</kbd> to close</small>
