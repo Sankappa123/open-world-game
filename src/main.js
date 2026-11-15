@@ -7,7 +7,7 @@ import { makeBlanket, makeBedroll } from './entities.js';   // RST bed props
 import { loadPeople, makeHuman, samplePose, applyPose, clipDuration, BONESETS, ik2, ikLeg, FIT } from './people.js';   // WH ikLeg: riders' legs
 import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';   // WPN viewmodel fists
 import { clamp, lerp, mat } from './util.js';
-import { loadGame, saveGame, deleteGame, saveState, settings, saveSettings } from './save.js';
+import { loadGame, saveGame, deleteGame, saveState, settings, saveSettings, holdServer, releaseServer, abandonSession } from './save.js';
 import { PRESETS, detectQuality } from './quality.js';
 import { CAVES, depthAt, biome as biomeAt, POIS, forest } from './world.js';   // WP3 caves and landmarks
 import * as MATD from './mature.js';
@@ -337,12 +337,26 @@ function drawInv() {
   h += matToolsHud();                                // MAT: the mature packages' tools (boil bag, pot, mantle, bear cloak)
   for (const k in ITEMS) if (S.inv[k] > 0) h += `<span>${ITEMS[k]}<b>${S.inv[k]}</b></span>`;
   $('inv').innerHTML = h || '<span>Nothing carried</span>';   // FPP-world: describes the pack, not the hands (fists may be raised)
+  const sig = h.replace(/<b>[^<]*<\/b>/g, '').replace(/lit \d+s/, 'lit');   // FHW-r4: an entry appearing or running out shows the stowed first-person pack (counts already toast, e.g. Sena's gathering)
+  if (sig !== FPH.sig) { FPH.sig = sig; FPH.until = clock + 4; }
   wpnHud();                                          // WPN chip (owned weapons may have changed)
   $('cross').style.display = 'block';
+}
+// FHW-r4: the first-person HUD. The bottom of the view belongs to the hands: the spear fist and shaft, the torch, the
+// rein fists and the horse's neck all sat under the pack, the E prompt, the fps readout and the F1 chip. In first person
+// (#hud.fpp) the pack stows (fades out, its space handed to the prompt and subtitles) 3 s after it last changed and
+// comes back for 4 s on any change and while a menu is open; the F1 chip and fps readout move up under the weapon chip.
+const FPH = { sig: '', until: 0, on: false, stow: false };
+function fppHud() {
+  const fp = view === 'fpp' && FP.act && playing && !camShot;
+  if (fp !== FPH.on) { FPH.on = fp; $('hud').classList.toggle('fpp', fp); if (fp) FPH.until = Math.max(FPH.until, clock + 3); }
+  const stow = fp && clock > FPH.until && !menuOpen && !paused;
+  if (stow !== FPH.stow) { FPH.stow = stow; $('hud').classList.toggle('stow', stow); }
 }
 // FPP-world: --invH tracks the pack's height (it wraps to 2-3 rows with a full pack or a narrow window) so the
 // E prompt, the subtitles and the open F1 list stack above it instead of drawing over its chips.
 if (window.ResizeObserver) new ResizeObserver(() => document.documentElement.style.setProperty('--invH', $('inv').offsetHeight + 'px')).observe($('inv'));
+if (window.ResizeObserver) new ResizeObserver(() => document.documentElement.style.setProperty('--subH', $('sub').offsetHeight + 'px')).observe($('sub'));   // FPW-r3: the open F1 list clears the subtitle
 function drawQuest() {
   const ch = CH[S.ch];
   $('chapter').textContent = `${ch.epilogue ? 'Epilogue' : roman(chNo())} · ${ch.title}`;
@@ -402,6 +416,21 @@ saveState.listeners.push((st) => {
   el.textContent = st.where === 'db' ? 'Saved to database' : 'Saved in browser only (server unreachable)';
   el.className = 'panel ' + (st.where === 'db' ? 'ok' : 'warn');
 });
+// SAVE-PERF r3: the save server answered late with a newer story than the one being played (this session started from
+// an older browser copy, or as a new story, while the server was silent). Nothing has been sent over it; the player chooses.
+let conflictAsked = false, sessionBase = { day: 0, at: 0 };
+saveState.listeners.push((st) => {
+  if (!st.conflict || conflictAsked || !playing) return;
+  conflictAsked = true;
+  const d = st.conflict, when = d.savedAt ? new Date(d.savedAt).toLocaleString() : 'earlier';
+  const here = sessionBase.day ? `the copy from this browser you are playing (started at day ${sessionBase.day})` : 'the new story you started';
+  setTimeout(() => {
+    if (document.pointerLockElement) document.exitPointerLock();
+    if (confirm(`The save server answered late. It has a newer saved story (day ${d.day || 1}, saved ${when}) than ${here}.\n\nOK: switch to the newer story. This session is kept as a backup in this browser.\nCancel: keep playing this one. It will replace the newer story on the server.`)) {
+      abandonSession(); location.reload();
+    } else { releaseServer(); save(); }
+  }, 0);
+});
 // Save when the tab is hidden or closed, so nothing is lost when the machine is switched off.
 addEventListener('visibilitychange', () => { if (document.hidden) save({ beacon: true }); });
 addEventListener('pagehide', () => save({ beacon: true }));
@@ -420,7 +449,7 @@ function walkTo(e, tx, tz, speed, dt, stop = 0.4) {
   if (d <= stop) { e.speed = 0; return true; }
   if (e.swim) speed = Math.min(speed, 2.3);
   e.pos.x += (dx / d) * speed * dt; e.pos.z += (dz / d) * speed * dt;
-  collide(e.pos, 0.3);
+  collide(e.pos, 0.3, false, !!e.foe);              // SIT-r3: raiders never walk through the walls of an open house
   e.face = turn(e.face, Math.atan2(dx, dz), Math.min(1, dt * 8));
   e.speed = speed;
   return false;
@@ -432,6 +461,8 @@ function settle(e, dt, crouch) {
   // Lying down (resting in bed): body flat on its back at restPos.
   if (e.rest > 0) { root.position.copy(e.restPos); root.rotation.order = 'YXZ'; root.rotation.set(-Math.PI / 2, e.face, 0); e.h.animate(dt, 0, false, false, false); return; }
   root.rotation.x = 0;
+  if (e.sitIn) sitInStep(e, dt);                    // SIT-r3: walking onto a seat (fire bench, hot spring)
+  if (e.standOff) standOffStep(e, dt);              // SIT-r3: easing off the bench log
   // Seated on something that moves (horse rider): the caller supplies the world seat point.
   if (e.seat) { root.position.copy(e.seat); if (e.fsW > 0) root.position.y -= FS.drop * smooth01(e.fsW); root.rotation.y = e.face; e.h.animate(dt, 0, false, false, false); return; }
   const g = getHeight(e.pos.x, e.pos.z);
@@ -835,6 +866,10 @@ const RIDE_SEAT = { P: { back: -0.32, up: -0.03 }, N: { back: 0.08, up: 0 } };  
 const RIDE_UPRIGHT = (b) => /^(spine_0[123]|neck_01|Head)$/.test(b);
 const RIDE_UP = { P: samplePose(P.h, 'idle', 0, RIDE_UPRIGHT), N: samplePose(N.h, 'idle', 0, RIDE_UPRIGHT) };
 const _rA = new THREE.Vector3(), _rB = new THREE.Vector3(), _rC = new THREE.Vector3(), _rL = new THREE.Vector3();
+// RIDE-r3: the riders' foot line (ankle -> ball) in the rider's frame: out to the side and down (standing flat it runs
+// 31 degrees down; 14 here drops the heel about 17 degrees below the ball, the weight in the heel)
+const RIDE_FOOT = { out: 0.22, down: -0.26 };
+const _rq4 = new THREE.Quaternion(), _rL2 = new THREE.Vector3();
 function riderOverride(e) {
   return (h, dt) => {
     const on = e === P ? !!P.ride && !P.taming : !!N.ride;
@@ -868,7 +903,17 @@ function riderOverride(e) {
         }
       }
       ikLeg(h, sd, root.localToWorld(_rB), root.localToWorld(_rC), w);
-      const ft = b['foot_' + sd]; ft.rotateX(-0.25 * w);                         // heels a little down
+      // RIDE-r3: the foot is set in the rider's frame, not left at the clip's angle on the bent calf (that pointed the
+      // toes down, and at speed back under the barrel): toes forward and a little out, the heel just below the ball
+      const ft = b['foot_' + sd], ball = b['ball_' + sd];
+      if (ball && dis < 0) {
+        root.updateMatrixWorld(true); ft.updateWorldMatrix(true, true);
+        ball.getWorldPosition(_rC).sub(ft.getWorldPosition(_rB)).normalize();
+        _rB.set(s * RIDE_FOOT.out, RIDE_FOOT.down, 1).normalize().transformDirection(root.matrixWorld);
+        _rq4.setFromUnitVectors(_rC, _rB);
+        _rL2.set(_rq4.x, _rq4.y, _rq4.z); const sa = _rL2.length();
+        if (sa > 1e-6) rotW(ft, _rL2.divideScalar(sa), 2 * Math.atan2(sa, _rq4.w) * w);
+      }
     }
     root.worldToLocal(b.pelvis.getWorldPosition(_rA));
     const py = _rA.y, pz = _rA.z;
@@ -923,23 +968,39 @@ const tack = (() => {
 const TACK_NOSE = { p: new THREE.Vector3(0, 0.42, 0.0), q: new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1, 0, 0), Math.PI / 2), r: 0.085, bit: new THREE.Vector3(0, 0.47, -0.05) };
 const headPt = (hd, off, out) => { hd.getWorldPosition(out); hd.getWorldQuaternion(_tq); return out.add(_tU.copy(off).applyQuaternion(_tq)); };
 const _tq = new THREE.Quaternion(), _tm = new THREE.Matrix4(), _tF = new THREE.Vector3(), _tB = new THREE.Vector3(), _tU = new THREE.Vector3();
-// WH: riding two-up, Aro's spear would cross Sena's arms on his back: it rides in a rest on the horse's right shoulder
-// instead (horse frame from Torso2: outside both riders' right knees, tip forward and up like a carried lance).
-const spearRest = new THREE.Group(); scene.add(spearRest);
-const FPP_NECK = 0.32;   // WH: first-person riding neck reach (rad)
-const SPEAR_REST = { p: new THREE.Vector3(-0.43, -0.12, 0.42), q: new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1, 0, 0), -0.42) };
+// FPW-r3: in first person the neck is set to one carriage whatever the gait: the head (Neck1 -> Head) rises FPP_NECK_EL
+// above level. The Walk clip dropped her head ~0.5 m and it left the view (riding ahead showed only grass);
+// WH's fixed 0.32 rad reach kept that drop. Most of the clip's own nod stays (FPP_NECK_K), so she still moves.
+const FPP_NECK_EL = 0.68, FPP_NECK_K = 0.85;
+const _nkA = new THREE.Vector3(), _nkB = new THREE.Vector3();
+function fppNeck(th) {
+  const nk = th.a.bone('Neck1'), hd = th.a.bone('Head');
+  nk.updateWorldMatrix(true, false); hd.updateWorldMatrix(true, false);
+  nk.getWorldPosition(_nkA); hd.getWorldPosition(_nkB).sub(_nkA);
+  const fh = Math.hypot(_tF.x, _tF.z) || 1;                        // her heading, level (the gallop pitches the back forward: the carriage is held against the horizon)
+  const el = Math.atan2(_nkB.y, (_nkB.x * _tF.x + _nkB.z * _tF.z) / fh);   // the neck's rise above level (_tF/_tB: updateTack's horse frame)
+  const w = smooth01(((P.rideW ?? 1) - 0.4) / 0.5);                // eases in with the mount blend
+  rotW(nk, _tB, clamp(el - FPP_NECK_EL, -0.6, 0.7) * FPP_NECK_K * w);   // + about the horse's left: forward and down
+}
+// RIDE-r3: two-up, Aro's sheathed spear rides on Sena's back (diagonal, tip up and behind her left shoulder): her own
+// spear and basket are put away on the horse, and nothing sits behind her. The old horse-shoulder rest pointed the stone
+// tip forward past the horse's jaw. Scaled by the two spines' world scale so it keeps its size.
+const _srS = new THREE.Vector3();
+// Her spine_03 socket frame, fitted in game: the butt by her right hip over the croup, the shaft flat on her shoulder
+// blades, the tip 0.95 m over her pelvis (0.3 m over her head), 0.8 m to her left and 0.5 m behind: 54 degrees across her
+// back from behind, leaning back from the side.
+const SPEAR_ON_SENA = { p: [0.001, -0.048, -0.144], r: [-2.224, 0.857, 0.391], s: 0.92 };
 function spearRestTick(live) {
-  const sp = P.h.spear, inRest = sp.parent === spearRest;
+  const sp = P.h.spear, inRest = sp.userData.slot === 'rest';
   const want = live && P.ride && N.ride && !(P.tr && !P.tr.on) && W.st === 'sheathed' && !W.aim && !W.spearOut && !W.props;   // WH: into the rest as the climb starts
   if (want && !inRest && P.h.slotOf(sp) === 'back') {
-    spearRest.updateMatrixWorld(true); spearRest.attach(sp);
     const i = P.h.blends.findIndex((x) => x.m === sp); if (i >= 0) P.h.blends.splice(i, 1);
-    sp.userData.rest = { t0: clock, p0: sp.position.clone(), q0: sp.quaternion.clone() }; sp.userData.slot = null;
-  } else if (!want && inRest) { sp.userData.rest = null; P.h.place(sp, 'back', 0.3); }
-  const r = sp.userData.rest;
-  if (sp.parent === spearRest && r) {                // ease into the rest over 0.4 s
-    const e = smooth01((clock - r.t0) / 0.4);
-    sp.position.lerpVectors(r.p0, SPEAR_REST.p, e); sp.quaternion.slerpQuaternions(r.q0, SPEAR_REST.q, e); sp.scale.setScalar(0.92);
+    const k = P.h.bones.spine_03.getWorldScale(_srS).x / N.h.bones.spine_03.getWorldScale(_srS).x;
+    N.h.place(sp, 'back', 0.4, { ...SPEAR_ON_SENA, s: SPEAR_ON_SENA.s * k });
+    sp.userData.slot = 'rest';                       // not Aro's 'back': his draw and stow code leave it alone until it returns
+  } else if (!want && inRest) {
+    const i = N.h.blends.findIndex((x) => x.m === sp); if (i >= 0) N.h.blends.splice(i, 1);
+    P.h.place(sp, 'back', 0.3);
   }
 }
 function updateTack(th) {
@@ -953,10 +1014,9 @@ function updateTack(th) {
     _tB.crossVectors(_tU, _tF);                                                  // the horse's left
     _tm.makeBasis(_tB, _tU, _tF); tack.g.quaternion.setFromRotationMatrix(_tm);
     th.a.bone('Torso2').getWorldPosition(tack.g.position);
-    spearRest.position.copy(tack.g.position); spearRest.quaternion.copy(tack.g.quaternion);
     // WH: in first person her ridden head-up carriage put the ears right under the rider's eye and hid the neck: the
     // neck reaches forward and down a little (first person only; the third-person look keeps the proud head)
-    if (P.ride === th && !P.taming && view === 'fpp') { th.a.bone('Neck1').updateWorldMatrix(true, false); rotW(th.a.bone('Neck1'), _tB, FPP_NECK); }
+    if (P.ride === th && !P.taming && view === 'fpp') fppNeck(th);   // FPW-r3: a set carriage in every gait (the Walk clip dropped the head out of view)
   }
   spearRestTick(live);
   if (!on) { tack.reins.forEach((r) => (r.visible = false)); return; }
@@ -1116,7 +1176,7 @@ function revive(o) {
 function step(o, speed, dt) {
   const p = o.root.position, nx = p.x + Math.sin(o.dir) * speed * dt, nz = p.z + Math.cos(o.dir) * speed * dt;
   if (getHeight(nx, nz) < 0.4 || Math.abs(nx) > LIMIT || Math.abs(nz) > LIMIT || slopeY(nx, nz) < 0.6) { o.dir += 0.9 + rand() * 0.8; o.avoid = 1; return; }
-  p.x = nx; p.z = nz; collide(p, 0.4); p.y = getHeight(p.x, p.z);
+  p.x = nx; p.z = nz; collide(p, 0.4, false, !o.tame); p.y = getHeight(p.x, p.z);   // SIT-r3: wild animals never pass the home's walls
 }
 function wolfBrain(o, dist, dx, dz, dt) {
   const p = o.root.position;
@@ -1130,7 +1190,8 @@ function wolfBrain(o, dist, dx, dz, dt) {
     if (o.den && Math.hypot(o.den[0] - p.x, o.den[1] - p.z) <= 6) o.den = [o.den[0] + dx / (dist || 1) * 30, o.den[1] + dz / (dist || 1) * 30];   // deeper in, still away from him
     if (dist > 95) remove(o); return 7;
   }
-  const safe = P.swim || torchOn || structs.some((s) => s.kind === 'fire' && s.rise >= 1 && Math.hypot(s.x - P.pos.x, s.z - P.pos.z) < 8);
+  const safe = P.swim || torchOn || !!R.inside || structs.some((s) => s.rise >= 1 && (s.kind === 'fire' && Math.hypot(s.x - P.pos.x, s.z - P.pos.z) < 8
+    || (s.kind === 'house' || s.kind === 'hut') && Math.hypot(s.x - P.pos.x, s.z - P.pos.z) < s.radius * 0.8));   // SIT-r3: indoors (the walls stop them; no bites through a wall)
   if (safe) {                               // fire and deep water keep them circling at a distance
     o.ang = (o.ang ?? Math.atan2(dx, dz)) + dt * 0.25;
     const tx = P.pos.x + Math.sin(o.ang) * 13, tz = P.pos.z + Math.cos(o.ang) * 13;
@@ -1254,14 +1315,27 @@ function wolfBearing(cx, cz, r) {
 // not out of the open meadow); failing that, the nearest woods themselves when within 130 m; else 46 m out on the bearing.
 function wolfDen(cx, cz, a) {
   for (let r = 46; r <= 110; r += 8) { const x = cx + Math.sin(a) * r, z = cz + Math.cos(a) * r; if (pineWoods(x, z)) return [x, z]; }
-  const pn = pineNear(cx, cz, 200);
-  if (pn) { const d = Math.hypot(pn[0] - cx, pn[1] - cz), b = Math.atan2(pn[0] - cx, pn[1] - cz), r = clamp(d, 46, 130); if (d <= 130) return [cx + Math.sin(b) * r, cz + Math.cos(b) * r]; }
+  // RIDE-r3: the nearest woods 46-130 m out, tested at the spot itself (clamping a nearer pine out to 46 m on its
+  // bearing left the den in the open meadow); then any woods within 200 m, even nearer than 46 m
+  const pn = pineNear(cx, cz, 130, 46) || pineNear(cx, cz, 200);
+  if (pn) return pn;
   return [cx + Math.sin(a) * 46, cz + Math.cos(a) * 46];
 }
-function pineNear(x, z, max = 120) {
-  for (let r = 20; r <= max; r += 20) for (let i = 0; i < 10; i++) {
+// RIDE-r3: a wolf's start spot: on land inside the pines near the den (random tries, then a ring search out to 30 m),
+// else the den itself when it is woods; open ground only when there are no woods anywhere near.
+function wolfSpot(cx, cz) {
+  const ok = (x, z) => pineWoods(x, z) && getHeight(x, z) > 1.6 && slopeY(x, z) > 0.85;
+  for (let t = 0; t < 16; t++) { const [x, z] = landSpot(cx, cz, 0, t < 10 ? 12 : 6); if (ok(x, z)) return [x, z]; }
+  for (let r = 3; r <= 30; r += 3) for (let i = 0; i < 12; i++) {
+    const b = i * 0.5236 + r, x = cx + Math.sin(b) * r, z = cz + Math.cos(b) * r;
+    if (ok(x, z)) return [x, z];
+  }
+  return pineWoods(cx, cz) ? [cx, cz] : landSpot(cx, cz, 0, 12);
+}
+function pineNear(x, z, max = 120, min = 20) {    // RIDE-r3: min (the den's 46 m floor)
+  for (let r = min; r <= max; r += min > 20 ? 8 : 20) for (let i = 0; i < 10; i++) {
     const a = i * 0.628 + r * 0.1, px = x + Math.sin(a) * r, pz = z + Math.cos(a) * r;
-    if (pineWoods(px, pz)) return [px, pz];
+    if (pineWoods(px, pz) && getHeight(px, pz) > 1.6) return [px, pz];   // RIDE-r3: on land
   }
   return null;
 }
@@ -1278,7 +1352,7 @@ const EVENTS = {
     const n = MATD.packSize(D(), reached('house')), a = wolfBearing(P.pos.x, P.pos.z, 46);   // MAT: pack size by difficulty (+1 after the house); WH: out of the pines
     const [cx, cz] = wolfDen(P.pos.x, P.pos.z, a);
     for (let i = 0; i < n; i++) {                    // WH: each wolf on land inside the trees (a few tries), else beside the pack
-      let x, z; for (let t = 0; t < 6; t++) { [x, z] = landSpot(cx, cz, 0, 12); if (pineWoods(x, z)) break; }
+      const [x, z] = wolfSpot(cx, cz);              // RIDE-r3: never the open meadow while woods are near
       spawn('wolf', x, z);
     }
     PRED.pack(animals.slice(-n));                    // CMB: an alpha leads the pack after the house (always on Hardcore)
@@ -1625,7 +1699,7 @@ function wpnKnock(o, from = P.pos) {                 // hurt(): knockback, a fli
 function wpnAnimalFx(o, dt) {                        // updateAnimal: knockback slide and flinch tilt
   if (o.kb) {
     const p = o.root.position, k = o.kb.t / 0.25;
-    p.x += o.kb.x * k * dt * 1.6; p.z += o.kb.z * k * dt * 1.6; collide(p, 0.4); p.y = getHeight(p.x, p.z);
+    p.x += o.kb.x * k * dt * 1.6; p.z += o.kb.z * k * dt * 1.6; collide(p, 0.4, false, !o.tame); p.y = getHeight(p.x, p.z);
     if ((o.kb.t -= dt) <= 0) o.kb = null;
   }
   if (o.flinch > 0) { o.flinch = Math.max(0, o.flinch - dt); o.root.rotation.z = Math.sin((o.flinch / 0.3) * Math.PI) * 0.12; }
@@ -1918,7 +1992,7 @@ function wpnUpdate(dt) {
   if (ok !== W.ownKey) { W.ownKey = ok; wpnSync(); }
   { const ik = W.spearOut && spearWhere(); if (ik !== W.invOut) { W.invOut = ik; drawInv(); wpnHud(); } }   // WH: the pack line says where the thrown spear is
   wpnBackFit();                                      // WH: the spear's carry on the back (on foot, saddle, water)
-  { const sh = (P.sit > 0 || seatedPose(P.h)) && P.h.slotOf(P.h.spear) === 'back' && !W.spearOut;   // WH: seated, the spear is set down (as Sena's is)
+  { const sh = (P.sit > 0 && !P.sitIn || seatedPose(P.h)) && P.h.slotOf(P.h.spear) === 'back' && !W.spearOut;   // WH: seated, the spear is set down (as Sena's is) (SIT-r3: not while he walks to the seat)
     if (sh !== !!W.seatHid && !W.props) { W.seatHid = sh; if (!W.spearOut) P.h.spear.visible = !sh; } }   // (cinematics with W.props own the carry)
   if (W.restoreDrawn && clock > 0.2) { W.restoreDrawn = false; if (W.st === 'sheathed' && !P.ride && !P.swim && !wBusy() && !W.props) wpnSnapDrawn(); }
   if (!!P.ride !== W.wasRide) { W.wasRide = !!P.ride; if (W.aim) wpnCancelAim(); }
@@ -2530,16 +2604,28 @@ function discoverPOI(id) {
   return true;
 }
 function soakTogether() {
-  const sp = LMK.spring, a = Math.atan2(P.pos.x - sp.x, P.pos.z - sp.z);
-  const seat = (e, off) => {
-    const x = sp.x + Math.sin(a + off) * 2.2, z = sp.z + Math.cos(a + off) * 2.2;
-    const y = (sp.water ?? sp.y + 0.6) - 0.86;                                     // pelvis ~0.3 m under the surface, shoulders above
-    e.pos.set(x, y, z); e.seat = new THREE.Vector3(x, y, z); e.soak = true;
-    e.face = Math.atan2(sp.x - x, sp.z - z); e.sit = 600; e.vx = e.vz = 0;   // STORY: soak until a movement key, Space or E (like the hearth sit)
-  };
-  seat(P, 0); seat(N, 0.45);
-  P.auto = false; N.node = null; N.act = 0;
-  P.h.pose = 'sit'; N.h.pose = N.h.has('sitTalk') ? 'sitTalk' : 'sit';
+  // SIT-r3: they wade in and sit on the pool floor with their legs out (the hearth floor sit: hips on the bottom, chest
+  // and shoulders out of the water), side by side and facing the middle. The chair-sit pose sank the shins through the
+  // floor, and both used to pop into the pool and out of it. Standing up eases the root back up (fsW).
+  const sp = LMK.spring, a = Math.atan2(P.pos.x - sp.x, P.pos.z - sp.z), wl = sp.water ?? sp.y + 0.6;
+  const seats = [[a, 0.1], [a + 0.45, -0.1]].map(([an, tw]) => {
+    const x = sp.x + Math.sin(an) * 2.4, z = sp.z + Math.cos(an) * 2.4;
+    return [x, z, Math.atan2(sp.x - x, sp.z - z) + tw];                  // a little toward each other
+  });
+  const far = sitApproach(P, seats[0]) | sitApproach(N, seats[1]);
+  if (far) dipCut();
+  const pose = (e) => (e === N && N.h.has('sitTalk') ? 'sitTalk' : 'sit');
+  const sit = (e) => { const v = new THREE.Vector3(e.pos.x, getHeight(e.pos.x, e.pos.z), e.pos.z); e.pos.copy(v); e.seat = v; e.floorSit = 1; };
+  for (const [e, st] of [[P, seats[0]], [N, seats[1]]]) {
+    e.vx = e.vz = 0; e.soak = true; e.fire = null;
+    sitWalkIn(e, st[0], st[1], st[2], pose(e), sit);
+    e.sit = 600 + e.sitIn.dur;                       // STORY: soak until a movement key, Space or E (like the hearth sit)
+  }
+  P.auto = false; P.sneak = false; N.node = null; N.act = 0;
+  if (view !== 'fpp') {                              // SIT-r3: a held two-shot from across the pool (the follow camera looked at his back)
+    const am = a + 0.225, mx = sp.x + Math.sin(am) * 2.4, mz = sp.z + Math.cos(am) * 2.4;
+    camShot = { pos: new THREE.Vector3(sp.x - Math.sin(am) * 1.7, wl + 1.25, sp.z - Math.cos(am) * 1.7), look: new THREE.Vector3(mx, wl + 0.3, mz), t: 1e9, hearthSit: true, ease: true, snap: false };
+  }
   S.warm = 100; S.hp = Math.min(100, S.hp + 20); bump('soak');
   survSoak();                                        // SURV: the hot water cures hypothermia and eases a sprain
   say('Sena', ['Warm water in the cold hills. The earth is kind to us today.', 'Stay a while. My feet have walked enough for one day.'][cnt('soak') % 2]);
@@ -2623,7 +2709,7 @@ function updateWP3(dt) {
   }
   // the hot spring soak ends with the sit (timer or a movement key)
   for (const e of [P, N]) if (e.soak && !(e.sit > 0)) {
-    e.soak = false; e.seat = null; e.h.pose = null;
+    e.soak = false; e.seat = null; e.floorSit = 0; if (seatedPose(e.h)) { e.h.pose = null; e.h.swing('standUp', 1.15); }   // SIT-r3: up off the pool floor (fsW eases the root)
     if (e === N) {                                   // round 2: she wades out to the first dry ground on her side, not left standing in the pool
       const sp = LMK.spring, a = Math.atan2(N.pos.x - sp.x, N.pos.z - sp.z), wl = sp.water ?? sp.y + 0.6;
       let r = Math.hypot(N.pos.x - sp.x, N.pos.z - sp.z);
@@ -2631,7 +2717,7 @@ function updateWP3(dt) {
       N.soakOut = true; N.soakT = 0; N.path = [new THREE.Vector3(sp.x + Math.sin(a) * (r + 0.7), 0, sp.z + Math.cos(a) * (r + 0.7))];
     }
   }
-  if (P.soak) P.pos.y = P.seat.y;
+  if (P.soak && P.seat) P.pos.y = P.seat.y;         // SIT-r3: no seat yet while he wades in
   wp3T -= dt;
   if (wp3T <= 0) {
     wp3T = 0.5;
@@ -2690,6 +2776,7 @@ function addClose(n, why) {
 // The campfire's two log benches sit at local x = ±1.6 m (see BUILD.fire); rotation.y = rot maps local +x to (cos, -sin).
 const fireSeats = (s) => { const c = Math.cos(s.rot || 0), sn = Math.sin(s.rot || 0); return [[s.x - 1.6 * c, s.z + 1.6 * sn], [s.x + 1.6 * c, s.z - 1.6 * sn]]; };
 function sitTogether(s) {
+  const p0 = [P.pos.x, P.pos.z], n0 = [N.pos.x, N.pos.z];                // SIT-r3: where they stand now (they walk to the benches)
   let [a, b] = fireSeats(s);
   if (Math.hypot(b[0] - P.pos.x, b[1] - P.pos.z) < Math.hypot(a[0] - P.pos.x, a[1] - P.pos.z)) [a, b] = [b, a];   // Aro takes the nearer bench
   P.pos.set(a[0], 0, a[1]); N.pos.set(b[0], 0, b[1]);
@@ -2697,28 +2784,120 @@ function sitTogether(s) {
   P.vx = P.vz = 0; P.auto = false; P.sneak = false; N.node = null; N.act = 0;
   P.sit = N.sit = 8; P.fire = N.fire = [s.x, s.z];
   romBench(s);                                       // ROM: one bench together (40+), before the spear is planted
-  wpnBench(s);                                       // WPN stow; the spear planted by the bench
-  P.h.pose = 'sit'; N.h.pose = N.h.has('sitTalk') ? 'sitTalk' : 'sit';
+  wpnStowAll('sit', true);                           // WPN stow (SIT-r3: the spear is planted by the bench when he gets there, below)
+  // SIT-r3: no teleport onto the logs. The seats are set (above); each of them now walks there around the fire, turns
+  // and sits down (Sitting_Enter). From further than a few steps away a quick dip hides the first part of the walk.
+  const fp = [P.pos.x, P.pos.z, P.face], fn = [N.pos.x, N.pos.z, N.face];
+  P.pos.set(p0[0], P.pos.y, p0[1]); N.pos.set(n0[0], N.pos.y, n0[1]);
+  const far = sitApproach(P, fp, s) | sitApproach(N, fn, s);
+  if (far) dipCut();
+  sitWalkIn(P, fp[0], fp[1], fp[2], 'sit', (e) => { e.h.swing('sitDown', 1.25); wpnBench(s); }, s); sitWalkIn(N, fn[0], fn[1], fn[2], N.h.has('sitTalk') ? 'sitTalk' : 'sit', null, s);
+  const lag = Math.max(P.sitIn.dur, N.sitIn.dur) + 0.9;                  // walking + turning + sitting down
+  P.sit = N.sit = 8 + lag;
+  if (view !== 'fpp') camShot = fireSitShot(s, fp, fn);                  // SIT-r3: a held two-shot across the fire (the follow camera hid her)
   const v = VIGNETTES[CH[S.ch].id];
   if (v) v[cnt('sat_fire') % v.length].forEach((l) => say(...l));
   S.time = (S.time + 1) % 24;
   if (S.c.satDay !== S.day) { S.c.satDay = S.day; addClose(3, 'sat by the fire'); }
   bump('sat_fire'); drawQuest();
-  romSat(s);                                         // ROM: heart events, the first-kiss fallback
+  setTimeout(() => { if (P.sit > 0 && !P.sitIn) romSat(s); }, lag * 1000);   // ROM: heart events, the first-kiss fallback (once they are seated)
+}
+// SIT-r3: the held two-shot for the fire sit (camShot.ease: the camera glides there and back, see updateCamera).
+// Two benches: from the side, between the logs and a little behind Aro, so both faces and the flames share the frame.
+// One bench (ROM): from across the fire, a little off its axis, looking at the two of them past the flames.
+function fireSitShot(s, fp, fn) {
+  const g = getHeight(s.x, s.z), mx = (fp[0] + fn[0]) / 2, mz = (fp[1] + fn[1]) / 2;
+  const ax = fp[0] - s.x, az = fp[1] - s.z, al = Math.hypot(ax, az) || 1, ux = ax / al, uz = az / al;   // fire -> Aro
+  const one = Math.hypot(fp[0] - fn[0], fp[1] - fn[1]) < 1.6;
+  let best = null;
+  for (const sg of [1, -1]) {
+    const px = -uz * sg, pz = ux * sg;               // across the line fire-Aro
+    let dx, dz, dist;
+    if (one) { dx = -ux * 0.88 + px * 0.47; dz = -uz * 0.88 + pz * 0.47; dist = 3.7; }   // past the fire, ~28 degrees off its axis
+    else { dx = px * 0.92 + ux * 0.38; dz = pz * 0.92 + uz * 0.38; dist = 4.5; }          // side-on, eased toward Aro's shoulder
+    const cx = s.x + dx * dist, cz = s.z + dz * dist, gy = getHeight(cx, cz);
+    const pos = new THREE.Vector3(cx, Math.max(g, gy) + (one ? 1.9 : 1.7), cz);
+    const lk = one ? new THREE.Vector3(mx, g + 0.8, mz) : new THREE.Vector3(s.x, g + 0.75, s.z);
+    structCam(lk, pos);                              // never inside a hut or house wall
+    const score = -Math.abs(gy - g) * 3 - pos.distanceTo(camPos) * 0.15 + pos.distanceTo(lk) * 0.5;
+    if (!best || score > best.score) best = { pos, lk, score };
+  }
+  return { pos: best.pos, look: best.lk, t: 1e9, hearthSit: true, ease: true, snap: false };
+}
+// SIT-r3: the walk onto a seat. A start further than SIT_REACH from the seat is pulled in along the line (under a dipCut,
+// returns true), so nobody walks for seconds. e.sitIn is stepped in settle(): an eased walk (around the fire, never
+// through it), a turn to the seat's facing, then the sit pose with Sitting_Enter; `then` runs on arrival (floor sits).
+const SIT_REACH = 4.8;
+function sitApproach(e, to, fire) {
+  const dx = e.pos.x - to[0], dz = e.pos.z - to[1], d = Math.hypot(dx, dz);
+  if (d <= SIT_REACH) return false;
+  let x = to[0] + (dx / d) * SIT_REACH, z = to[1] + (dz / d) * SIT_REACH;
+  if (fire && Math.hypot(x - fire.x, z - fire.z) < 1.3) { const a = Math.atan2(to[0] - fire.x, to[1] - fire.z) + 0.9; x = fire.x + Math.sin(a) * 2.4; z = fire.z + Math.cos(a) * 2.4; }
+  e.pos.x = x; e.pos.z = z; e.face = Math.atan2(to[0] - x, to[1] - z);
+  return true;
+}
+function sitWalkIn(e, x1, z1, f1, pose, then = null, fire = null) {
+  const x0 = e.pos.x, z0 = e.pos.z, d = Math.hypot(x1 - x0, z1 - z0);
+  const si = { x0, z0, x1, z1, f1, pose, then, t: 0, turnT: 0, dur: clamp(d / 1.55, 0.4, 3.1), arc: null };
+  if (fire) {                                        // the straight line passes the flames: walk the ring around them instead
+    const ux = x1 - x0, uz = z1 - z0, L2 = ux * ux + uz * uz || 1, k = clamp(((fire.x - x0) * ux + (fire.z - z0) * uz) / L2, 0, 1);
+    if (Math.hypot(x0 + ux * k - fire.x, z0 + uz * k - fire.z) < 1.25) {
+      const a0 = Math.atan2(x0 - fire.x, z0 - fire.z), a1 = Math.atan2(x1 - fire.x, z1 - fire.z);
+      const da = wrapA(a1 - a0), r0 = Math.hypot(x0 - fire.x, z0 - fire.z), r1 = Math.hypot(x1 - fire.x, z1 - fire.z);
+      si.arc = { cx: fire.x, cz: fire.z, a0, da, r0: Math.max(r0, 1.3), r1 };
+      si.dur = clamp((Math.abs(da) * Math.max(r0, r1, 1.6) + Math.abs(r1 - r0)) / 1.55, 0.5, 3.3);
+    }
+  }
+  e.sitIn = si; e.h.pose = null; e.speed = 0; e.seat = null;
+}
+function sitInStep(e, dt) {
+  const si = e.sitIn;
+  if (!(e.sit > 0)) { e.sitIn = null; if (seatedPose(e.h)) e.h.pose = null; return; }   // the sit was ended some other way (a fade, a mount, a fall)
+  if (si.t < si.dur) {
+    si.t = Math.min(si.dur, si.t + dt);
+    const k = si.t / si.dur, m = smooth01(k), px = e.pos.x, pz = e.pos.z;
+    if (si.arc) {
+      const A = si.arc, a = A.a0 + A.da * m, r = A.r0 + (A.r1 - A.r0) * m + 0.35 * Math.sin(Math.PI * m) * (A.r0 < 1.7 ? 1 : 0);
+      e.pos.x = A.cx + Math.sin(a) * r; e.pos.z = A.cz + Math.cos(a) * r;
+    } else { e.pos.x = si.x0 + (si.x1 - si.x0) * m; e.pos.z = si.z0 + (si.z1 - si.z0) * m; }
+    const mx = e.pos.x - px, mz = e.pos.z - pz, v = Math.hypot(mx, mz) / Math.max(dt, 1e-4);
+    e.speed = v > 0.25 ? Math.max(1.1, v) : 0;       // the walk clip (never a skate at a crawl)
+    if (k < 0.8 && v > 0.25) e.face = turn(e.face, Math.atan2(mx, mz), Math.min(1, dt * 10));
+    else e.face = turn(e.face, si.f1, Math.min(1, dt * 9));
+    return;
+  }
+  e.speed = 0; e.pos.x = si.x1; e.pos.z = si.z1;
+  si.turnT += dt;
+  const left = Math.abs(wrapA(si.f1 - e.face));
+  if (left > 0.04 && si.turnT < 0.4) { e.face = turn(e.face, si.f1, Math.min(1, dt * 11)); return; }
+  e.face = si.f1; e.sitIn = null;
+  e.h.pose = si.pose;
+  if (si.then) si.then(e);                           // a floor sit: the seat and fsW lower the root (no chair clip)
+  else e.h.swing('sitDown', 1.25);
 }
 // Called both early (a key) and when the timer has already run out, so key it on the pose, not on e.sit.
 function endSit(e) {
   e.sit = 0;
   if (e === P) wpnUnSit();                           // WPN the spear back on the back
+  if (e.sitIn) { e.sitIn = null; e.h.pose = null; e.fire = null; e.soak = false; return; }   // SIT-r3: stopped on the way to the seat: just stop walking
   if (e.floorSit) {                                  // STORY hearth: she keeps her place by the hearth; else ease up off the floor (no chair clip)
     if (e === N && N.hearth?.phase === 'sit') return;
     e.floorSit = 0; e.seat = null; e.hearthSeat = false;
-    if (e.h.pose === 'sit' || e.h.pose === 'sitTalk') { e.h.pose = null; e.h.swing('standUp'); }   // the root rises with fsW
+    if (e.h.pose === 'sit' || e.h.pose === 'sitTalk') { e.h.pose = null; e.h.swing('standUp', 1.15); }   // the root rises with fsW (SIT-r3: unhurried)
     return;
   }
   if (e.h.pose !== 'sit' && e.h.pose !== 'sitTalk') return;
-  e.h.pose = null; e.h.swing('standUp');
-  if (e.fire) { const a = Math.atan2(e.pos.x - e.fire[0], e.pos.z - e.fire[1]); e.pos.x += Math.sin(a) * 0.5; e.pos.z += Math.cos(a) * 0.5; e.fire = null; }   // stand clear of the bench log
+  e.h.pose = null; e.h.swing('standUp', 1.05);      // SIT-r3: an unhurried rise (1.7 was over in 0.35 s)
+  if (e.fire) { const a = Math.atan2(e.pos.x - e.fire[0], e.pos.z - e.fire[1]); e.standOff = { x: Math.sin(a) * 0.5, z: Math.cos(a) * 0.5, t: 0 }; e.fire = null; }   // stand clear of the bench log: SIT-r3 eased in settle() (it was a one-frame 0.5 m pop)
+}
+// SIT-r3: the step off the bench as he rises: 0.5 m over 0.8 s, added to whatever else moves him (so keys still steer).
+function standOffStep(e, dt) {
+  const o = e.standOff, k0 = smooth01((o.t - 0.12) / 0.7);
+  o.t += dt;
+  const k = smooth01((o.t - 0.12) / 0.7);
+  e.pos.x += o.x * (k - k0); e.pos.z += o.z * (k - k0);
+  if (k - k0 > 0) collide(e.pos, 0.3);
+  if (o.t > 0.85) e.standOff = null;
 }
 // ---------- STORY hearth: Sena's evenings by the hearth, and "Sit with Sena by the hearth" ----------
 // Two floor seats on an arc 1.65 m from the hearth (house-local; the hearth is at 1.9, -1.2), both facing it: Aro on the
@@ -2731,13 +2910,14 @@ function floorSitOverride(e) {
     const w = smooth01(e.fsW || 0);
     if (!(w > 0)) return;
     const b = h.bones, yaw = h.root.rotation.y;
+    applyPose(h, e.fsLegs ??= samplePose(h, 'sitHold', 0, RST_LEGS), w);   // SIT-r3: the legs held still (the sit loops lift a knee now and then: a foot out of the hot spring)
     _fsA.set(Math.cos(yaw), 0, -Math.sin(yaw));
     for (const sd of ['l', 'r']) { rotW(b['thigh_' + sd], _fsA, -FS.hip * w); rotW(b['calf_' + sd], _fsA, -FS.knee * w); }
   };
 }
 function floorSitEase(e, dt) {
   if (!e.fsOv) { e.fsOv = true; e.h.addOverride('floorSit', 12, floorSitOverride(e)); }
-  e.fsW = clamp((e.fsW || 0) + (e.floorSit && e.seat ? dt : -dt) / 0.55, 0, 1);
+  e.fsW = clamp((e.fsW || 0) + (e.floorSit && e.seat ? dt / 0.55 : -dt / 0.85), 0, 1);   // SIT-r3: up off the floor a little slower than down (0.55 s read as a spring)
 }
 const hearthHouse = () => { const h = S.home.hearth && homeHouse(); return h && h.rise >= 1 ? h : null; };
 const hearthSeat = (h, i) => { const v = toWorld(h, [HEARTH_SEATS[i][0], 0, HEARTH_SEATS[i][1]]); v.y = h.group.position.y + 0.19; return v; };
@@ -2929,7 +3109,7 @@ const RST_LAY = {
 // Pose tuning (G.restTune live-edits it): legs blend toward the standing legs (less splay), knee bend, head turn,
 // Aro's small roll toward Sena, Sena's roll onto her side and her curled legs ([down leg, upper leg]).
 const RT = { legIdle: 0.5, hip: 0.05, knee: 0.14, turn: 0.45, rollA: 0.12, rollN: 1.42, sHip: [0.4, 0.8], sKnee: [0.6, 1.1], sHead: 0.22, sAdd: 0.85,
-  hold: [0.1, 0.07, 0.57], belly: [0.11, 0.06, -0.03], cheek: [0.1, 0.02, 0.1], breathe: 0.03, ankle: 0.065, dSheet: 0.13, dCap: 0.34, dFall: 0.3, dDrop: 0.15 };
+  hold: [0.1, 0.07, 0.57], belly: [0.11, 0.06, -0.03], cheek: [0.1, 0.02, 0.1], breathe: 0.03, ankle: 0.065, dSheet: 0.03, dCap: 0.36, dFall: 0.24, dDrop: 0.15, dTop: 1.0, dReach: 0.4, dPass: 10 };   // SIT-r3 drape: thinner sheet, shorter fall, cover sized to the sleepers
 const RST_LEGS = (b) => /^(thigh|calf|foot|ball)_/.test(b), _V_UP = new THREE.Vector3(0, 1, 0);
 const DREAM = {
   awaken: [['Sena', '…warm… the sparks look like little stars…'], ['Aro', '(The river never stops talking. Neither does she, in her sleep.)']],
@@ -3271,7 +3451,7 @@ function rstKids(L) {
 }
 // Bed props: the blanket (always), and a bedroll (hide mat + pillows) for the bare house floor or rolled hides in the cave.
 function rstProps(L) {
-  if (!R.blanket) { R.blanket = makeBlanket(1, 1); scene.add(R.blanket); }
+  if (!R.blanket) { R.blanket = makeBlanket(1, 1, 34, 28); scene.add(R.blanket); }   // SIT-r3: a finer grid (6 cm): an upturned foot no longer slips between two vertices
   for (const p of R.props) p.visible = false;
   R.blanket.visible = true;
   if (R.bedHide) R.bedHide.visible = true;
@@ -3309,30 +3489,44 @@ function rstKneelOverride(e) {
 }
 // Shape the blanket over the sleepers' hips and legs (from the waist down), centred between them and aligned to the bed.
 const DRAPE_BONES = [['spine_01', 0.13], ['pelvis', 0.15], ['thigh_l', 0.11], ['thigh_r', 0.11], ['calf_l', 0.09], ['calf_r', 0.09], ['foot_l', 0.1], ['foot_r', 0.1], ['ball_l', 0.09], ['ball_r', 0.09], ['ball_leaf_l', 0.08], ['ball_leaf_r', 0.08]];
-const DRAPE_MIDS = [['thigh_l', 'calf_l', 0.1], ['thigh_r', 'calf_r', 0.1], ['calf_l', 'foot_l', 0.085], ['calf_r', 'foot_r', 0.085]];
+const DRAPE_MIDS = [['thigh_l', 'calf_l', 0.1], ['thigh_r', 'calf_r', 0.1], ['calf_l', 'foot_l', 0.085], ['calf_r', 'foot_r', 0.085], ['foot_l', 'ball_leaf_l', 0.085], ['foot_r', 'ball_leaf_r', 0.085]];   // SIT-r3: + the instep
 const _dp = [];                                   // STORY: RT.dSheet/dCap/dFall: a thin cloth laid over the bodies, never a tent of lumps
 function rstDrape(k) {
   const L = R.L, bl = R.blanket;
   if (!L || !bl) return;
   const D = L.D, solo = !R.together, [bw, bl2, bz] = D.bed, low = !!D.low;
-  const x0 = solo ? D.solo[0] : (D.head[0][0] + D.head[1][0]) / 2, bx = (D.head[0][0] + D.head[1][0]) / 2;   // blanket centre, bed centre
+  let x0 = solo ? D.solo[0] : (D.head[0][0] + D.head[1][0]) / 2;                                              // blanket centre
+  const bx = (D.head[0][0] + D.head[1][0]) / 2;                                                                // bed centre
   const span = solo ? 0 : Math.abs(D.head[1][0] - D.head[0][0]);
   // round 2: from the waist (head + 0.5) to just past the toes; on a raised bed it overhangs the sides a little, on a
   // floor bed or the cave hides it is only as wide and long as the sleepers need (no cover running far past the feet)
-  const wid = solo ? 1.05 : low ? Math.min(bw + 0.3, span + 1.25) : bw + 0.26;
-  const zTop = D.head[0][1] + 0.5, zEnd = low ? Math.min(bz + bl2 / 2 + 0.12, D.head[0][1] + 1.86) : bz + bl2 / 2 + 0.14;
+  let wid = solo ? 1.05 : low ? Math.min(bw + 0.3, span + 1.25) : bw + 0.26;
+  const zTop = D.head[0][1] + 0.5;
+  let zEnd = low ? Math.min(bz + bl2 / 2 + 0.12, D.head[0][1] + 1.86) : bz + bl2 / 2 + 0.14;
   const drop = Math.min(RT.dDrop, D.mat - D.floor - 0.01);                                                    // the skirt hangs ~0.15 m, never to the floor
-  bl.position.copy(W2(L, [x0, (zTop + zEnd) / 2], L.matY)); bl.rotation.y = L.yaw; bl.scale.set(wid, 1, zEnd - zTop);
-  bl.updateMatrixWorld(true);
+  // SIT-r3: the cover lies on the bodies like cloth: each limb's top is its bone plus most of its own thickness (dTop),
+  // a short fall (dFall) off each limb, and only a thin sheet (dSheet) between them, so there is no single tent or
+  // loaf over the two of them. Sena's knees, curled on her side, reach past a fixed-width cover: on a floor bed it
+  // grows (shelter-local) to reach dReach past the furthest knee or foot, so nothing pokes out of its edge.
   _dp.length = 0;
+  const O = W2(L, [0, 0], 0);
+  let xa = 1e9, xb = -1e9, zb = -1e9;
+  const add = (v, r) => {
+    _dp.push([v.x, v.z, v.y - L.matY + r * RT.dTop + 0.02, r]);
+    const dx = v.x - O.x, dz = v.z - O.z, lx = dx * L.right.x + dz * L.right.z, lz = dx * L.fwd.x + dz * L.fwd.z;
+    if (lz > zTop) { xa = Math.min(xa, lx - r); xb = Math.max(xb, lx + r); zb = Math.max(zb, lz + r); }
+  };
   if (k > 0) for (const e of R.together ? [P, N] : [P]) {
     if (!e.lie) continue;
-    for (const [n, r] of DRAPE_BONES) { const v = e.h.bones[n].getWorldPosition(_re); _dp.push([v.x, v.z, v.y - L.matY + r + 0.025, r]); }
-    for (const [a, b2, r] of DRAPE_MIDS) {
-      const va = e.h.bones[a].getWorldPosition(_re), vb = e.h.bones[b2].getWorldPosition(_rf).add(va).multiplyScalar(0.5);
-      _dp.push([vb.x, vb.z, vb.y - L.matY + r + 0.025, r]);
-    }
+    for (const [n, r] of DRAPE_BONES) add(e.h.bones[n].getWorldPosition(_re), r);
+    for (const [a, b2, r] of DRAPE_MIDS) add(e.h.bones[b2].getWorldPosition(_rf).add(e.h.bones[a].getWorldPosition(_re)).multiplyScalar(0.5), r);
   }
+  if (low && xb > xa) {
+    const a = Math.min(x0 - wid / 2, xa - RT.dReach), b = Math.max(x0 + wid / 2, xb + RT.dReach);
+    x0 = (a + b) / 2; wid = b - a; zEnd = Math.max(zEnd, Math.min(zb + RT.dReach + 0.22, bz + bl2 / 2 + 0.6));   // past the toes by more than the soft run-out below
+  }
+  bl.position.copy(W2(L, [x0, (zTop + zEnd) / 2], L.matY)); bl.rotation.y = L.yaw; bl.scale.set(wid, 1, zEnd - zTop);
+  bl.updateMatrixWorld(true);
   for (const c of kids) if (c.rest > 0 && R.kidsIn) for (const n of ['pelvis', 'calf_l', 'calf_r', 'spine_02']) { const v = c.h.bones[n].getWorldPosition(_re); _dp.push([v.x, v.z, v.y - L.matY + 0.05, 0.08]); }
   rstCradleCover(1);                                 // the baby stays tucked in while her parents get up
   const kk = smooth01(k), half = bw / 2, end = bz + bl2 / 2;
@@ -3349,13 +3543,24 @@ function rstDrape(k) {
       if (d < r + RT.dFall) h = Math.max(h, Math.min(RT.dCap, top) * (1 - smooth01((d - r) / RT.dFall)) * kk + 0.02);
     }
     if (low) {                                                                       // floor bed / cave hides: the cover thins out over its last 20 cm onto the mat
-      const eb = Math.max(Math.abs(lx) * wid - wid / 2, Math.abs(lz) * (zEnd - zTop) - (zEnd - zTop) / 2);
+      const ebx = Math.abs(lx) * wid - wid / 2, ebz = Math.abs(lz) * (zEnd - zTop) - (zEnd - zTop) / 2, eb = Math.max(ebx, ebz);
       const o2 = Math.max(ex, ez, 0);                                                // past the hides' own edge it drapes down to the ground
-      return 0.012 + (h - 0.012) * smooth01(-eb / 0.2) - (eb > -0.04 ? Math.min(drop, 0.04 + eb) : 0) - (o2 > 0 ? Math.min(drop, o2 * 2.2) : 0);
+      const hem = Math.min(smooth01(-ebx / 0.2), smooth01(-ebz / 0.3));            // SIT-r3: a 20 cm hem at the sides, a long soft run-out past the feet (no wall at the foot)
+      return 0.012 + (h - 0.012) * hem - (eb > -0.04 ? Math.min(drop, 0.04 + eb) : 0) - (o2 > 0 ? Math.min(drop, o2 * 0.9) : 0);   // SIT-r3: off the hides' edge in a slope, not a step
     }
     if (out > 0) { const hang = -Math.min(drop, out * 1.6) + 0.01; return Math.max(hang, h - out * 2.4); }   // raised bed: the edge rolls over and hangs a short skirt
     return h;
-  }, 4);
+  }, RT.dPass, (lx, lz) => {                         // SIT-r3: smoothed hard (dPass), then never below a limb's own surface (a round limb of radius r)
+    if (!(kk > 0)) return -1;
+    _re.set(lx, 0, lz); bl.localToWorld(_re);
+    let n = -1;
+    for (const [x, z, top, r] of _dp) {
+      const d2 = (_re.x - x) ** 2 + (_re.z - z) ** 2;
+      const R2 = r * r * 2.3;                        // a little wider than the bone's radius (a foot or a knee is not a sphere)
+      if (d2 < R2) n = Math.max(n, (top - r * RT.dTop - 0.02 + r * Math.sqrt(1 - d2 / R2) + 0.03) * kk);
+    }
+    return n;
+  });
 }
 // STORY: a little blanket over the baby in her cradle (house-local cradle at 1.8, 1.2; mattress top 0.6), up to her chest.
 const _cv = [];
@@ -3406,6 +3611,16 @@ function rstCamera() {
       _rf.y = Math.max(_rf.y, getHeight(_rf.x, _rf.z) + 0.35, 0.7);
       structCam(look, _rf);
     }
+    if (view !== 'fpp') {
+      // SIT-r3: orbit around him (yaw, height and distance eased separately) instead of a straight line from the old shot:
+      // the line cut past his shoulder (4.7 m -> 2.3 m -> 5.4 m at the hut: head-only crop, the spear across the frame).
+      if (!c.orb) { _rd.subVectors(c.from, look); c.orb = { yaw: Math.atan2(_rd.x, _rd.z), d: Math.hypot(_rd.x, _rd.z), y: _rd.y }; }
+      _rd.subVectors(_rf, look);
+      const o = c.orb, yaw = o.yaw + wrapA(Math.atan2(_rd.x, _rd.z) - o.yaw) * k, d = o.d + (Math.hypot(_rd.x, _rd.z) - o.d) * k;
+      camPos.set(look.x + Math.sin(yaw) * d, look.y + o.y + (_rd.y - o.y) * k, look.z + Math.cos(yaw) * d);
+      camPos.y = Math.max(camPos.y, getHeight(camPos.x, camPos.z) + 0.35);
+      structCam(look, camPos);
+    } else
     camPos.lerpVectors(c.from, _rf, k);
     _rd.set(look.x, look.y + 0.3, look.z).sub(c.lookFrom).multiplyScalar(k).add(c.lookFrom);
     camera.position.copy(camPos); camera.lookAt(_rd);
@@ -3656,9 +3871,9 @@ function rstWakeTick(dt) {
   // round 2, the hut: the room is too small for a camera behind him (it was pulled in to ~1 m: torso crops, the spear
   // across the screen). As he ducks out of the door, cut to a wide shot outside; hand back once he is clear of the hut.
   const hut = L.kind === 'hut';
-  if (hut && P.L.exit && !R.hutOut && rstLocal(L.s, P.pos)[1] > 1.5) { R.hutOut = true; R.lastLook = null; rstShot(toWorld(L.s, [2.7, 1.5, 7.4]), toWorld(L.s, [0, 1.0, 3.3]), 0.01, true); }
+  if (hut && P.L.exit && !R.hutOut && (rstLocal(L.s, P.pos)[1] > 1.5 || Math.hypot(camPos.x - P.pos.x, camPos.y - P.pos.y - 1.5, camPos.z - P.pos.z) < 1.8)) { R.hutOut = true; R.lastLook = null; rstShot(toWorld(L.s, [2.7, 1.5, 7.4]), toWorld(L.s, [0, 1.0, 3.3]), 0.01, true); }   // SIT-r3: or as he nears the lens (he walked to 0.7 m of it: a face-filling crop)
   if (P.L.exit && !R.released && (!hut || rstLocal(L.s, P.pos)[1] > 3.9 || !P.path)) {
-    R.released = true; camYaw = hut ? rstHandYaw(L.s) : L.yaw + Math.PI; camPitch = hut ? 0.2 : 0.2;
+    R.released = true; camYaw = hut ? rstHandYaw(L.s, Math.atan2(camPos.x - P.pos.x, camPos.z - P.pos.z)) : L.yaw + Math.PI;   // SIT-r3: the clear side nearest the wide shot camPitch = hut ? 0.2 : 0.2;
     camShot = { release: true, from: camPos.clone(), lookFrom: (R.lastLook || look).clone(), k: 0, dur: hut ? 1.4 : 1.1 };
   }
   if (P.L.exit && !P.path && !camShot) rstDone();
@@ -3666,15 +3881,16 @@ function rstWakeTick(dt) {
 }
 // round 2: the hand-back camera when Aro is outside a shelter: behind him and looking away from it, swung to whichever
 // side keeps the camera clear of the walls (straight behind him was inside the hut: wedged against it, spear in view).
-function rstHandYaw(s) {
+// SIT-r3: pref (the yaw the camera is at now): of the clear sides, the one nearest it, so the hand-back swings the least.
+function rstHandYaw(s, pref = null) {
   const base = (s.rot || 0) + Math.PI, dist = Math.max(3.5, camDist);
-  let best = base, bd = -1e9;
+  let best = base, bd = -1e9, pick = null, pc = 1e9;
   for (const off of [0, 0.55, -0.55, 0.9, -0.9, 1.25, -1.25, 1.6, -1.6]) {
     const a = base + off, cx = P.pos.x + Math.sin(a) * dist, cz = P.pos.z + Math.cos(a) * dist, d = Math.hypot(cx - s.x, cz - s.z) - (s.radius + 0.9);
-    if (d > 0) return a;
+    if (d > 0) { if (pref == null) return a; const c = Math.abs(off) * 0.5 + Math.abs(wrapA(a - pref)); if (c < pc) { pc = c; pick = a; } }
     if (d > bd) { bd = d; best = a; }
   }
-  return best;
+  return pick ?? best;
 }
 function rstHoldTick(dt) {
   if (!P.L || !N.L) return;
@@ -3759,7 +3975,7 @@ function rstDone() {
   if (s.kind === 'cave' && R.torchWas && S.fuel > 0) setTorch(true);                        // still dark in the cave: the torch is lit again
   S.c.restSeen = 1; S.c.lastSleepDay = S.day;
   if (s.kind === 'hut' || s.kind === 'house') { R.inside = s; if (s.col) s.col.off = true; } else rstLeave();
-  if (!camShot?.release) { camYaw = s.kind !== 'cave' && !rstIn(s, P.pos) ? rstHandYaw(s) : (s.rot || 0) + Math.PI; camPitch = 0.18; camShot = null; }   // round 2: outside, never wedged against the walls
+  if (!camShot?.release && !R.released) { camYaw = s.kind !== 'cave' && !rstIn(s, P.pos) ? rstHandYaw(s) : (s.rot || 0) + Math.PI; camPitch = 0.18; camShot = null; }   // round 2: outside, never wedged against the walls (SIT-r3: not after the hand-back already set it: that re-aim snapped the camera 1.9 m)
   rstLog('done');
   const out = R.out || { phaseLog: R.log }; out.phaseLog = R.log;
   R.waiters.splice(0).forEach((f) => f(out));
@@ -4399,7 +4615,11 @@ function matTitle() {
   for (const id of ['ng-aff', 'ng-ill', 'ng-spoil', 'ng-perma']) $(id).onchange = () => { ngTouched = true; ngSync(true); };
   for (const id of ['ng-drain', 'ng-node', 'ng-dmg']) $(id).oninput = () => { ngTouched = true; ngSync(true); };
   $('ng-back').onclick = () => $('newgame').classList.remove('on');
-  $('ng-go').onclick = () => { $('newgame').classList.remove('on'); start(false, { mode: ngMode, custom: ngTouched ? ngCustom() : null }); };
+  $('ng-go').onclick = () => {
+    $('newgame').classList.remove('on');
+    if (found && !ngSaw && !MAT.deadSave) { titleSave(); return; }   // SAVE-PERF r3: a save turned up after the modal opened: ask again
+    start(false, { mode: ngMode, custom: ngTouched ? ngCustom() : null });
+  };
 }
 const ngCustom = () => ({ aff: $('ng-aff').checked, ill: $('ng-ill').checked, spoil: $('ng-spoil').checked, perma: $('ng-perma').checked, drainK: +$('ng-drain').value, nodeK: +$('ng-node').value, dmgK: +$('ng-dmg').value });
 function ngSync(keep = false) {
@@ -4417,6 +4637,7 @@ function matNewGame(ev) {
   // a person cannot reach the button then: the notice covers it and it is out of the tab order.
   if ((settings.ageOk || 0) < MATD.CONTENT_V) { if (ev?.isTrusted) return; if (newGameOk()) start(false, { mode: 'survivor' }); return; }
   if (!newGameOk()) return;   // SAVE-PERF: also asks while the save server has not answered
+  ngSaw = !!found;            // SAVE-PERF r3
   ngMode = 'survivor'; ngTouched = false; $('ng-custom').open = false; ngSync();
   $('newgame').classList.add('on');
 }
@@ -5494,7 +5715,7 @@ function romTick(dt) {
     if ((ROM.peakT += dt) > 2) { ROM.peakT = 0; N.face = P.face; romHeart(40, { peak: pk }); }
   } else ROM.peakT = 0;
   // the bench: her lean (and head on his shoulder at Beloved), only while both sit
-  const benchOn = ROM.bench && P.sit > 0 && N.sit > 0;
+  const benchOn = ROM.bench && P.sit > 0 && N.sit > 0 && !P.sitIn && !N.sitIn;   // SIT-r3: not while they walk to the bench
   ROM.benchW += ((benchOn ? 1 : 0) - ROM.benchW) * Math.min(1, dt * 2.5);
   if (!benchOn && !(P.sit > 0) && !(N.sit > 0)) ROM.bench = false;
   if (benchOn && ROM.benchHead && N.h.pose === 'sitTalk') N.h.pose = 'sit';
@@ -8881,6 +9102,10 @@ function applyLook(dt) {
 function fppYawLimit(dt) {
   if (view !== 'fpp' || camShot || !Number.isFinite(P.face) || !(P.ride || P.sit > 0 || P.seat)) return;
   const lim = P.ride ? 1.92 : 2.09, rel = wrapA(camFace() - P.face), over = Math.abs(rel) - lim;
+  // FHW-r4: riding, the chest turns with the look (a rider twists in the saddle to look aside). The head bone stayed
+  // square to the horse, so looking ~110 degrees aside put the eye 10 cm from his own shoulder: the cut-off neck and
+  // trapezius filled the view as dark jagged planes around a see-through hole. 75% of the turn goes to the spine.
+  if (P.ride) FP.tw += ((P.taming ? 0 : clamp(rel * 0.75, -1.4, 1.4)) - FP.tw) * Math.min(1, dt * 10);
   if (over <= 0) return;
   const sg = Math.sign(rel), back = Math.max(over - 0.12, over * Math.min(1, dt * 10));   // never more than 0.12 rad past the edge
   camYaw -= sg * back;
@@ -8965,6 +9190,13 @@ canvas.addEventListener('webglcontextrestored', () => {
 // ---------- per-frame updates ----------
 let target = null, useCool = 0, tick = 0, saveT = 0;
 let eLatch = false;                                 // STORY: an E press that stood you up can't also re-sit you
+// SIT-r3: leaving a sit two-shot, the follow camera starts on the shot's side of him (it then eases behind; no whip-pan)
+function sitShotOff() {
+  camYaw = Math.atan2(camPos.x - P.pos.x, camPos.z - P.pos.z); camPitch = clamp(Math.atan2(camPos.y - P.pos.y - 1.7, Math.hypot(camPos.x - P.pos.x, camPos.z - P.pos.z)), 0.05, 0.45);
+  camBack = { lk: (camShot.lk || camShot.look).clone(), t: 0 };
+  camShot = null;
+}
+let camBack = null;                                  // SIT-r3: the aim eases back from a sit shot to Aro (updateCamera)
 function updatePlayer(dt) {
   applyLook(dt);
   if (matDownedTick(dt)) return;                     // MAT: downed (lying, input ignored, Sena on her way) or the death beat
@@ -8976,8 +9208,8 @@ function updatePlayer(dt) {
   if (P.sit > 0) {
     P.sitSince ??= clock; P.sit -= dt;
     const eUp = eTap && clock - P.sitSince > 0.6;
-    if (mx || mz || jumpTap || eUp || P.sit <= 0) { endSit(P); endSit(N); P.sitSince = null; if (camShot?.hearthSit) camShot = null; if (eUp) { tapE = false; eLatch = true; useCool = Math.max(useCool, 0.5); } }   // STORY: the stand-up press is used up until E is released
-  } else { P.sitSince = null; if (camShot?.hearthSit) camShot = null; }   // round 2: the hearth two-shot never outlives the sit
+    if (mx || mz || jumpTap || eUp || P.sit <= 0) { endSit(P); endSit(N); P.sitSince = null; if (camShot?.ease) sitShotOff(); if (camShot?.hearthSit) camShot = null; if (eUp) { tapE = false; eLatch = true; useCool = Math.max(useCool, 0.5); } }   // STORY: the stand-up press is used up until E is released
+  } else { P.sitSince = null; if (camShot?.ease) sitShotOff(); if (camShot?.hearthSit) camShot = null; }   // round 2: the hearth two-shot never outlives the sit
   // WP2: resting in bed (input ignored), kneeling at a construction site (movement stops it), dancing after a shared build
   if (P.rest > 0) { P.vx = P.vz = 0; jumpTap = false; rstUpdate(dt); if (P.rest > 0) { settle(P, dt, false); target = null; $('prompt').style.display = 'none'; return; } }   // RST
   if (P.work > 0) {
@@ -9066,7 +9298,8 @@ function updateSena(dt) {
   if (N.ride && !P.ride) { N.ride = false; N.seat = null; N.h.pose = null; N.h.straddle = false; }
   if (N.ride) { N.speed = 0; N.node = null; settle(N, dt, false); return; }   // WP4: riding behind Aro (seated by updateHorses)
   if (N.sit > 0) { N.sit -= dt; N.speed = 0; if (N.hearth) N.hearth.seen = clock; if (N.sit <= 0) endSit(N); settle(N, dt, false); return; }
-  if (N.soakOut) { N.soakT = (N.soakT || 0) + dt; if (rstWalk(N, dt, 1.2) || N.soakT > 6) { N.soakOut = false; N.soakT = 0; N.path = null; N.speed = 0; N.wait = 2; } settle(N, dt, false); return; }   // STORY: out of the hot spring
+  if (N.soakOut) { N.soakT = (N.soakT || 0) + dt; if (N.soakT < 0.7) { N.speed = 0; settle(N, dt, false); return; }   // SIT-r3: she stands up before wading out
+    if (rstWalk(N, dt, 1.2) || N.soakT > 6.7) { N.soakOut = false; N.soakT = 0; N.path = null; N.speed = 0; N.wait = 2; } settle(N, dt, false); return; }   // STORY: out of the hot spring
   // WP2: resting (endRest wakes her with Aro), dancing after a shared build, then working at a construction site
   if (N.rest > 0) { if (!R.on && !R.nOut) N.speed = 0; settle(N, dt, false); return; }   // RST: the sequence walks her
   if (N.dance > 0) { N.dance -= dt; N.speed = 0; if (N.dance <= 0 && N.h.pose === 'dance') N.h.pose = null; settle(N, dt, false); return; }
@@ -9238,8 +9471,9 @@ function updateCamera(dt, title) {
   if (camShot) {
     if (camShot.dolly || camShot.release) { P.h.root.visible = true; rstCamera(dt); return; }   // RST bedside dolly and the release behind Aro
     camShot.t -= dt; P.h.root.visible = true;
-    camPos.lerp(camShot.pos, 1 - Math.exp(-dt * 6)); if (camShot.snap !== false) { camPos.copy(camShot.pos); camShot.snap = false; }
-    camera.position.copy(camPos); camera.lookAt(camShot.look);
+    camPos.lerp(camShot.pos, 1 - Math.exp(-dt * (camShot.ease ? 2.6 : 6))); if (camShot.snap !== false) { camPos.copy(camShot.pos); camShot.snap = false; }
+    if (camShot.ease) { camShot.lk ??= new THREE.Vector3(look.x, look.y + 0.3, look.z); camShot.lk.lerp(camShot.look, 1 - Math.exp(-dt * 3.2)); }   // SIT-r3: the sit two-shots glide in (position and aim)
+    camera.position.copy(camPos); camera.lookAt(camShot.ease ? camShot.lk : camShot.look);
     camShot.age = (camShot.age || 0) + dt;
     if (camShot.untilSubs && camShot.age < 40 && (subs.length || subT > 0 || $('card').classList.contains('on'))) camShot.t = Math.max(camShot.t, 0.5);   // round 2: held while the lines play
     if (camShot.family && (keys.KeyW || keys.KeyA || keys.KeyS || keys.KeyD)) camShot.t = 0;
@@ -9275,6 +9509,11 @@ function updateCamera(dt, title) {
   if (P.taming) { camPos.x += (rand() - 0.5) * 0.07; camPos.y += (rand() - 0.5) * 0.07; }   // WP4: a bucking horse shakes the view
   camera.position.copy(camPos);
   const shk = wpnShake();                            // WPN trauma shake
+  if (camBack) {                                     // SIT-r3: from the sit shot's aim back to Aro over 0.7 s
+    const k = smooth01((camBack.t += dt) / 0.7);
+    camera.lookAt(camBack.lk.x + (look.x - camBack.lk.x) * k, camBack.lk.y + (look.y + 0.3 - camBack.lk.y) * k, camBack.lk.z + (look.z - camBack.lk.z) * k);
+    if (k >= 1) camBack = null;
+  } else
   camera.lookAt(look.x, look.y + 0.3, look.z);
   if (shk) camera.rotateZ(shk * 0.03 * Math.sin(clock * 23));
 }
@@ -9300,13 +9539,17 @@ const FP = {
   tw: 0, back: false, turning: false, reach: null, lastShot: null, lastShotT: 1, pump: 0, swimT: 0, bodyMats: [], headMats: [],
   pos: new THREE.Vector3(), held: [], shift: new THREE.Vector3(), shifted: false,
 };
-const fpU = { hide: { value: 0 }, hideR: { value: 0 }, hideL: { value: 0 }, only: { value: 0 } };   // Aro's body (P)
-const fpUA = { hide: { value: 0 }, hideR: { value: 0 }, hideL: { value: 0 }, only: { value: 1 } };  // the viewmodel arms rig
+const fpU = { hide: { value: 0 }, hideR: { value: 0 }, hideL: { value: 0 }, only: { value: 0 }, eye: { value: new THREE.Vector3(0, -1e4, 0) } };   // Aro's body (P)
+const fpUA = { hide: { value: 0 }, hideR: { value: 0 }, hideL: { value: 0 }, only: { value: 1 }, eye: { value: new THREE.Vector3(0, -1e4, 0) } };  // the viewmodel arms rig
 const _fa = new THREE.Vector3(), _fb = new THREE.Vector3(), _fc = new THREE.Vector3(), _fm = new THREE.Matrix4(), _fm2 = new THREE.Matrix4();
 const _fq = new THREE.Quaternion(), _fq2 = new THREE.Quaternion(), _fs = new THREE.Vector3(), _fe = new THREE.Euler();
 const _fBox = new THREE.Box3();   // WH: near-eye cull of carried gear while riding
 const fpBob = () => (settings.fppBob ?? 0.7) * (settings.reduceMotion ? 0.25 : 1);
-function fppPitchMax() { return view === 'fpp' ? (P.ride && !P.taming ? 0.9 : 1.45) : 1.25; }   // FPP-world: riding, the look down stops at the mane (past it the forearms filled the view)
+// FPW-r3: riding in first person the eye sat 0.72 m over the back and right above her withers, so her head was 37 degrees
+// below the horizon: looking ahead showed no horse at all. Down 0.12 m (a seated eye height) and back 0.1 m, her ears
+// and mane sit in the lower third and the reins run up to them.
+const FPP_RIDE_EYE = { y: 0.12, b: 0.1 };
+function fppPitchMax() { return view === 'fpp' ? (P.ride && !P.taming ? 0.72 : 1.45) : 1.25; }   // FPP-world: riding, the look down stops at the mane (past it the forearms filled the view; FHW-r4: 0.9 still gave them half the frame)
 // Per-vertex mask from the skin weights: 1 head + neck, 2 right arm, 3 left arm (upper arm down to the fingers).
 function fpMask(mesh) {
   const g = mesh.geometry;
@@ -9323,9 +9566,17 @@ function fpMask(mesh) {
 }
 function fpMaterial(mat, u, key) {
   mat.onBeforeCompile = (sh) => {
-    sh.uniforms.uFpHide = u.hide; sh.uniforms.uFpHideR = u.hideR; sh.uniforms.uFpHideL = u.hideL; sh.uniforms.uFpOnly = u.only;
-    sh.vertexShader = 'attribute float fppMask;\nflat varying float vFpMask;\n' + sh.vertexShader.replace('#include <begin_vertex>', '#include <begin_vertex>\n  vFpMask = fppMask;');
-    sh.fragmentShader = 'uniform float uFpHide, uFpHideR, uFpHideL, uFpOnly;\nflat varying float vFpMask;\n' + sh.fragmentShader.replace('void main() {', `void main() {
+    sh.uniforms.uFpHide = u.hide; sh.uniforms.uFpHideR = u.hideR; sh.uniforms.uFpHideL = u.hideL; sh.uniforms.uFpOnly = u.only; sh.uniforms.uFpEye = u.eye;
+    sh.vertexShader = 'attribute float fppMask;\nflat varying float vFpMask;\nvarying vec3 vFpW;\n' + sh.vertexShader.replace('#include <begin_vertex>', '#include <begin_vertex>\n  vFpMask = fppMask;')
+      .replace('#include <project_vertex>', '#include <project_vertex>\n  vFpW = (modelMatrix * vec4(transformed, 1.0)).xyz;');
+    // FHW-r4: in first person, Aro's own body fades out (dithered) 0.14-0.22 m from the eye. The seated riding eye sits in
+    // his upper chest, so looking down the near plane sliced it flat (a beige slab across the bottom of the view), and
+    // looking aside his shoulder and neck cut-out filled the frame. Colour pass only: his shadow is untouched.
+    sh.fragmentShader = 'uniform float uFpHide, uFpHideR, uFpHideL, uFpOnly;\nuniform vec3 uFpEye;\nflat varying float vFpMask;\nvarying vec3 vFpW;\n' + sh.fragmentShader.replace('void main() {', `void main() {
+  if (uFpHide > 0.5) {
+    float fpA = clamp((distance(vFpW, uFpEye) - 0.14) / 0.08, 0.0, 1.0);
+    if (fpA < 1.0 && fpA <= fract(52.9829189 * fract(dot(gl_FragCoord.xy, vec2(0.06711056, 0.00583715))))) discard;
+  }
   if (uFpHide > 0.5 && vFpMask > 0.5 && vFpMask < 1.5) discard;
   if (uFpHideR > 0.5 && vFpMask > 1.5 && vFpMask < 2.5) discard;
   if (uFpHideL > 0.5 && vFpMask > 2.5) discard;
@@ -9408,6 +9659,9 @@ for (const g of [vmR, vmL]) for (let i = 0; i < 3; i++) if (g.children[i]?.isMes
 // Torch in first person: dimmer fire light and glow, a darker shaft, held lower and further out.
 (() => { const sh = vmTorch.root.children[0]; if (sh?.isMesh) { sh.material = sh.material.clone(); sh.material.color.multiplyScalar(0.42); } vmTorch.flame.scale.setScalar(0.78); vmTorch.root.scale.setScalar(0.74); vmAxe.scale.setScalar(0.86); })();   // FPP-world: a smaller torch, the flame in the lower-left third
 // Reins: two thin straps from the fists to the bridle, drawn in the viewmodel scene.
+// RIDE-r3: where each first-person rein meets her head, from the Head bone (at the poll): out to its side, down, and back
+// toward the rider (metres; - = forward). Ahead of the poll the strap runs the full neck, along its side, to the jaw.
+const FPP_REIN = { side: 0.11, down: 0, back: -0.16 };
 const fpRein = [0, 1].map(() => { const m = new THREE.Mesh(new THREE.CylinderGeometry(0.006, 0.006, 1, 5, 1, true), new THREE.MeshStandardMaterial({ color: 0x3a2618, roughness: 0.9 })); m.visible = false; vmScene.add(m); return m; });
 const fitMat = (kind, slot) => { const f = FIT[kind]?.[slot]; if (!f) return null; return new THREE.Matrix4().compose(new THREE.Vector3(...f.p), new THREE.Quaternion().setFromEuler(new THREE.Euler(...f.r)), new THREE.Vector3(f.s ?? 1, f.s ?? 1, f.s ?? 1)); };
 const FPI = { spear: fitMat('spear', 'hand')?.invert(), axe: fitMat('axe', 'hand')?.invert(), torch: fitMat('torch', 'handL')?.invert() };
@@ -9462,13 +9716,18 @@ function fpSpace() {
     if (d < 0.55 && d > 1e-4) { P.pos.x = o.pos.x + (ddx / d) * 0.55; P.pos.z = o.pos.z + (ddz / d) * 0.55; }
   }
 }
-P.h.addOverride('fpp', 12, (h) => {
-  if (!FP.act) return;
-  const b = h.bones, tw = FP.tw, bend = clamp((camPitch - 0.4) * 0.24, 0, 0.25);
+function fpTwist(b, tw) {
   if (Math.abs(tw) > 0.001) for (const [n, k] of [['spine_01', 0.3], ['spine_02', 0.3], ['spine_03', 0.4]]) {
     const bn = b[n]; bn.parent.getWorldQuaternion(_fq).invert(); _fa.set(0, 1, 0).applyQuaternion(_fq);
     bn.quaternion.premultiply(_fq2.setFromAxisAngle(_fa, tw * k)); bn.updateMatrixWorld(true);
   }
+}
+// FHW-r4: riding, the twist goes on after the rider pose (order 29), which sets the spine outright and wiped it
+P.h.addOverride('fppRide', 33, (h) => { if (FP.act && P.ride) fpTwist(h.bones, FP.tw); });
+P.h.addOverride('fpp', 12, (h) => {
+  if (!FP.act) return;
+  const b = h.bones, tw = FP.tw, bend = clamp((camPitch - 0.4) * 0.24, 0, 0.25);
+  if (!P.ride) fpTwist(b, tw);
   if (bend > 0.001) {
     const cf = camFace(); _fb.set(Math.cos(cf), 0, -Math.sin(cf));   // the view's left axis: a positive turn about it bends forward
     for (const [n, k] of [['spine_03', 0.4], ['neck_01', 0.6]]) {
@@ -9528,6 +9787,7 @@ function fppCamera(dt) {
   sd = FP.bS + (sd - FP.bS) * 0.5 * bk;                          // the figure-8: side sway of the head, scaled
   const hr = Math.hypot(fw, sd), lim = P.ride ? 0.6 : 0.24;      // keep the eye inside Aro's collision circle
   if (hr > lim) { fw *= lim / hr; sd *= lim / hr; }
+  if (P.ride && !P.taming) { const w = smooth01(((P.rideW ?? 1) - 0.4) / 0.5); y -= FPP_RIDE_EYE.y * w; fw -= FPP_RIDE_EYE.b * w; }   // FPW-r3: a seated eye, a little lower and back
   // swimming: eye just above the water line, a slow stroke bob and a little roll
   let swimRoll = 0;
   if (P.swim) {
@@ -9650,9 +9910,44 @@ const fpTmp = { p: new THREE.Vector3(), q: new THREE.Quaternion(), p2: new THREE
 // the flint head shows side-on up and left of the crosshair (pointing straight at it, the head read as a blunt dot and
 // the right fist sat at the camera plane, out of view). In this hold the arms rig steps forward (arm.z) so the left
 // arm reaches its grip with a natural bend.
-const FP_SPR = { r: new THREE.Vector3(0.18, -0.14, -0.36), d: 0.3, arm: 0.24 };
-vmSpear.children[1].scale.set(1.5, 1.7, 1.5);   // the head reads at viewmodel distance (it was a dot past the lashing)
-FP_SPR.q = new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(-0.1, 0.1, -1).normalize(), new THREE.Vector3(-0.48, 0.24, -0.84).normalize());
+// FPW-r3: the torch fist sat at x -0.28 (about 17% from the left edge): at 1280x720 the 240 px map and stats panel
+// covered it and the shaft ran into the panel. Now the fist sits ~27% in from the left, low, with the flame above it.
+const FPP_TORCH = { x: 0.025, y: 0.015, z: -0.05 };
+// FHW-r4: the hold moved out of the HUD's way and turned the head side-on. The right fist sits right of the pack's
+// column (~80% across, ~80% down) and a little further out (smaller on screen); the hands take the shaft 0.5 m further
+// up (s: the spear slides back through them, the butt runs off past the camera), so the head is 0.85 m from the fist,
+// not 1.35 m, and the shaft runs more across the view: the blade shows its face up and left of the crosshair instead
+// of its base (which read as a black hexagonal nut). The arms rig steps further forward (arm) to reach the grips.
+const FP_SPR = { r: new THREE.Vector3(0.27, -0.18, -0.44), d: 0.3, arm: 0.3, s: 0.5 };
+FP_SPR.q = new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(-0.1, 0.1, -1).normalize(), new THREE.Vector3(-0.72, 0.36, -0.59).normalize());
+FP_SPR.p0 = vmSpear.position.clone();                                          // the one-handed hold (vmHold)
+FP_SPR.z = new THREE.Vector3(0, 0, 1).applyQuaternion(vmSpear.quaternion);      // the shaft's axis in the fist's frame
+// FHW-r4: the viewmodel spear's head is a knapped blade: a flat leaf with a ridged diamond section, a sharp point and
+// paler, thinner edges (flat-shaded facets), turned each frame so its face is toward the eye. The shared 6-sided cone
+// stays on the third-person spears.
+const VM_BLADE = (() => {
+  const prof = [[0.013, 0], [0.03, 0.03], [0.042, 0.07], [0.044, 0.11], [0.036, 0.16], [0.022, 0.21], [0.008, 0.25], [0, 0.27]];
+  const g = new THREE.LatheGeometry(prof.map(([r, y]) => new THREE.Vector2(r, y)), 4);
+  g.scale(1, 1, 0.3); g.rotateX(Math.PI / 2);                                   // length along +z, wide along x, thin along y
+  const p = g.attributes.position, col = new Float32Array(p.count * 3), core = new THREE.Color(0x3e3833), edge = new THREE.Color(0x9a8a76), c = new THREE.Color();
+  for (let i = 0; i < p.count; i++) { c.copy(core).lerp(edge, Math.pow(Math.min(1, Math.abs(p.getX(i)) / 0.044), 1.6)); col.set([c.r, c.g, c.b], i * 3); }
+  g.setAttribute('color', new THREE.BufferAttribute(col, 3));
+  const flint = new THREE.MeshStandardMaterial({ vertexColors: true, flatShading: true, roughness: 0.34, metalness: 0.04 });
+  const stone = new THREE.MeshStandardMaterial({ vertexColors: true, flatShading: true, roughness: 0.85, color: 0xd8d2ca });
+  const m = new THREE.Mesh(g, flint); m.position.z = 0.9; m.frustumCulled = false; m.userData.mats = { flint, stone };
+  vmSpear.children[1].visible = false; vmSpear.add(m);
+  const set = vmSpear.userData.setFlint;
+  vmSpear.userData.setFlint = (on) => { set(on); vmSpear.children[1].visible = false; m.material = on ? flint : stone; };
+  m.material = vmSpear.userData.flint ? flint : stone;
+  return m;
+})();
+const _fz = new THREE.Vector3();
+function fpBladeFace() {                             // roll the blade about the shaft so its flat face looks at the eye
+  if (!vmSpear.visible) return;
+  vmSpear.updateWorldMatrix(true, false);
+  const c = vmSpear.worldToLocal(_fz.copy(vmCam.position));
+  VM_BLADE.rotation.z = Math.atan2(-c.x, c.y);
+}
 function fppVm(dt) {
   // house wall circles follow the house circle on/off (RST walks in through the door, indoors)
   for (const s of structs) if (s.fpCols && s.col) for (const c of s.fpCols) c.off = !!s.col.off;
@@ -9663,11 +9958,12 @@ function fppVm(dt) {
   if (on && !FP.shifted) { P.h.root.position.add(FP.shift); FP.shifted = true; }   // body under the camera for this frame's render (fppPost undoes it)
   // Aro's head, neck, hair and eyes stop drawing colour; the shadow pass still has all of him
   fpU.hide.value = on ? 1 : 0;
+  fpU.eye.value.copy(camera.position);               // FHW-r4: the near-eye body fade centre (camera placed by fppCamera this frame)
   for (const m of FP.headMats) { m.colorWrite = !on; m.depthWrite = !on; }
   const near = on ? 0.06 : 0.15;
   if (camera.near !== near) { camera.near = near; camera.updateProjectionMatrix(); }
   // torch: lower and further out, dimmer light and glow
-  if (vmL.visible && torchOn && !(W.held === 'fists' && W.st !== 'sheathed')) vmL.position.add(_fa.set(-0.07, -0.05, -0.04));   // FPP-world: lower and wider (it filled the left third); the fist ~40% up the shaft stays in view
+  if (vmL.visible && torchOn && !(W.held === 'fists' && W.st !== 'sheathed')) vmL.position.add(_fa.set(FPP_TORCH.x, FPP_TORCH.y, FPP_TORCH.z));   // FPP-world: lower; the fist ~40% up the shaft stays in view (FPW-r3: in from the edge, clear of the map panel)
   vmFire.intensity *= 0.5;
   if (FP.act && AR_BODY) { if (vmR.visible) vmR.position.y += 0.035; if (vmL.visible && !torchOn) vmL.position.y += 0.035; }   // real hands: a little higher so the wrist shows
   if (torchOn) vmGlow.material.opacity = 0.28 + Math.sin(clock * 17) * 0.05;
@@ -9689,16 +9985,24 @@ function fppVm(dt) {
   // Off while aiming or throwing, with the torch lit, mid draw and at a sprint (one hand, as the body does).
   const two = on && vmR.visible && W.held === 'spear' && !torchOn && W.sw?.k !== 'throw' && !P.ride && !P.swim;
   FP.twoW = (FP.twoW || 0) + ((two ? W.vmDraw * (1 - W.aimW) * (1 - smooth01((P.speed - 5) / 1.2)) : 0) - (FP.twoW || 0)) * Math.min(1, dt * 10);
+  const slide = FP.twoW > 0.01 && vmR.visible && vmSpear.visible ? FP_SPR.s * FP.twoW : 0;   // FHW-r4: how far up the shaft the hands are
+  vmSpear.position.copy(FP_SPR.p0).addScaledVector(FP_SPR.z, -slide);
+  vmSpear.children[3].position.z = -0.35 + slide;    // the hide grip wrap stays under the right fist
   if (FP.twoW > 0.01 && vmR.visible && vmSpear.visible) {
     const w = FP.twoW;
     vmR.position.add(_fa.copy(FP_SPR.r).sub(VM.r).multiplyScalar(w));
     vmR.quaternion.slerp(FP_SPR.q, w);
   }
+  if (on) fpBladeFace();
   if (on) {
-    if (vmR.visible) { const k = W.held || (W.aim || W.sw?.k === 'throw' ? 'spear' : 'fists'); fpFromHeld(k === 'spear' ? vmSpear : vmAxe, k === 'spear' ? FPI.spear : FPI.axe, p.p, p.q); R = [p.p.clone(), p.q.clone(), 1]; }
+    if (vmR.visible) {
+      const k = W.held || (W.aim || W.sw?.k === 'throw' ? 'spear' : 'fists'); fpFromHeld(k === 'spear' ? vmSpear : vmAxe, k === 'spear' ? FPI.spear : FPI.axe, p.p, p.q);
+      if (k === 'spear' && slide) p.p.add(_fa.set(0, 0, 1).transformDirection(vmSpear.matrixWorld).multiplyScalar(slide));   // FHW-r4: the fist stays put, the shaft slid back through it
+      R = [p.p.clone(), p.q.clone(), 1];
+    }
     if (!vmL.visible && R && FP.twoW > 0.01 && vmSpear.visible) {   // FPP-world: the left fist on the shaft
       vmSpear.updateWorldMatrix(true, false);
-      const grip = vmSpear.localToWorld(_fb.set(0, 0, -0.35 + FP_SPR.d)), ax = _fc.set(0, 0, 1).transformDirection(vmSpear.matrixWorld);
+      const grip = vmSpear.localToWorld(_fb.set(0, 0, -0.35 + FP_SPR.d + slide)), ax = _fc.set(0, 0, 1).transformDirection(vmSpear.matrixWorld);
       const fi = _fa.set(0, 1, 0).applyQuaternion(R[1]), pa = _h3.set(-1, 0, 0).applyQuaternion(R[1]);
       const q = fpHandBasis('l', -fi.x, fi.y, fi.z, -pa.x, pa.y, pa.z);   // the right fist mirrored ...
       q.premultiply(_fq2.setFromUnitVectors(_fa.copy(AX_L).applyQuaternion(q), ax));   // ... turned so the shaft runs through it
@@ -9724,7 +10028,7 @@ function fppVm(dt) {
     if (P.ride && !P.taming) {                           // reins: two fists above the withers (fixed to the horse, not the view)
       const qRel = new THREE.Quaternion().copy(camera.quaternion).invert().multiply(_fq2.setFromEuler(_fe.set(0, P.face + Math.PI, 0)));
       const k = Math.tan((vmCam.fov * Math.PI) / 360) / Math.tan((camera.fov * Math.PI) / 360);   // same spot on screen in the viewmodel camera
-      const hand = (sx) => { const c = new THREE.Vector3(sx * 0.17, -0.45, -0.38).applyQuaternion(qRel); c.x *= k; c.y *= k; return c; };   // WH: apart and low over the withers
+      const hand = (sx) => { const c = new THREE.Vector3(sx * 0.225, -0.48   /* FHW-r4: 0.45 m apart (was 0.34): looking level, the E prompt sits between the fists, not on them */ + FPP_RIDE_EYE.y * 0.6, -0.36 - FPP_RIDE_EYE.b).applyQuaternion(qRel); c.x *= k; c.y *= k; return c; };   // WH: apart and low over the withers (FPW-r3: the same spot over the withers from the lower, further-back eye; RIDE-r3: 3 cm lower, 2 cm nearer: more neck between fists and ears)
       const fistQ = (s) => { const sx = s === 'r' ? 1 : -1, f = _fa.set(-sx * 0.5, 0.1, -0.85).applyQuaternion(qRel), p = _fb.set(-sx, 0.15, 0.2).applyQuaternion(qRel); return fpHandBasis(s, f.x, f.y, f.z, p.x, p.y, p.z); };
       if (!R) R = [hand(1), fistQ('r'), 1];
       if (!L) L = [hand(-1), fistQ('l'), 1];
@@ -9775,9 +10079,15 @@ function fppVm(dt) {
   if (rein) { P.ride.a.bone('Head').getWorldPosition(_fa).applyMatrix4(camera.matrixWorldInverse); if (_fa.z > -0.3) rein = false; }   // WH: the bridle behind the eye (looking back): no strap thrown across the view
   for (const m of fpRein) m.visible = !!rein;
   if (rein) {
-    const zc = Math.min(-0.3, _fa.z), ndc = _fb.copy(_fa).applyMatrix4(camera.projectionMatrix);
-    const tv = Math.tan((vmCam.fov * Math.PI) / 360), bridle = _fc.set(ndc.x * tv * vmCam.aspect * -zc, ndc.y * tv * -zc, zc);
+    // RIDE-r3: each strap ends on its own side of her head, where the throat meets the jaw below the ear (the bit
+    // itself is hidden under the neck from the saddle). Both aimed at the Head bone, they met in a peak on the mane.
+    const hd = P.ride.a.bone('Head'), tv = Math.tan((vmCam.fov * Math.PI) / 360), F = P.face;
     [R, L].forEach((H, i) => {
+      const sd = i ? 1 : -1;                         // the horse's left for the left fist
+      hd.getWorldPosition(_fa); _fa.x += Math.cos(F) * sd * FPP_REIN.side - Math.sin(F) * FPP_REIN.back; _fa.z += -Math.sin(F) * sd * FPP_REIN.side - Math.cos(F) * FPP_REIN.back; _fa.y -= FPP_REIN.down;
+      _fa.applyMatrix4(camera.matrixWorldInverse);
+      const zc = Math.min(-0.3, _fa.z), ndc = _fb.copy(_fa).applyMatrix4(camera.projectionMatrix);
+      const bridle = _fc.set(ndc.x * tv * vmCam.aspect * -zc, ndc.y * tv * -zc, zc);
       const m = fpRein[i], hb = AR.bones[i ? 'hand_l' : 'hand_r'];
       const a = hb.localToWorld(_fa.set(i ? 0.034 : -0.034, 0.09, 0.03));
       const d = _fb.subVectors(bridle, a), len = d.length();
@@ -9792,9 +10102,8 @@ function fppVm(dt) {
     if (R && vmR.visible) { if (P.h.slotOf(P.h.spear) === 'hand' || P.h.slotOf(P.h.spear) === 'low') hide(P.h.spear); if (P.h.slotOf(P.h.axe) === 'hand') hide(P.h.axe); }
     if (P.h.slotOf(P.h.spear) === 'back') hide(P.h.spear);   // the spear on the back stands up past the eye (swimming: a pole across the view)
     if (P.ride) {                                    // WH: riding, the shoulder-rested spear and the riders' carried gear pass the eye at the head-turn limit
-      if (P.h.spear.parent === spearRest) hide(P.h.spear);
       if (R || L) for (const r of tack.reins) hide(r);  // the body's own reins run from its hidden fists: the viewmodel draws its own
-      for (const m of [P.h.axe, N.h.spear, N.h.axe]) if (m && m.visible && _fBox.setFromObject(m).distanceToPoint(camera.position) < 0.3) hide(m);
+      for (const m of [P.h.axe, N.h.spear, N.h.axe, P.h.spear]) if (m && m.visible && _fBox.setFromObject(m).distanceToPoint(camera.position) < 0.3) hide(m);   // RIDE-r3: + Aro's spear on Sena's back
     }
     if (L && torchOn) for (const c of torch.root.children) if (c !== torch.light) hide(c);
     if (fpU.hideR.value) hide(FP_WRAP.body.r); if (fpU.hideL.value) hide(FP_WRAP.body.l);   // FPP-world: the body's wrist wraps go with its hidden arms
@@ -9890,7 +10199,8 @@ function start(loadSave, diffChoice) {             // MAT: diffChoice {mode, cus
     $('savenote').textContent = 'This save could not be loaded. A backup copy was kept in this browser. Try again, or start a new story.';
     $('btn-continue').textContent = 'Try again'; $('btn-continue').onclick = () => location.reload();
     return;
-  } else { deleteGame({ server: !saveState.unknown }); matNew(diffChoice); showChapter(); }   // MAT: the chosen difficulty · SAVE-PERF: never DELETE a save the server has not shown us
+  } else { deleteGame({ server: newDel ?? !saveState.unknown }); matNew(diffChoice); showChapter(); }   // MAT: the chosen difficulty · SAVE-PERF: never DELETE a save the server has not shown us (r3: decided when the player confirmed)
+  if (saveState.unknown) { sessionBase = { day: loadSave && found ? found.data.day || 1 : 0, at: loadSave && found ? found.data.savedAt || 0 : 0 }; holdServer(sessionBase.at); }   // SAVE-PERF r3: browser-only saves until the server is heard
   playing = true; starting = false;
   $('title').classList.add('off'); $('hud').classList.add('on');
   drawInv(); applyQuality();
@@ -9921,31 +10231,60 @@ function titleSave() {
   if (playing || starting) return;
   if (found) {
     const d = found.data, when = d.savedAt ? new Date(d.savedAt).toLocaleString() : '';
-    $('btn-continue').style.display = ''; $('btn-continue').onclick = () => start(true); $('btn-new').textContent = 'New story';
+    $('btn-continue').style.display = ''; $('btn-continue').onclick = () => titleContinue(); $('btn-new').textContent = 'New story';   // SAVE-PERF r3: titleContinue
     $('btn-continue').textContent = `Continue · day ${d.day || 1}`;
-    $('savenote').textContent = `Saved ${when} · ${found.from === 'database' ? 'from the save database' : 'from this browser'}`;
+    $('savenote').textContent = `Saved ${when} · ${found.from === 'database' ? 'from the save database' : 'from this browser'}${saveState.unknown ? ' · still asking the save server for a newer copy…' : ''}`;
   } else if (saveState.unknown) $('savenote').textContent = 'Looking for your saved story… the save server is slow to answer.';
   else $('savenote').textContent = '';
 }
+// SAVE-PERF r3: newDel is decided when the player confirms: DELETE only a save they were shown and agreed to delete, or
+// when the server has answered that there is none. ngSaw records whether a save was on screen when the modal opened.
+let newDel = null, ngSaw = false;
 function newGameOk() {
-  if (MAT.deadSave) return true;
-  if (found) return confirm('Start over? The saved story will be deleted.');
+  if (MAT.deadSave) { newDel = true; return true; }
+  if (found) { const ok = confirm('Start over? The saved story will be deleted.'); newDel = ok && !saveState.unknown; return ok; }   // a browser copy while the server is silent: the server's copy (never shown) is kept
+  newDel = !saveState.unknown;
   return !saveState.unknown || confirm('The save server has not answered yet, so this page cannot tell whether you have a saved story. Starting now could replace it.\n\nStart a new story anyway?');
 }
 let titleTries = 0;
+// SAVE-PERF r3: keeps asking while the server is silent, also when a browser copy is on screen (it may be older than the
+// server's). The server's answer settles the title: the newer of the two copies, or none.
 async function titleRetry() {
-  while (saveState.unknown && !found && !playing && !starting) {
+  while (saveState.unknown && !playing && !starting) {
     await new Promise((r) => setTimeout(r, Math.min(10000, 2000 + 1000 * titleTries++)));
     if (playing || starting) return;
     const r = await loadGame({ timeout: 15000 });
     if (playing || starting) return;
-    if (r) { found = r; titleSave(); matTitle(); return; }   // matTitle: a permadeath tombstone check on the late save
-    if (!saveState.unknown) { titleSave(); return; }        // the server answered: there is no save
-    if (titleTries >= 6) $('savenote').textContent = 'The save server is not answering. If you had a saved story, it is safe. Reload to try again.';
+    if (!saveState.unknown) { titleFound(r); return; }
+    if (titleTries >= 6) $('savenote').textContent = found ? `${$('savenote').textContent.split(' · still')[0]} · the save server is not answering` : 'The save server is not answering. If you had a saved story, it is safe. Reload to try again.';
   }
 }
+const sameSave = (a, b) => !!a && !!b && a.from === b.from && a.data.savedAt === b.data.savedAt;
+function titleFound(r, prev = found) {               // SAVE-PERF r3: the server answered (r: the newer copy, or null); prev: the copy the player saw
+  const late = !!r && !sameSave(r, prev);
+  found = r;
+  titleSave(); matTitle();                           // matTitle: a permadeath tombstone check on the late save
+  if (late && found && !MAT.deadSave) {
+    if ($('newgame').classList.contains('on')) $('newgame').classList.remove('on');   // the new-game modal must not start over a save it never showed
+    $('savenote').textContent = `Your saved story was found: day ${found.data.day || 1}, saved ${found.data.savedAt ? new Date(found.data.savedAt).toLocaleString() : ''}. Continue it, or choose New story to start over.`;
+  }
+}
+let checking = false;
+async function titleContinue() {                     // SAVE-PERF r3: a browser copy while the server is silent: one last look first
+  if (checking || playing || starting) return;
+  if (saveState.unknown && found?.from === 'browser') {
+    checking = true; const shown = found;
+    $('btn-continue').textContent = 'Checking the save server…';
+    const r = await loadGame({ timeout: 8000 });
+    checking = false;
+    if (playing || starting) return;
+    if (!saveState.unknown) titleFound(r, shown); else titleSave();
+    if (!sameSave(found, shown)) return;             // a newer copy turned up (here or in titleRetry): show it, the player clicks again
+  }
+  start(true);
+}
 titleSave();
-if (saveState.unknown && !found) titleRetry();
+if (saveState.unknown) titleRetry();
 matTitle();                                          // MAT: content notice, the Stones, the new-game cards
 warmShaders();                                       // SAVE-PERF: compile behind the title screen
 { let nc = null; try { nc = sessionStorage.getItem('hb-new'); sessionStorage.removeItem('hb-new'); } catch {}   // SAVE-PERF: New story after a failed load
@@ -9999,6 +10338,7 @@ function frame(now) {
   world.update(dt, P.pos.x, P.pos.z, camera);
   wpnVm(dt);                                         // WPN first-person viewmodel
   fppVm(dt);                                         // FPP real arms, head hiding, near plane
+  fppHud();                                          // FHW-r4: first-person HUD (stowed pack, F1 chip and fps up top)
   renderer.render(scene, camera);
   fppPost();                                         // FPP
   if (vmOn) { renderer.autoClear = false; renderer.clearDepth(); renderer.render(vmScene, vmCam); renderer.autoClear = true; }   // WPN
@@ -10129,6 +10469,7 @@ Object.assign(window.G, {
   rideState() { return { ride: !!P.ride, taming: P.taming && { ...P.taming }, hv: P.hv, speed: P.speed, nRide: !!N.ride, seat: P.saddle && P.saddle.toArray(), face: P.face }; },
 });
 Object.assign(window.G, { fpp: fppDebug, fppCamera, fppVm, FP });   // FPP test hooks
+Object.assign(window.G, { rideTune: { RIDE_FOOT, FPP_REIN, SPEAR_ON_SENA } });   // RIDE-r3 test hook: live-tune the riders' feet, first-person reins, two-up spear
 Object.assign(window.G, { say: (who, text) => say(who, text) });     // FPP-world: HUD layout tests trigger a subtitle
 Object.assign(window.G, { remove: (o) => remove(o), gfx: GFX, paintMapBase });   // SAVE-PERF test hooks
 arcHooks(window.G);                                  // ARC story hooks: G.arc, setArc, arcChoose, raid, fever, goalsOf, arcDbg

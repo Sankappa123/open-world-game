@@ -14,7 +14,9 @@ const chrome = spawn(CHROME, ['--headless=new', '--remote-debugging-port=' + CDP
   ...(process.env.GL ? process.env.GL.split(' ') : ['--use-angle=swiftshader', '--enable-unsafe-swiftshader']), '--no-first-run', '--autoplay-policy=no-user-gesture-required', 'about:blank'], { stdio: 'ignore' });
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 await sleep(1500);
-const tabs = await (await fetch('http://127.0.0.1:' + CDP + '/json')).json();
+// SAVE-PERF r3: a loaded machine can take a minute to open the debugging port (ECONNREFUSED at load average 150+)
+let tabs; for (let i = 0; i < 180 && !tabs?.find((t) => t.type === 'page'); i++) { try { tabs = await (await fetch('http://127.0.0.1:' + CDP + '/json')).json(); } catch {} if (!tabs?.find((t) => t.type === 'page')) await sleep(500); }
+if (!tabs?.find((t) => t.type === 'page')) { console.log('Chrome did not open its debugging port'); chrome.kill(); process.exit(1); }
 const ws = new WebSocket(tabs.find((t) => t.type === 'page').webSocketDebuggerUrl);
 await new Promise((r) => (ws.onopen = r));
 let id = 0, errors = 0, fails = 0; const pend = {};

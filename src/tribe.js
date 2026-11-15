@@ -308,7 +308,7 @@ export function createTribe(ctx) {
       if (f.state === 'dead') { deadTick(f, dt, i); continue; }
       think(f, dt);
       // knockback slide
-      if (f.kb) { const k = f.kb.t / 0.25; f.pos.x += f.kb.x * k * dt * 1.6; f.pos.z += f.kb.z * k * dt * 1.6; ctx.collide(f.pos, 0.3); if ((f.kb.t -= dt) <= 0) f.kb = null; }
+      if (f.kb) { const k = f.kb.t / 0.25; f.pos.x += f.kb.x * k * dt * 1.6; f.pos.z += f.kb.z * k * dt * 1.6; ctx.collide(f.pos, 0.3, false, true); if ((f.kb.t -= dt) <= 0) f.kb = null; }
       ctx.settle(f, dt * ctx.hsK(f), false);
       if (f.blockT > 0) { f.blockT -= dt; ctx.blockPose(f, Math.min(1, f.blockT / 0.15)); }
       bars(f);

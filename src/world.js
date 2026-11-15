@@ -117,12 +117,14 @@ export function addCollider(c) {
   return c;
 }
 // canopy (WH, riding): pines also keep the rider out of their low boughs (c.can, wider than the trunk).
-export function collide(p, rad, canopy = false) {
+// wild (SIT-r3): animals and raiders. A hut/house collider is switched off (c.off) only to let Aro and Sena in and out;
+// it stays solid for them, so a wolf never walks through the walls into the home.
+export function collide(p, rad, canopy = false, wild = false) {
   for (let i = -1; i <= 1; i++) for (let j = -1; j <= 1; j++) {
     const list = grid.get(key(p.x + 1000 + i * 8, p.z + 1000 + j * 8));
     if (!list) continue;
     for (const c of list) {
-      if (c.off) continue;
+      if (c.off && !wild) continue;
       const dx = p.x - c.x, dz = p.z - c.z, d = Math.hypot(dx, dz), m = (canopy && c.can ? c.can : c.r) + rad;
       if (d < m && d > 1e-4) { p.x = c.x + (dx / d) * m; p.z = c.z + (dz / d) * m; }
     }
@@ -216,6 +218,10 @@ export function createWorld(scene, renderer, quality = 'medium') {
   sky.material.uniforms.rayleigh.value = 1.8;
   sky.material.uniforms.mieCoefficient.value = 0.004;
   sky.material.uniforms.mieDirectionalG.value = 0.85;
+  // FPW-r3: from inside a cave the lit world through the mouth goes dim (sun off, sky light down), but the sky dome stayed
+  // at full day: the strip of it over the far tunnel exit read as white jagged specks. uDim dims it with the rest.
+  sky.material.uniforms.uDim = { value: 1 };
+  sky.material.fragmentShader = 'uniform float uDim;\n' + sky.material.fragmentShader.replace('gl_FragColor = vec4( texColor, 1.0 );', 'gl_FragColor = vec4( texColor * uDim, 1.0 );');
   scene.add(sky);
   const sun = new THREE.DirectionalLight(0xffffff, 4);
   sun.castShadow = true;
@@ -614,6 +620,8 @@ export function createWorld(scene, renderer, quality = 'medium') {
     u.uLight.value = lerp(0.12, 1, day) * (1 - st * 0.45);
     renderer.toneMappingExposure = lerp(0.8, 0.68, day);
     const cave = env.cave || 0;                     // WP3: inside a cave the sky light fades out
+    sky.material.uniforms.uDim.value = 1 - 0.92 * cave;   // FPW-r3: the Sky shader is HDR (well over 1 by day): it needs a deep cut to sit with the dimmed world
+    if (cave > 0) overcast.material.color.multiplyScalar(1 - 0.85 * cave);   // FPW-r3: the rain-cloud dome too (pale blue-grey specks over the far exit in a storm)
     // FPP-world: but never to pitch black. A warm-grey fill stays (walls read at ~5-10% without a torch), the cave
     // air only thinly hazes (the daylit world through the mouth used to fog to black), and the daylight spilling
     // in at the mouth lights the entrance (caves.mouthLight).

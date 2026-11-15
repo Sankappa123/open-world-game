@@ -63,9 +63,9 @@ export function rockTexture() {
     const r = rng(51), n = tileNoise(S, r, 5), n2 = tileNoise(S, rng(52), 2);
     const im = g.createImageData(S, S);
     for (let y = 0; y < S; y++) for (let x = 0; x < S; x++) {
-      const strata = Math.sin((y + n(x * 0.5, y * 0.5) * 60) * 0.11) * 0.5 + 0.5;       // horizontal rock bands
+      const strata = Math.sin((y + n2(x, y) * 140) * 0.0982) * 0.5 + 0.5;    // horizontal rock bands (FHW-r4: 8 per tile and a periodic warp so the tile edge has no seam, warped harder and fainter: tiled they read as corduroy rows)
       const a = n(x, y), b = n2(x, y);
-      const l = 0.26 + a * 0.3 + strata * 0.1 + (b - 0.5) * 0.08;
+      const l = 0.26 + a * 0.3 + strata * 0.045 + (b - 0.5) * 0.08 + 0.028;
       const c = new THREE.Color().setHSL(0.08 + (b - 0.5) * 0.05, 0.08 + a * 0.08, l);
       im.data.set([c.r * 255, c.g * 255, c.b * 255, 255], (y * S + x) * 4);
     }
@@ -95,7 +95,22 @@ export function makeTerrainMaterial(anisotropy = 4) {
     Object.assign(sh.uniforms, { tGrass: { value: tex.tGrass }, tDirt: { value: tex.tDirt }, tRock: { value: tex.tRock }, tMacro: { value: tex.tMacro } });
     sh.vertexShader = `attribute vec3 aSplat; varying vec3 vSplat; varying vec3 vWp; varying vec3 vNrm;\n` + sh.vertexShader
       .replace('#include <begin_vertex>', '#include <begin_vertex>\n vSplat = aSplat; vWp = position; vNrm = normal;');
-    sh.fragmentShader = `uniform sampler2D tGrass, tDirt, tRock, tMacro; varying vec3 vSplat; varying vec3 vWp; varying vec3 vNrm;\n` + sh.fragmentShader
+    sh.fragmentShader = `uniform sampler2D tGrass, tDirt, tRock, tMacro; varying vec3 vSplat; varying vec3 vWp; varying vec3 vNrm;
+      // FHW-r4: rock without a grid. Each projection reads the tile twice at offsets picked by a slow noise (k) and blends
+      // them (Quilez's no-tile lookup), with the true uv gradients so the offset seams never mip-pop. The old fixed
+      // 3.7 m + 8.5 m tiles still read as rows of stripes and dots over Lookout Peak at mid distance.
+      vec3 rockNT(vec2 uv, float k) {
+        vec2 gx = dFdx(uv), gy = dFdy(uv);
+        float l = k * 7.0, f = fract(l), ia = floor(l);
+        vec3 a = textureGrad(tRock, uv + sin(vec2(3.0, 7.0) * ia), gx, gy).rgb;
+        vec3 b = textureGrad(tRock, uv + sin(vec2(3.0, 7.0) * (ia + 1.0)), gx, gy).rgb;
+        return mix(a, b, smoothstep(0.2, 0.8, f - 0.1 * dot(a - b, vec3(1.0))));
+      }
+      vec3 rockTri(vec3 p, vec3 an, float s) {   // triplanar, each plane with its own noise so no face repeats
+        return rockNT(p.zy * s, texture2D(tMacro, p.zy * 0.021 + vec2(0.13, 0.71)).r) * an.x
+             + rockNT(p.xz * s, texture2D(tMacro, p.xz * 0.021 + vec2(0.57, 0.29)).r) * an.y
+             + rockNT(p.xy * s, texture2D(tMacro, p.xy * 0.021 + vec2(0.83, 0.47)).r) * an.z;
+      }\n` + sh.fragmentShader
       .replace('#include <map_fragment>', `
         float dist = distance(vWp, cameraPosition);
         float mac = texture2D(tMacro, vWp.xz * 0.004).r;
@@ -103,7 +118,13 @@ export function makeTerrainMaterial(anisotropy = 4) {
         vec3 cg = texture2D(tGrass, vWp.xz * 0.33 + mac * 0.3).rgb;
         vec3 cd = texture2D(tDirt, vWp.xz * 0.28).rgb;
         vec3 an = abs(normalize(vNrm)); an /= (an.x + an.y + an.z);
-        vec3 cr = texture2D(tRock, vWp.zy * 0.27 + mac).rgb * an.x + texture2D(tRock, vWp.xz * 0.27 + mac).rgb * an.y + texture2D(tRock, vWp.xy * 0.27 + mac).rgb * an.z;   // FPP-world: a ~3.7 m tile (11 m read as blurred, magnified cracks on the peak); the macro offset breaks the repeat
+        // FPP-world: a ~3.7 m tile (11 m read as blurred, magnified cracks on the peak). FHW-r4: read without a grid
+        // (rockNT), with a broad ~25 m light/dark wash over it so the cone does not read as one even tone.
+        vec3 cr = vec3(0.0);
+        if (w.z > 0.004) {
+          cr = rockTri(vWp, an, 0.27);
+          cr *= 0.86 + 0.28 * texture2D(tMacro, vWp.xz * 0.011 + vWp.y * 0.006 + vec2(0.37, 0.11)).r;
+        }
         vec3 tex = cg * w.x + cd * w.y + cr * w.z;
         vec3 flatCol = vec3(0.235, 0.33, 0.12) * w.x + vec3(0.36, 0.28, 0.2) * w.y + vec3(0.42, 0.4, 0.37) * w.z;
         tex = mix(tex, flatCol, smoothstep(50.0, 260.0, dist));

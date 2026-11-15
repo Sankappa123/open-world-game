@@ -219,8 +219,32 @@
 "js": "[G.horses().length, G.chId()]"
 },
 {
-"js": "window.ADV=[]; window._lastCh=G.chId(); setInterval(()=>{ if (G.chId()!==window._lastCh){ ADV.push(window._lastCh+'>'+G.chId()); window._lastCh=G.chId(); } },200); G.tp(-185,72); G.N.ride=true; [G.rideState().nRide, G.cnt('peak_ride')]",
+"js": "window.ADV=[]; window._lastCh=G.chId(); setInterval(()=>{ if (G.chId()!==window._lastCh){ ADV.push(window._lastCh+'>'+G.chId()); window._lastCh=G.chId(); } },200); window._M=(()=>{ try { return JSON.parse(localStorage.getItem('hearthborn-settings')||'{}').matureStory!==false; } catch(e) { return true; } })(); G.tp(-185,72); G.N.ride=true; [_M, G.rideState().nRide, G.cnt('peak_ride')]",
 "wait": 2500
+},
+{
+"until": "G.chId()!=='herd'",
+"timeout": 30000
+},
+{
+"expect": "G.chId()===(_M?'smoke':'clay')",
+"name": "herd -> smoke (Mature story) / clay"
+},
+{
+"js": "if (_M) { G.dismount(); G.time(10); G.setArc({coldCamp:true}); G.bump('ash_seen'); G.arcChoose('ford',2); } [G.chId(), JSON.stringify(G.goalsOf())]",
+"wait": 1500
+},
+{
+"until": "!_M || G.chId()!=='smoke'",
+"timeout": 30000
+},
+{
+"expect": "!_M || G.chId()==='outcast' && G.arc.choices.ford==='hold' && G.arc.tribe==='wary'",
+"name": "smoke -> outcast (Mature)"
+},
+{
+"js": "if (_M) G.arcChoose('outcast',2); [G.chId(), JSON.stringify(G.goalsOf())]",
+"wait": 1500
 },
 {
 "until": "G.chId()==='clay'",
@@ -228,7 +252,7 @@
 },
 {
 "expect": "G.chId()==='clay'",
-"name": "herd -> clay"
+"name": "-> clay"
 },
 {
 "js": "G.dismount(); G.tp(6,6); G.give('clay',8); G.give('stone',10); window._k=G.placeStruct('kiln',12,4,0,true); G.give('brick',24); 1"
@@ -249,7 +273,52 @@
 "js": "[G.sites(), G.N.h.pose, G.target&&G.target.label]"
 },
 {
-"js": "clearInterval(window._iv); G.finishSites(); 1"
+"until": "G.chId()!=='house'",
+"timeout": 30000
+},
+{
+"expect": "G.chId()===(_M?'winter':'hearth')",
+"name": "house -> winter (Mature) / hearth"
+},
+{
+"js": "if (_M) { G.stash.dried=(G.stash.dried||0)+10; for (let i=0;i<5;i++) G.bump('slept'); G.give('dried',2); G.arcChoose('door',2); } [G.chId(), JSON.stringify(G.goalsOf())]",
+"wait": 1500
+},
+{
+"until": "!_M || G.chId()!=='winter'",
+"timeout": 30000
+},
+{
+"expect": "!_M || G.chId()==='raid' && G.arc.choices.door==='trade'",
+"name": "winter -> raid (Mature)"
+},
+{
+"js": "if (_M) G.setArc({raid:{done:true}}); [G.chId(), JSON.stringify(G.goalsOf())]",
+"wait": 1500
+},
+{
+"until": "!_M || G.chId()!=='raid'",
+"timeout": 30000
+},
+{
+"expect": "!_M || G.chId()==='fever' && G.arc.feverOn",
+"name": "raid -> fever (Mature)"
+},
+{
+"js": "if (_M) G.setArc({feverDone:true, fever:0}); [G.chId(), JSON.stringify(G.goalsOf())]",
+"wait": 1500
+},
+{
+"until": "!_M || G.chId()!=='fever'",
+"timeout": 30000
+},
+{
+"expect": "!_M || G.chId()==='reckoning'",
+"name": "fever -> reckoning (Mature)"
+},
+{
+"js": "if (_M) { G.S.found.camp=1; G.arcChoose('korr',1); } [G.chId(), JSON.stringify(G.goalsOf()), G.arc.thaw]",
+"wait": 1500
 },
 {
 "until": "G.chId()==='hearth'",
@@ -257,7 +326,7 @@
 },
 {
 "expect": "G.chId()==='hearth'",
-"name": "house -> hearth"
+"name": "-> hearth"
 },
 {
 "until": "G.P.h.pose===null",
@@ -292,19 +361,54 @@
 "timeout": 30000
 },
 {
-"js": "G.give('grain',6); G.placeStruct('farm',-34,-10,0,true); G.bump('harvest'); G.placeStruct('well',-34,-22,0,true); for (const [k,x,z] of [['rack',-14,-22],['flowers',-30,-26],['basket',-16,-8]]) G.placeStruct(k,x,z,0,true); G.homeliness()",
+"js": "G.give('grain',6); G.placeStruct('farm',-34,-10,0,true); G.bump('harvest'); G.placeStruct('well',-34,-22,0,true); for (const [k,x,z] of [['rack',-14,-22],['flowers',-30,-26],['basket',-16,-8]]) G.placeStruct(k,x,z,0,true); [G.homeliness(), JSON.stringify(G.goalsOf())]",
 "wait": 1500
 },
 {
-"until": "G.chId()==='newlife'",
+"until": "G.chId()==='bond'",
 "timeout": 20000
 },
 {
-"expect": "G.chId()==='newlife'",
-"name": "seeds -> newlife"
+"expect": "G.chId()==='bond'",
+"name": "seeds -> bond"
 },
 {
-"js": "G.S.close=Math.max(G.S.close,60); G.give('wood',20); G.give('hide',10); G.give('fiber',20); G.give('brick',20); G.homeUpgrade('cradle'); 1",
+"js": "G.S.close=Math.max(G.S.close,76); G.give('cord',1); G.time(18); var s=G.arcDbg.spot('stones'); G.tp(s[0]+4,s[1]+4); G.N.pos.set(s[0]+5,0,s[1]+3); JSON.stringify(G.goalsOf())",
+"wait": 2000
+},
+{
+"until": "G.arcDbg.state().choice==='vow'",
+"timeout": 90000
+},
+{
+"js": "G.arcDbg.state().choice"
+},
+{
+"js": "G.arcChoose('vow',0); 1",
+"wait": 2000
+},
+{
+"until": "G.arc.bonded===true",
+"timeout": 90000
+},
+{
+"expect": "G.arc.bonded===true && G.arc.choices.vow===0",
+"name": "vows at the Standing Stones"
+},
+{
+"until": "G.chId()==='newlife'",
+"timeout": 60000
+},
+{
+"expect": "G.chId()==='newlife'",
+"name": "bond -> newlife"
+},
+{
+"until": "!document.getElementById('fade').classList.contains('on') && !G.arcDbg.state().scene",
+"timeout": 60000
+},
+{
+"js": "G.tp(window._ho.x, window._ho.z+6); G.S.close=Math.max(G.S.close,60); G.give('wood',20); G.give('hide',10); G.give('fiber',20); G.give('brick',20); G.homeUpgrade('cradle'); 1",
 "wait": 4800
 },
 {
@@ -379,10 +483,7 @@
 "name": "map fog/POIs"
 },
 {
-"js": "G.toggleMap(); JSON.stringify(ADV)"
-},
-{
-"expect": "ADV.join()==='herd>clay,clay>house,house>hearth,hearth>seeds,seeds>newlife,newlife>village'",
-"name": "6 later advances in order"
+"expect": "ADV.join()===(_M?'herd>smoke,smoke>outcast,outcast>clay,clay>house,house>winter,winter>raid,raid>fever,fever>reckoning,reckoning>hearth,hearth>seeds,seeds>bond,bond>newlife,newlife>village':'herd>clay,clay>house,house>hearth,hearth>seeds,seeds>bond,bond>newlife,newlife>village')",
+"name": "later chapters advance in order"
 }
 ]

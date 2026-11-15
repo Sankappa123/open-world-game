@@ -21,8 +21,8 @@
 "wait": 4000
 },
 {
-"expect": "G.S.storyV===2 && G.chId()+\" ch=\"+G.S.ch+\" close=\"+G.S.close",
-"name": "old ch 0"
+"expect": "G.S.storyV===3 && G.chId()==='awaken' && G.chId()+\" ch=\"+G.S.ch+\" close=\"+G.S.close",
+"name": "old ch 0 -> awaken (story v3)"
 },
 {
 "js": "var s=JSON.parse(localStorage.getItem('oldtpl')); s.ch=1; s.structs=s.structs.filter(x=>1>=1||x.k!=='hut'); if(1>=5) s.structs.push({k:'house',x:-24,z:-16,r:0}); localStorage.setItem('hearthborn-save-v2', JSON.stringify(s)); Storage.prototype.setItem=function(){}; 1"
@@ -35,8 +35,8 @@
 "wait": 4000
 },
 {
-"expect": "G.S.storyV===2 && G.chId()+\" ch=\"+G.S.ch+\" close=\"+G.S.close",
-"name": "old ch 1"
+"expect": "G.S.storyV===3 && G.chId()==='fire' && G.chId()+\" ch=\"+G.S.ch+\" close=\"+G.S.close",
+"name": "old ch 1 -> fire (story v3)"
 },
 {
 "js": "var s=JSON.parse(localStorage.getItem('oldtpl')); s.ch=2; s.structs=s.structs.filter(x=>2>=1||x.k!=='hut'); if(2>=5) s.structs.push({k:'house',x:-24,z:-16,r:0}); localStorage.setItem('hearthborn-save-v2', JSON.stringify(s)); Storage.prototype.setItem=function(){}; 1"
@@ -49,8 +49,8 @@
 "wait": 4000
 },
 {
-"expect": "G.S.storyV===2 && G.chId()+\" ch=\"+G.S.ch+\" close=\"+G.S.close",
-"name": "old ch 2"
+"expect": "G.S.storyV===3 && G.chId()==='hunt' && G.chId()+\" ch=\"+G.S.ch+\" close=\"+G.S.close",
+"name": "old ch 2 -> hunt (story v3)"
 },
 {
 "js": "var s=JSON.parse(localStorage.getItem('oldtpl')); s.ch=3; s.structs=s.structs.filter(x=>3>=1||x.k!=='hut'); if(3>=5) s.structs.push({k:'house',x:-24,z:-16,r:0}); localStorage.setItem('hearthborn-save-v2', JSON.stringify(s)); Storage.prototype.setItem=function(){}; 1"
@@ -63,8 +63,8 @@
 "wait": 4000
 },
 {
-"expect": "G.S.storyV===2 && G.chId()+\" ch=\"+G.S.ch+\" close=\"+G.S.close",
-"name": "old ch 3"
+"expect": "G.S.storyV===3 && G.chId()==='shelter' && G.chId()+\" ch=\"+G.S.ch+\" close=\"+G.S.close",
+"name": "old ch 3 -> shelter (story v3)"
 },
 {
 "js": "var s=JSON.parse(localStorage.getItem('oldtpl')); s.ch=4; s.structs=s.structs.filter(x=>4>=1||x.k!=='hut'); if(4>=5) s.structs.push({k:'house',x:-24,z:-16,r:0}); localStorage.setItem('hearthborn-save-v2', JSON.stringify(s)); Storage.prototype.setItem=function(){}; 1"
@@ -77,8 +77,8 @@
 "wait": 4000
 },
 {
-"expect": "G.S.storyV===2 && G.chId()+\" ch=\"+G.S.ch+\" close=\"+G.S.close",
-"name": "old ch 4"
+"expect": "G.S.storyV===3 && G.chId()==='cave' && G.chId()+\" ch=\"+G.S.ch+\" close=\"+G.S.close",
+"name": "old ch 4 -> cave (story v3)"
 },
 {
 "js": "var s=JSON.parse(localStorage.getItem('oldtpl')); s.ch=5; s.structs=s.structs.filter(x=>5>=1||x.k!=='hut'); if(5>=5) s.structs.push({k:'house',x:-24,z:-16,r:0}); localStorage.setItem('hearthborn-save-v2', JSON.stringify(s)); Storage.prototype.setItem=function(){}; 1"
@@ -91,8 +91,8 @@
 "wait": 4000
 },
 {
-"expect": "G.S.storyV===2 && G.chId()+\" ch=\"+G.S.ch+\" close=\"+G.S.close",
-"name": "old ch 5"
+"expect": "G.S.storyV===3 && ['house','winter','hearth'].includes(G.chId()) && G.chId()+\" ch=\"+G.S.ch+\" close=\"+G.S.close",
+"name": "old ch 5 -> house, or on past it (the saved house already meets its goal)"
 },
 {
 "js": "var s=JSON.parse(localStorage.getItem('oldtpl')); s.ch=6; s.structs=s.structs.filter(x=>6>=1||x.k!=='hut'); if(6>=5) s.structs.push({k:'house',x:-24,z:-16,r:0}); localStorage.setItem('hearthborn-save-v2', JSON.stringify(s)); Storage.prototype.setItem=function(){}; 1"
@@ -105,8 +105,8 @@
 "wait": 4000
 },
 {
-"expect": "G.S.storyV===2 && G.chId()+\" ch=\"+G.S.ch+\" close=\"+G.S.close",
-"name": "old ch 6"
+"expect": "G.S.storyV===3 && G.chId()==='hearth' && G.chId()+\" ch=\"+G.S.ch+\" close=\"+G.S.close",
+"name": "old ch 6 -> hearth (story v3)"
 },
 {
 "js": "var s=JSON.parse(localStorage.getItem('oldtpl')); s.ch=7; s.structs=s.structs.filter(x=>7>=1||x.k!=='hut'); if(7>=5) s.structs.push({k:'house',x:-24,z:-16,r:0}); localStorage.setItem('hearthborn-save-v2', JSON.stringify(s)); Storage.prototype.setItem=function(){}; 1"
@@ -119,8 +119,8 @@
 "wait": 4000
 },
 {
-"expect": "G.S.storyV===2 && G.chId()+\" ch=\"+G.S.ch+\" close=\"+G.S.close",
-"name": "old ch 7"
+"expect": "G.S.storyV===3 && G.chId()==='village' && G.chId()+\" ch=\"+G.S.ch+\" close=\"+G.S.close",
+"name": "old ch 7 -> village (story v3)"
 },
 {
 "until": "G.S.village===true",

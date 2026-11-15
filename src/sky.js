@@ -111,7 +111,7 @@ export function createAtmosphere(scene, R, getHeight) {
   function update(dt, camera, env, px, pz, sunDir) {
     t += dt;
     const { day, night, storm } = env;
-    const cam = camera.position;
+    const cam = camera.position, cv = clamp(env.cave || 0, 0, 1);
     // clouds
     for (const L of layers) {
       L.m.position.set(cam.x, L.y, cam.z);
@@ -119,18 +119,19 @@ export function createAtmosphere(scene, R, getHeight) {
       const lit = lerp(0.12, 1, day), dusk = clamp(1 - Math.abs(sunDir.y - 0.05) / 0.22, 0, 1);
       L.uniforms.uColor.value.setRGB(lit, lit * (1 - dusk * 0.25), lit * (1 - dusk * 0.5)).lerp(tmp.set(0.42, 0.45, 0.5).multiplyScalar(lerp(0.25, 1, day)), storm);
       L.uniforms.uOpacity.value = L.base * (0.75 + storm * 0.3);
+      if (cv > 0) L.uniforms.uColor.value.multiplyScalar(1 - 0.7 * cv);   // FPW-r3: dimmed with the sky dome (world.js uDim): from inside a cave full-white clouds read as white specks at the mouth
     }
     // sun and moon discs
     const sunUp = clamp((sunDir.y + 0.08) / 0.2, 0, 1);
     sunHalo.position.copy(cam).addScaledVector(sunDir, 2600); sunCore.position.copy(sunHalo.position);
-    sunHalo.material.opacity = sunUp * (1 - storm * 0.9) * 0.85; sunCore.material.opacity = sunUp * (1 - storm * 0.95);
+    sunHalo.material.opacity = sunUp * (1 - storm * 0.9) * 0.85 * (1 - cv); sunCore.material.opacity = sunUp * (1 - storm * 0.95) * (1 - 0.8 * cv);   // FPW-r3: dimmed with the cave's sky
     const low = clamp(1 - sunDir.y / 0.3, 0, 1);
     sunCore.material.color.setRGB(1, 1 - low * 0.35, 1 - low * 0.6);
     tmp.set(-sunDir.x, Math.max(0.3, -sunDir.y), -sunDir.z).normalize();
     moon.position.copy(cam).addScaledVector(tmp, 2600);
     moon.material.opacity = night * (1 - storm);
     // fireflies
-    const glow = night * (1 - storm);
+    const glow = night * (1 - storm) * (1 - clamp((env.cave || 0) * 1.6, 0, 1));   // FPW-r3: no fireflies drifting through cave rock
     flies.material.opacity = glow;
     if (glow > 0.01) {
       for (let i = 0; i < NF; i++) {
@@ -147,7 +148,7 @@ export function createAtmosphere(scene, R, getHeight) {
       fGeo.attributes.position.needsUpdate = fGeo.attributes.color.needsUpdate = true;
     }
     // pollen
-    const sunny = day * (1 - storm) * 0.55;
+    const sunny = day * (1 - storm) * 0.55 * (1 - clamp((env.cave || 0) * 1.6, 0, 1));   // FPW-r3: sunlit dust only outdoors; in a cave the unlit specks floated in the dark
     pollen.material.opacity = sunny;
     if (sunny > 0.01) {
       for (let i = 0; i < NP; i++) {

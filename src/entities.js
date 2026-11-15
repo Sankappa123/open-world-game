@@ -593,13 +593,15 @@ const blanketT = canvasTex(256, (g, S) => {
   g.strokeStyle = 'rgba(52, 34, 20, 0.85)'; g.lineWidth = 10; g.strokeRect(5, 5, S - 10, S - 10);
   g.strokeStyle = 'rgba(214, 190, 150, 0.55)'; g.lineWidth = 2; g.setLineDash([7, 6]); g.strokeRect(17, 17, S - 34, S - 34);
 });
-export function makeBlanket(w = 1, l = 1) {
-  const geo = new THREE.PlaneGeometry(w, l, 22, 18); geo.rotateX(-Math.PI / 2);
+export function makeBlanket(w = 1, l = 1, sw = 22, sl = 18) {   // SIT-r3: sw/sl segments (the sleepers' cover uses a finer grid: feet and knees)
+  const geo = new THREE.PlaneGeometry(w, l, sw, sl); geo.rotateX(-Math.PI / 2);
   const m = new THREE.Mesh(geo, new THREE.MeshStandardMaterial({ map: blanketT, color: 0xffffff, roughness: 1, side: THREE.DoubleSide }));
   m.castShadow = true; m.receiveShadow = true; m.frustumCulled = false;
-  const pos = geo.attributes.position, base = pos.array.slice(), C = 23, Rw = 19, hs = new Float32Array(pos.count), tmp = new Float32Array(pos.count);
+  const pos = geo.attributes.position, base = pos.array.slice(), C = sw + 1, Rw = sl + 1, hs = new Float32Array(pos.count), tmp = new Float32Array(pos.count);
   // heights from heightAt, then a few smoothing passes so it falls like cloth rather than a tent of peaks
-  m.userData.drape = (heightAt, passes = 2) => {
+  // SIT-r3: needAt (optional) is the least height at a point (the bodies under it): applied after the smoothing, so the
+  // cloth can be smoothed a lot (no lumps) without a knee or a foot coming through it.
+  m.userData.drape = (heightAt, passes = 2, needAt = null) => {
     for (let i = 0; i < pos.count; i++) hs[i] = heightAt(base[i * 3], base[i * 3 + 2]);
     for (let k = 0; k < passes; k++) {
       for (let r = 0; r < Rw; r++) for (let c = 0; c < C; c++) {
@@ -609,6 +611,7 @@ export function makeBlanket(w = 1, l = 1) {
       }
       hs.set(tmp);
     }
+    if (needAt) for (let i = 0; i < pos.count; i++) hs[i] = Math.max(hs[i], needAt(base[i * 3], base[i * 3 + 2]));
     for (let i = 0; i < pos.count; i++) pos.setY(i, hs[i]);
     pos.needsUpdate = true; geo.computeVertexNormals();
   };

@@ -21,8 +21,27 @@ export async function loadAnimals() {
       if (seen.has(c.name)) return false;
       seen.add(c.name); return true;
     });
+    if (/^(horse|donkey)/.test(k)) maneTufts(g.scene);   // FPW-r3
     lib[k] = g;
   }));
+}
+// FPW-r3: the mane and tail were one flat near-black colour: from the saddle in first person the mane read as a black
+// slab. A warm dark brown with per-vertex light and dark tufts (strands across the crest, so the shade runs along the
+// neck) gives it hair breakup while staying flat-shaded low poly. Colours live on the shared geometry, set once.
+function maneTufts(scene) {
+  scene.traverse((o) => {
+    if (!o.isMesh || o.material.name !== 'Hair' || o.geometry.attributes.color) return;
+    const p = o.geometry.attributes.position, c = new Float32Array(p.count * 3);
+    for (let i = 0; i < p.count; i++) {
+      const y = p.getY(i), z = p.getZ(i), h = Math.sin(y * 1730 + z * 910) * 43758.5453, n = h - Math.floor(h);   // hash along the neck
+      const v = 0.8 + 0.9 * n * n + 0.15 * Math.sin((y + z) * 520);
+      c.set([v, v * 0.97, v * 0.93], i * 3);
+    }
+    o.geometry.setAttribute('color', new THREE.BufferAttribute(c, 3));
+    o.material.vertexColors = true;
+    const hsl = {}; o.material.color.getHSL(hsl);
+    if (hsl.l < 0.25 && hsl.s < 0.1) o.material.color.setHex(0x45342a);   // the grey-black mane goes warm dark brown (a bay's points)
+  });
 }
 
 export function makeAnimal(kind, scale = SCALE[kind]) {
