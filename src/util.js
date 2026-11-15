@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 
 export function rng(seed) {
   let a = seed >>> 0;
@@ -120,4 +121,33 @@ export async function loadRetry(fn, label = '', tries = 3) {
       await new Promise((r) => setTimeout(r, 600 * 3 ** (i - 1)));
     }
   }
+}
+
+// SAVE-PERF: a GLTF load that retries its textures too. GLTFLoader swallows a failed texture (it logs an error and
+// the model loads without it), so loadRetry never saw the failure and trees could stay untextured all session.
+// Each attempt gets its own LoadingManager; any file that failed makes the attempt throw, and loadRetry runs it again.
+// While a retry remains, three's "Couldn't load texture" error is shown as a warning. After the last try the model
+// is kept without the texture (an untextured tree beats a stopped boot) and the missing files are logged as an error.
+let gltfActive = 0;
+const consoleError = console.error;
+console.error = function (...a) {
+  if (gltfActive && typeof a[0] === 'string' && a[0].startsWith('THREE.GLTFLoader: Couldn\'t load texture')) return console.warn(...a);
+  return consoleError.apply(this, a);
+};
+export function loadGltf(url, tries = 3) {
+  let n = 0;
+  return loadRetry(async () => {
+    const last = ++n >= tries, failed = [], mgr = new THREE.LoadingManager();
+    mgr.onError = (u) => failed.push(u);
+    gltfActive++;
+    try {
+      const g = await new GLTFLoader(mgr).loadAsync(url);
+      if (failed.length) {
+        const files = failed.map((u) => u.split('/').pop()).join(', ');
+        if (!last) throw new Error('Failed to load ' + files);
+        console.error(`${url}: still missing after ${tries} tries: ${files}`);
+      }
+      return g;
+    } finally { gltfActive--; }
+  }, url, tries);
 }

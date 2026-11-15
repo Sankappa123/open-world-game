@@ -36,11 +36,14 @@
   #help.min .hh { display: block; } #help.min .hb { display: none; }
   #help.min.nudge { animation: helpnudge 2.4s ease-in-out 3; }
   @keyframes helpnudge { 0%, 100% { opacity: 0.75; } 50% { opacity: 1; box-shadow: 0 0 0 1px var(--gold); } }
+  #help:not(.min) { bottom: calc(var(--invH, 40px) + 30px); }   /* FPP-world: the open F1 list sits above the pack, never over its chips */
   #help .hb .hx { float: right; margin-left: 12px; color: var(--gold); }
   kbd { font: inherit; color: var(--ink); background: rgba(255, 255, 255, 0.12); border-radius: 3px; padding: 0 5px; }
   #cross { position: absolute; left: 50%; top: 50%; width: 6px; height: 6px; margin: -3px; border-radius: 50%; border: 1px solid rgba(255, 255, 255, 0.8); display: none; }
-  #prompt { position: absolute; left: 50%; top: 58%; transform: translateX(-50%); padding: 6px 14px; display: none; white-space: nowrap; }
-  #sub { position: absolute; left: 50%; bottom: 96px; transform: translateX(-50%); max-width: min(760px, 86vw); text-align: center; font-size: 19px; text-shadow: 0 1px 3px #000, 0 0 14px rgba(0, 0, 0, 0.9); opacity: 0; transition: opacity 0.5s; }
+  /* FPP-world: the bottom stack is measured, not guessed: the pack (#inv, height in --invH, set by a ResizeObserver),
+     then the E prompt just above it (clear of the player's head and the aim arc), then the subtitle line above that */
+  #prompt { position: absolute; left: 50%; bottom: calc(var(--invH, 40px) + 30px); transform: translateX(-50%); padding: 6px 14px; display: none; white-space: nowrap; }
+  #sub { position: absolute; left: 50%; bottom: calc(var(--invH, 40px) + 72px); transform: translateX(-50%); max-width: min(760px, 86vw); text-align: center; font-size: 19px; text-shadow: 0 1px 3px #000, 0 0 14px rgba(0, 0, 0, 0.9); opacity: 0; transition: opacity 0.5s; }
   #sub.on { opacity: 1; }
   #sub b { color: var(--gold); font-weight: normal; margin-right: 8px; }
   #toasts { position: absolute; top: 70px; left: 50%; transform: translateX(-50%); display: flex; flex-direction: column; align-items: center; gap: 4px; }
@@ -126,7 +129,7 @@
   #map.on { display: grid; }
   #map .box { padding: 14px 18px 12px; text-align: center; }
   #map h3 { margin: 0 0 8px; font-size: 24px; font-weight: normal; color: var(--gold); letter-spacing: 0.06em; }
-  #mapcanvas { display: block; width: min(74vh, 86vw); height: min(74vh, 86vw); border: 1px solid var(--line); border-radius: 4px; cursor: crosshair; }
+  #mapcanvas { display: block; margin: 0 auto; width: min(74vh, 86vw); height: min(74vh, 86vw); border: 1px solid var(--line); border-radius: 4px; cursor: crosshair; }
   #map .legend { display: flex; gap: 14px; justify-content: center; margin: 8px 0 4px; font-size: 12px; color: var(--dim); }
   #map .legend i { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 5px; border: 1px solid #000; }
   #map small { display: block; color: var(--dim); }

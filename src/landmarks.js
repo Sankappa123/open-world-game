@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { rng, part, merge, lumpy, canvasTex, brickTex, boxM } from './util.js';
 import { rockTexture } from './terrain.js';
+import { plainMat } from './nature.js';   // SAVE-PERF
 
 // WP3 landmarks. Every feature is more than 95 m from home (the origin), so player-built homes never move.
 export const LM = {
@@ -45,7 +46,7 @@ export function createLandmarks(scene, NAT, getHeight, addCollider, { clear, riv
   const shade = (m) => { m.castShadow = m.receiveShadow = true; return m; };
   const nat = (name, x, y, z, sx, sy = sx, sz = sx, ry = R() * 6.28, rx = 0, rz = 0, matFn) => {
     const g = new THREE.Group();
-    for (const p of NAT[name] || []) g.add(shade(new THREE.Mesh(p.geo, matFn ? matFn(p.mat) : p.mat)));
+    for (const p of NAT[name] || []) g.add(shade(new THREE.Mesh(p.geo, plainMat(matFn ? matFn(p.mat) : p.mat))));   // SAVE-PERF: not the fields' instanced material
     g.position.set(x, y, z); g.scale.set(sx, sy, sz); g.rotation.set(rx, ry, rz);
     root.add(g); return g;
   };

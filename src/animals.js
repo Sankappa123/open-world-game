@@ -1,8 +1,7 @@
 import * as THREE from 'three';
-import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import * as SkeletonUtils from 'three/addons/utils/SkeletonUtils.js';
 import { prepModel } from './gore.js';   // GORE: per-instance materials with the wound shader
-import { loadRetry } from './util.js';   // SAVE-PERF asset retries
+import { loadGltf } from './util.js';   // SAVE-PERF asset retries
 
 // Animated animals: Quaternius Ultimate Animated Animals (CC0).
 const SCALE = { deer: 0.36, stag: 0.4, wolf: 0.34, fox: 0.21, cow: 0.4, horse: 0.48, horse_white: 0.48, donkey: 0.46,   // WP4 horses
@@ -12,9 +11,8 @@ const FILE = { aurochs: 'bull' };                   // CMB: kind -> file name
 const lib = {};
 
 export async function loadAnimals() {
-  const loader = new GLTFLoader();
   await Promise.all(Object.keys(SCALE).map(async (k) => {
-    const url = `/models/animals/${FILE[k] || k}.${EXT[k] || 'gltf'}`, g = await loadRetry(() => loader.loadAsync(url), url);   // SAVE-PERF retry   // CMB FILE
+    const url = `/models/animals/${FILE[k] || k}.${EXT[k] || 'gltf'}`, g = await loadGltf(url);   // SAVE-PERF retry (textures too)   // CMB FILE
     g.scene.traverse((o) => { if (o.isMesh) { o.material.roughness = 0.95; o.material.metalness = 0; } });
     // WP4: some files carry every clip twice ('Idle' and 'AnimalArmature|Idle'); keep the first of each name
     const seen = new Set();

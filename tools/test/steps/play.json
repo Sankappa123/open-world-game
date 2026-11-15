@@ -122,7 +122,7 @@
 "name": "torch + wall torches"
 },
 {
-"js": "window.__look=(i)=>{var k=G.caves.list[0];var p=G.caves.panels[i];var a=Math.atan2(k.x-p.x,k.z-p.z);G.tp(p.x+Math.sin(a)*1.6,p.z+Math.cos(a)*1.6);return 1}; __look(0)",
+"js": "window.__look=(i)=>{var k=G.caves.list[0];var p=G.caves.panels[i];var a=Math.atan2(k.x-p.x,k.z-p.z);G.tp(p.x+Math.sin(a)*1.6,p.z+Math.cos(a)*1.6);G.yaw=Math.atan2(-Math.sin(a),-Math.cos(a))-Math.PI;return 1}; __look(0)",
 "wait": 800
 },
 {

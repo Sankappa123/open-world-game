@@ -3,11 +3,11 @@
 import http from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
-import { handleApi, openDb, dbMode } from './db.mjs';
+import { handleApi, warmDb, dbMode } from './db.mjs';
 
 const DIST = path.resolve('dist'), PORT = +(process.env.PORT || 5173);
 const TYPES = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.json': 'application/json', '.png': 'image/png', '.jpg': 'image/jpeg', '.gltf': 'model/gltf+json', '.glb': 'model/gltf-binary', '.bin': 'application/octet-stream', '.ico': 'image/x-icon', '.svg': 'image/svg+xml' };
-await openDb();
+await warmDb();
 http.createServer(async (req, res) => {
   if (await handleApi(req, res)) return;
   let p = path.normalize(decodeURIComponent(new URL(req.url, 'http://x').pathname));

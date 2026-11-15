@@ -2,26 +2,30 @@
 // to the browser's localStorage. Settings stay in localStorage only.
 const KEY = 'hearthborn-save-v2', OLD_KEY = 'hearthborn-save-v1', SETTINGS_KEY = 'hearthborn-settings';
 
-export const saveState = { where: 'none', at: 0, pending: 0, error: '', listeners: [] };
+export const saveState = { where: 'none', at: 0, pending: 0, error: '', unknown: false, listeners: [] };
 const notify = () => { for (const f of saveState.listeners) f(saveState); };
 
-export async function loadGame() {
+// SAVE-PERF: saveState.unknown is set when the server did not answer (timeout, network error, 5xx). That is not
+// "no save": a slow first request (Mongo connect timeout, a loaded machine) must never read as an empty slot, or a
+// new game would delete the real save. Only an answer from the server (data or data:null) is definitive.
+// With a browser copy the wait is short (that copy is shown meanwhile); without one it waits longer.
+export async function loadGame({ timeout } = {}) {
   let local = null;
   try { const s = localStorage.getItem(KEY) || localStorage.getItem(OLD_KEY); if (s) local = JSON.parse(s); } catch {}
   try {
-    const ctrl = new AbortController(), t = setTimeout(() => ctrl.abort(), 4000);
+    const ctrl = new AbortController(), t = setTimeout(() => ctrl.abort(), timeout ?? (local ? 4000 : 8000));
     const r = await fetch('/api/save', { signal: ctrl.signal, cache: 'no-store' });
+    const j = r.ok ? await r.json() : null;
     clearTimeout(t);
-    if (r.ok) {
-      const j = await r.json();
-      saveState.where = 'db';
+    if (j && j.ok !== false) {
+      saveState.where = 'db'; saveState.unknown = false;
       // Prefer whichever copy is newer: the database normally, the browser if the server was down for a while.
       if (j.data && (!local || (j.data.savedAt || 0) >= (local.savedAt || 0))) return { data: j.data, from: 'database' };
       if (local) return { data: local, from: 'browser' };
       return null;
     }
   } catch {}
-  saveState.where = 'local';
+  saveState.where = 'local'; saveState.unknown = true;
   return local ? { data: local, from: 'browser' } : null;
 }
 
@@ -49,10 +53,10 @@ function flush() {
     .catch((e) => { saveState.where = 'local'; saveState.error = String(e.message || e); })
     .finally(() => { saveState.pending--; notify(); });
 }
-export function deleteGame() {
+export function deleteGame({ server = true } = {}) {   // SAVE-PERF: server:false keeps a save the server never showed us
   clearTimeout(timer); timer = 0; queued = null;   // MAT: a pending save must not resurrect a deleted (permadeath) game
   try { localStorage.removeItem(KEY); localStorage.removeItem(OLD_KEY); } catch {}
-  fetch('/api/save', { method: 'DELETE' }).catch(() => {});
+  if (server) fetch('/api/save', { method: 'DELETE' }).catch(() => {});
 }
 
 // ---------- settings ----------

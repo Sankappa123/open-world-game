@@ -1,8 +1,7 @@
 import * as THREE from 'three';
-import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import * as SkeletonUtils from 'three/addons/utils/SkeletonUtils.js';
 import { makeSpear, makeAxe } from './entities.js';
-import { loadRetry } from './util.js';
+import { loadGltf } from './util.js';
 
 // Rigged human models, hair and animations: Quaternius (CC0). See public/models/CREDITS.txt.
 const LOOPS = { idle: 'Idle_Loop', walk: 'Walk_Loop', run: 'Jog_Fwd_Loop', sprint: 'Sprint_Loop', sneakIdle: 'Crouch_Idle_Loop', sneak: 'Crouch_Fwd_Loop', swim: 'Swim_Fwd_Loop', swimIdle: 'Swim_Idle_Loop', jump: 'Jump_Loop',
@@ -42,8 +41,7 @@ const _fq = new THREE.Quaternion(), _fe = new THREE.Euler();
 const fitOf = (kind, slot, h) => h?.fitAdj?.[kind]?.[slot] || FIT[kind]?.[slot] || null;
 
 export async function loadPeople() {
-  const loader = new GLTFLoader();
-  const load = (f) => loadRetry(() => loader.loadAsync('/models/' + f), f);   // SAVE-PERF retry
+  const load = (f) => loadGltf('/models/' + f);   // SAVE-PERF retry (textures too)
   const [male, female, hairM, beard, hairF, buns, buzz, anims, anims2] = await Promise.all(
     ['male.gltf', 'female.gltf', 'hair_simpleparted.gltf', 'hair_beard.gltf', 'hair_long.gltf', 'hair_buns.gltf', 'hair_buzzed.gltf', 'anims.glb', 'anims2.glb']
       .map((f) => (f === 'anims2.glb' ? load(f).catch((e) => { console.warn('anims2.glb not loaded', e); return { scene: null, animations: [] }; }) : load(f))));   // CMB: UAL2 clips (same rig)

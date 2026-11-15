@@ -103,7 +103,7 @@ export function makeTerrainMaterial(anisotropy = 4) {
         vec3 cg = texture2D(tGrass, vWp.xz * 0.33 + mac * 0.3).rgb;
         vec3 cd = texture2D(tDirt, vWp.xz * 0.28).rgb;
         vec3 an = abs(normalize(vNrm)); an /= (an.x + an.y + an.z);
-        vec3 cr = texture2D(tRock, vWp.zy * 0.09).rgb * an.x + texture2D(tRock, vWp.xz * 0.09).rgb * an.y + texture2D(tRock, vWp.xy * 0.09).rgb * an.z;
+        vec3 cr = texture2D(tRock, vWp.zy * 0.27 + mac).rgb * an.x + texture2D(tRock, vWp.xz * 0.27 + mac).rgb * an.y + texture2D(tRock, vWp.xy * 0.27 + mac).rgb * an.z;   // FPP-world: a ~3.7 m tile (11 m read as blurred, magnified cracks on the peak); the macro offset breaks the repeat
         vec3 tex = cg * w.x + cd * w.y + cr * w.z;
         vec3 flatCol = vec3(0.235, 0.33, 0.12) * w.x + vec3(0.36, 0.28, 0.2) * w.y + vec3(0.42, 0.4, 0.37) * w.z;
         tex = mix(tex, flatCol, smoothstep(50.0, 260.0, dist));

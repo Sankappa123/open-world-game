@@ -81,9 +81,17 @@ async function openSqlite(file) {
   };
 }
 
-// kind: 'real' (the player's saves) or 'test'. Each is opened once and cached.
-export async function openDb(kind = 'real') {
-  if (kind in handles) return handles[kind];
+// kind: 'real' (the player's saves) or 'test'. Each is opened once and cached. Requests that arrive while it is
+// still opening share the same attempt (SAVE-PERF: two first requests used to open, and time out on, Mongo twice).
+const opening = {};
+export function openDb(kind = 'real') {
+  if (kind in handles) return Promise.resolve(handles[kind]);
+  return (opening[kind] ||= openDbNow(kind).finally(() => { delete opening[kind]; }));
+}
+// SAVE-PERF: open both stores when the server starts, so the first GET /api/save (the title's "Continue") never waits
+// out the Mongo connect timeout. The player's store is awaited; the test store opens in the background.
+export async function warmDb() { openDb('test').catch(() => {}); return openDb('real'); }
+async function openDbNow(kind) {
   const K = KIND[kind];
   let d = null, m = 'none';
   fs.mkdirSync(DIR, { recursive: true });

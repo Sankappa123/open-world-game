@@ -1,7 +1,6 @@
 import * as THREE from 'three';
-import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { MeshoptSimplifier } from 'three/addons/libs/meshopt_simplifier.module.js';
-import { loadRetry } from './util.js';
+import { loadGltf } from './util.js';
 
 // Tree trunks come with ~3000 triangles each. The models are full of texture seams, so an attribute-aware
 // simplifier barely touches them; instead vertices are welded by position only, the index is simplified, and each
@@ -37,6 +36,15 @@ const NAMES = ['commontree_1', 'commontree_2', 'commontree_3', 'commontree_4', '
   'flower_3_single', 'flower_4_single', 'flower_3_group', 'flower_4_group', 'fern_1', 'clover_1', 'plant_1', 'plant_1_big', 'plant_7_big', 'mushroom_common'];
 const SWAY = { Grass: 0.085, Leaves: 0.05, Flowers: 0.05, Leaves_NormalTree: 0.012, Leaves_Pine: 0.01, Leaves_TwistedTree: 0.02 };
 const mats = new Map();
+// SAVE-PERF: three.js keeps one compiled program per material, so a material drawn both by InstancedMeshes (the
+// fields) and by plain meshes (landmarks, home decor) recompiles its program lookup on every switch: getProgram was
+// ~36% of all JS allocation. Plain meshes take this per-material copy instead (same look, same shader hooks).
+const plainMats = new Map();
+export function plainMat(m) {
+  let c = plainMats.get(m);
+  if (!c) { c = m.clone(); c.onBeforeCompile = m.onBeforeCompile; c.customProgramCacheKey = m.customProgramCacheKey; plainMats.set(m, c); }
+  return c;
+}
 
 // Foliage sways in the wind and is lit the same on both faces. Instance colours tint it (grass fades into the
 // ground colour that way) and the far end of each patch sinks into the ground instead of popping.
@@ -78,9 +86,8 @@ function prepare(m) {
 }
 
 export async function loadNature() {
-  const loader = new GLTFLoader();
   await Promise.all(NAMES.map(async (n) => {
-    const url = '/models/nature/' + n + '.gltf', g = await loadRetry(() => loader.loadAsync(url), url);   // SAVE-PERF retry
+    const url = '/models/nature/' + n + '.gltf', g = await loadGltf(url);   // SAVE-PERF retry (textures too)
     g.scene.updateMatrixWorld(true);
     const parts = [];
     const meshes = [];

@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { rng, mat, part, merge, lumpy, canvasTex, streakTex, brickTex, boxM } from './util.js';
-import { NAT } from './nature.js';
+import { NAT, plainMat } from './nature.js';
 
 const cap = (r, l) => new THREE.CapsuleGeometry(r, l, 5, 12);
 const cyl = (a, b, h, n = 10) => new THREE.CylinderGeometry(a, b, h, n);
@@ -43,22 +43,65 @@ export function makeAxe({ flint = false } = {}) {
   return g;
 }
 
+// FPP-world: a soft flame texture (a teardrop: white-yellow core, orange body, fading edges), shared by every torch.
+// The flame is drawn with additive, depth-write-off sprites (camera-facing, so it always rises up the screen and never
+// shows facets) plus a wide glow; the old solid ellipsoids read as an amber crystal in third person and an egg in first.
+let flameTexC = null;
+function flameTex() {
+  if (flameTexC) return flameTexC;
+  const c = document.createElement('canvas'); c.width = 64; c.height = 128;
+  const g = c.getContext('2d');
+  const tear = (w, top, col0, col1) => {           // a teardrop filled with a vertical-radial gradient
+    const gr = g.createRadialGradient(32, 96, 2, 32, 82, 70);
+    gr.addColorStop(0, col0); gr.addColorStop(0.45, col1); gr.addColorStop(1, 'rgba(255,60,0,0)');
+    g.fillStyle = gr; g.beginPath(); g.moveTo(32, top);
+    g.bezierCurveTo(32 + w * 0.35, top + 34, 32 + w, 70, 32 + w * 0.8, 100);
+    g.bezierCurveTo(32 + w * 0.55, 124, 32 - w * 0.55, 124, 32 - w * 0.8, 100);
+    g.bezierCurveTo(32 - w, 70, 32 - w * 0.35, top + 34, 32, top); g.fill();
+  };
+  g.filter = 'blur(3px)';
+  tear(26, 4, 'rgba(255,170,60,0.9)', 'rgba(255,90,20,0.55)');
+  tear(15, 34, 'rgba(255,250,220,1)', 'rgba(255,190,80,0.8)');
+  flameTexC = new THREE.CanvasTexture(c); flameTexC.colorSpace = THREE.SRGBColorSpace;
+  return flameTexC;
+}
+let glowTexC = null;
+function glowTex() {
+  if (glowTexC) return glowTexC;
+  glowTexC = canvasTex(64, (g, S) => { const gr = g.createRadialGradient(S / 2, S / 2, 0, S / 2, S / 2, S / 2); gr.addColorStop(0, 'rgba(255,200,120,0.85)'); gr.addColorStop(0.35, 'rgba(255,130,40,0.3)'); gr.addColorStop(1, 'rgba(255,90,0,0)'); g.fillStyle = gr; g.fillRect(0, 0, S, S); });
+  glowTexC.wrapS = glowTexC.wrapT = THREE.ClampToEdgeWrapping;
+  return glowTexC;
+}
+
 // A hand torch: a stick with a resin-soaked fibre head. Held like the spear (along +z). The light is not a
 // child of the torch: the caller keeps it in the scene and only dims it, so it still shines in first person
 // (when the body is hidden) and lighting it never forces every material to recompile.
 export function makeTorch() {
   const g = new THREE.Group();
   mesh(g, cyl(0.02, 0.026, 0.62, 6), woodM, 0, 0, 0.16).rotation.x = Math.PI / 2;
-  mesh(g, cyl(0.045, 0.035, 0.12, 7), mat(0x3a2a1a, 1), 0, 0, 0.46).rotation.x = Math.PI / 2;
-  const fl = new THREE.Group(); fl.position.z = 0.56; g.add(fl);
-  const flames = [0, 1].map((i) => {
-    const f = new THREE.Mesh(new THREE.SphereGeometry(0.075 - i * 0.025, 8, 6), new THREE.MeshBasicMaterial({ color: i ? 0xffd66a : 0xff8a2a, transparent: true, opacity: 0.85, blending: THREE.AdditiveBlending, depthWrite: false, fog: false }));
-    f.scale.set(1, 1, 1.9); f.position.z = 0.03 + i * 0.03; fl.add(f); return f;
+  // FPP-world: the charred, glowing wrap is unlit (the torch's own light sits on it and blew a lit material out to a white box)
+  const wrapM = new THREE.MeshBasicMaterial({ color: 0x4a2412 });
+  mesh(g, cyl(0.045, 0.035, 0.12, 9), wrapM, 0, 0, 0.46).rotation.x = Math.PI / 2;
+  const ember = mesh(g, cyl(0.047, 0.047, 0.03, 9), new THREE.MeshBasicMaterial({ color: 0xff7a2a }), 0, 0, 0.515); ember.rotation.x = Math.PI / 2;   // the burning top of the wrap
+  const fl = new THREE.Group(); fl.position.z = 0.53; g.add(fl);
+  const sm = (col, op, tex = flameTex()) => new THREE.SpriteMaterial({ map: tex, color: col, transparent: true, opacity: op, blending: THREE.AdditiveBlending, depthWrite: false, fog: false });
+  const flames = [[0xffb050, 0.95, 0.2, 0.36], [0xff7a28, 0.7, 0.26, 0.42], [0xffe0a0, 0.85, 0.12, 0.22]].map(([c, op, w, h], i) => {
+    const f = new THREE.Sprite(sm(c, op)); f.center.set(0.5, 0.1); f.scale.set(w, h, 1); f.userData.wh = [w, h]; f.renderOrder = 3 + i; fl.add(f); return f;
   });
+  const glow = new THREE.Sprite(sm(0xffa050, 0.5, glowTex())); glow.scale.setScalar(0.62); glow.position.z = 0.05; glow.renderOrder = 2; fl.add(glow);
   const light = new THREE.PointLight(0xff8f40, 0, 16, 1.6);
   let t = 0;
-  return { root: g, light, flame: fl, set lit(on) { fl.visible = on; light.intensity = on ? 9 : 0; },
-    update(dt) { t += dt; flames.forEach((f, i) => f.scale.set(1 + Math.sin(t * 12 + i) * 0.2, 1 + Math.cos(t * 9 + i) * 0.2, 1.9 + Math.sin(t * 15 + i * 2) * 0.5)); if (fl.visible) light.intensity = 8.5 + Math.sin(t * 13) * 1.5 + Math.sin(t * 29) * 1; } };
+  return { root: g, light, flame: fl, flames, glow, set lit(on) { fl.visible = on; ember.visible = on; light.intensity = on ? 9 : 0; },
+    update(dt) {
+      t += dt;
+      flames.forEach((f, i) => {                     // a lick of flame: height and width breathe out of phase, the tip sways
+        const [w, h] = f.userData.wh;
+        f.scale.set(w * (1 + Math.sin(t * 11 + i * 2.1) * 0.12), h * (1 + Math.sin(t * 15 + i) * 0.16 + Math.sin(t * 27 + i * 3) * 0.08), 1);
+        f.material.rotation = Math.sin(t * 7 + i * 1.7) * 0.12 + Math.sin(t * 19 + i) * 0.05;
+      });
+      glow.material.opacity = 0.42 + Math.sin(t * 13) * 0.06 + Math.sin(t * 31) * 0.04;
+      if (fl.visible) light.intensity = 8.5 + Math.sin(t * 13) * 1.5 + Math.sin(t * 29) * 1;
+    } };
 }
 
 // WPN: Sena's woven carry basket (worn on the back). Origin at its centre; the open top is +y, straps on the -z side
@@ -223,7 +266,18 @@ const flameM2 = flameM.clone(); flameM2.color.set(0xffd66a);
 const plankDM = plankM.clone(); plankDM.side = THREE.DoubleSide;
 const thatchDM = thatchM.clone(); thatchDM.side = THREE.DoubleSide;
 const reedM = mat(0xb8a46a, 1), hideM = mat(0x7a5236, 0.95), linenM = mat(0xd8ccb0, 1), fiberM = mat(0xb89a5e, 1), hayM = mat(0xd9bf5a, 1), meatM = mat(0x6e2f22, 0.8), driedM = mat(0x4a2618, 0.9);
-const glassM = new THREE.MeshStandardMaterial({ color: 0x1c2a3a, emissive: 0x0a1424, emissiveIntensity: 1, roughness: 0.25, metalness: 0.1 });   // STORY: a window pane seen from inside
+// STORY round 2: window panes follow the daylight (windowLight, called every frame from main). Inside: pale sky glass by
+// day, dark glass at night (it was night-navy with a hotspot at noon). Outside: a dim sky-grey pane by day (was a black
+// void), the warm hearth glow at night. Matte, so neither shows a lamp-like specular spot.
+const glassM = new THREE.MeshStandardMaterial({ color: 0x1c2a3a, emissive: 0x0a1424, emissiveIntensity: 1, roughness: 0.9, metalness: 0 });
+const winOutM = new THREE.MeshStandardMaterial({ color: 0x1a120a, emissive: 0xffa24a, emissiveIntensity: 0, roughness: 0.6, metalness: 0 });
+export function windowLight(day, night, storm = 0) {
+  const d = Math.max(0, Math.min(1, day * (1 - storm * 0.45))), l = (a, b) => a + (b - a) * d;
+  glassM.color.setRGB(l(0.06, 0.42), l(0.09, 0.56), l(0.13, 0.7));
+  glassM.emissive.setRGB(l(0.035, 0.4), l(0.06, 0.54), l(0.1, 0.7));
+  winOutM.color.setRGB(l(0.1, 0.34), l(0.07, 0.38), l(0.04, 0.42));
+  winOutM.emissiveIntensity = night * 1.8;
+}
 const emberM = new THREE.MeshStandardMaterial({ color: 0x2a140a, emissive: 0xff6a20, emissiveIntensity: 1.6, roughness: 1 });
 
 function smoke(g, y, n = 8, spread = 1) {
@@ -350,7 +404,7 @@ export const BUILD = {
     door.rotation.y = -1.25;
     for (const x of [-2.05, 2.05]) {
       // STORY: the warm glow shows only from outside; inside, the pane is dark glass (it used to be one emissive box through the wall)
-      const pane = mesh(g, new THREE.PlaneGeometry(0.9, 0.9), glowM, x, 1.75, z + t / 2 + 0.022); pane.castShadow = false; pane.receiveShadow = false;
+      const pane = mesh(g, new THREE.PlaneGeometry(0.9, 0.9), winOutM, x, 1.75, z + t / 2 + 0.022); pane.castShadow = false; pane.receiveShadow = false;
       const glass = mesh(g, new THREE.PlaneGeometry(0.9, 0.9), glassM, x, 1.75, z - t / 2 - 0.022); glass.rotation.y = Math.PI; glass.castShadow = false;
       mesh(g, new THREE.BoxGeometry(1.1, 0.09, t + 0.12), plankM, x, 1.25, z);
       mesh(g, new THREE.BoxGeometry(1.1, 0.09, t + 0.12), plankM, x, 2.25, z);
@@ -442,7 +496,7 @@ export const BUILD = {
     return { radius: 1.3, solid: false, label: 'Fence', cols: [[-0.8, 0, 0.25], [0, 0, 0.25], [0.8, 0, 0.25]] };
   },
   path(g) {
-    if (NAT.RockPath_Round_Wide) { for (const p of NAT.RockPath_Round_Wide) mesh(g, p.geo, p.mat, 0, 0.02, 0).castShadow = false; }
+    if (NAT.RockPath_Round_Wide) { for (const p of NAT.RockPath_Round_Wide) mesh(g, p.geo, plainMat(p.mat), 0, 0.02, 0).castShadow = false; }
     else for (let i = 0; i < 5; i++) {
       const a = i * 2.4, r = i ? 0.75 : 0, m = mesh(g, rockGeo, stoneM, Math.cos(a) * r, 0.02, Math.sin(a) * r);
       m.scale.set(0.42, 0.06, 0.36); m.rotation.y = i; m.castShadow = false;
@@ -455,7 +509,7 @@ export const BUILD = {
     const kinds = ['flower_3_group', 'flower_4_group'];
     for (let i = 0; i < 5; i++) {
       const parts = NAT[kinds[i % 2]], a = i * 1.3, r = i ? 0.42 : 0;
-      if (parts) { const fg = pivot(g, Math.cos(a) * r, 0.05, Math.sin(a) * r); fg.rotation.y = i * 2; fg.scale.setScalar(0.4); for (const p of parts) mesh(fg, p.geo, p.mat); }
+      if (parts) { const fg = pivot(g, Math.cos(a) * r, 0.05, Math.sin(a) * r); fg.rotation.y = i * 2; fg.scale.setScalar(0.4); for (const p of parts) mesh(fg, p.geo, plainMat(p.mat)); }   // SAVE-PERF: not the decor fields' instanced material
       else mesh(g, sph(0.12, 8, 6), mat(i % 2 ? 0xd77ab0 : 0xf2d24a, 0.8), Math.cos(a) * r, 0.2, Math.sin(a) * r);
     }
     return { radius: 0.9, solid: false, label: 'Flower bed' };
@@ -524,7 +578,9 @@ export function makeScaffold(r) {
 
 export function makeStructure(kind) {
   const g = new THREE.Group();
-  const info = BUILD[kind](g);
+  // SAVE-PERF: an unknown kind (a newer save, a typo in a story beat) warns and places an empty, non-solid marker
+  // instead of throwing "BUILD[kind] is not a function" out of a save load or a cutscene
+  const info = typeof BUILD[kind] === 'function' ? BUILD[kind](g) : (console.warn('makeStructure: no builder for', kind), { radius: 0.5, solid: false, label: String(kind) });
   return Object.assign(info, { kind, group: g, solid: info.solid ?? true, rise: 0 });
 }
 

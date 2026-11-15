@@ -50,11 +50,27 @@ export function caveCarve(h, x, z) {
     h = lerp(h, k.floor, 1 - smooth(k.R - 0.3, k.R + 2, d));
     if (s > 0 && s < k.R + 5 + RAMP + 4) {
       // the corridor: flat to the mouth, then a gentle ramp out until it meets the hillside
-      const target = k.floor + Math.max(0, s - (k.R + 5)) * 0.24, m = (1 - smooth(TUBE - 0.2, TUBE + 2.2, lat)) * (1 - smooth(k.R + 5 + RAMP, k.R + 5 + RAMP + 4, s));
+      // FPP-world: inside the tube the floor stays flat out to the wall (the lifted grid triangles there poked up through
+      // the tube as cream ledges); from the mouth on it eases back to the old cut, so the hillside and the scatter are unchanged
+      const lo = lerp(TUBE + 1.5, TUBE - 0.2, smooth(k.R + 5.5, k.R + 7.5, s));   // (the 2.5 m grid needs ~1.5 m beyond the wall to stay flat at it)
+      const r = s - (k.R + 5), target = k.floor + (r < -2 ? 0 : r < 2 ? 0.03 * (r + 2) * (r + 2) : r * 0.24), m =   // FPP-world: the ramp eases in (no crease at the mouth)
+        (1 - smooth(lo, TUBE + 2.2, lat)) * (1 - smooth(k.R + 5 + RAMP, k.R + 5 + RAMP + 4, s));
       h = lerp(h, Math.min(h, target), m);
     }
   }
   return h;
+}
+// FPP-world: 1 on a cave's floor (the dome and the entrance tube), easing to 0 a few metres out past the mouth, so the
+// terrain there is dirt and rock instead of meadow grass and the tube end blends into the hillside with no seam.
+export function floorMask(x, z) {
+  let m = 0;
+  for (const k of CAVES) {
+    if (!k.dir) continue;
+    const [s, lat, d] = axis(k, x, z);
+    m = Math.max(m, 1 - smooth(k.R - 0.5, k.R + 2, d));
+    if (s > 0) m = Math.max(m, (1 - smooth(TUBE + 0.5, TUBE + 3.5, lat)) * (1 - smooth(k.R + 4, k.R + 11, s)));
+  }
+  return m;
 }
 // Is (x, z) in a cave footprint? Scatter (trees, rocks, grass) skips these spots.
 export function inCave(x, z, pad = 0) {

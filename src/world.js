@@ -7,7 +7,7 @@ import { makeTerrainMaterial } from './terrain.js';
 import { createRiver } from './water.js';
 import { createAtmosphere } from './sky.js';
 import { PRESETS } from './quality.js';
-import { CAVES, initCaves, caveCarve, inCave, depthAt, createCaves } from './caves.js';   // WP3
+import { CAVES, initCaves, caveCarve, inCave, depthAt, createCaves, floorMask } from './caves.js';   // WP3
 import { LM, FORDS, KEEP, POIS, initPOIS, createLandmarks } from './landmarks.js';     // WP3
 import { rockTexture } from './terrain.js';
 
@@ -107,6 +107,7 @@ function slopeY0(x, z) {
 }
 
 // ---------- colliders ----------
+const PINE_CAN = 2.3;   // WH: a pine's bough radius at a rider's head height (m, per unit of tree scale)
 const grid = new Map();
 const key = (x, z) => ((x / 8) | 0) + ',' + ((z / 8) | 0);
 export function addCollider(c) {
@@ -115,13 +116,14 @@ export function addCollider(c) {
   grid.get(k).push(c);
   return c;
 }
-export function collide(p, rad) {
+// canopy (WH, riding): pines also keep the rider out of their low boughs (c.can, wider than the trunk).
+export function collide(p, rad, canopy = false) {
   for (let i = -1; i <= 1; i++) for (let j = -1; j <= 1; j++) {
     const list = grid.get(key(p.x + 1000 + i * 8, p.z + 1000 + j * 8));
     if (!list) continue;
     for (const c of list) {
       if (c.off) continue;
-      const dx = p.x - c.x, dz = p.z - c.z, d = Math.hypot(dx, dz), m = c.r + rad;
+      const dx = p.x - c.x, dz = p.z - c.z, d = Math.hypot(dx, dz), m = (canopy && c.can ? c.can : c.r) + rad;
       if (d < m && d > 1e-4) { p.x = c.x + (dx / d) * m; p.z = c.z + (dz / d) * m; }
     }
   }
@@ -152,7 +154,8 @@ export class Field {
       list.forEach((n, j) => {
         n.alive = true; n.field = this; n.ms = meshes; n.j = j; cx += n.x; cz += n.z;
         this.write(n);
-        if (tint) { const v = 1 - tint + n.t * tint * 2; c.setRGB(v, v * (0.96 + n.t * 0.08), v * 0.96); for (const m of meshes) m.setColorAt(j, c); }
+        if (tint) { const v = 1 - tint + n.t * tint * 2; c.setRGB(v, v * (0.96 + n.t * 0.08), v * 0.96); } else c.setRGB(1, 1, 1);
+        for (const m of meshes) m.setColorAt(j, c);   // SAVE-PERF: always (white when untinted): fields sharing a material (pmat) must all use the same shader variant, or three swaps programs on every draw
       });
       for (const m of meshes) m.computeBoundingSphere();
       if (cull) cull.push({ meshes, x: cx / list.length, z: cz / list.length });
@@ -192,6 +195,13 @@ export function createWorld(scene, renderer, quality = 'medium') {
     v = lerp(v, 1.2, smooth(36, 50, h));
     const mt = meadowMask(x, z) * 0.12;                            // WP3: the meadow is a lighter yellow-green
     col.set([v * (1 + mt), v * (1 + (n - 0.5) * 0.12 + mt * 0.9), v * (0.94 + (n2 - 0.5) * 0.1)], i * 3);
+    const cf = floorMask(x, z);                                     // FPP-world: a cave floor is packed earth and stone, not meadow
+    if (cf > 0) {
+      const g = splat[i * 3] * (1 - cf);
+      splat.set([g, lerp(splat[i * 3 + 1], 0.6, cf), lerp(splat[i * 3 + 2], 0.4, cf)], i * 3);
+      const cv = lerp(v, 0.62 + (n - 0.5) * 0.2, cf);               // darker, cooler, no meadow tint
+      col.set([lerp(col[i * 3], cv, cf), lerp(col[i * 3 + 1], cv * 0.96, cf), lerp(col[i * 3 + 2], cv * 0.9, cf)], i * 3);
+    }
   }
   geo.setAttribute('color', new THREE.BufferAttribute(col, 3));
   geo.setAttribute('aSplat', new THREE.BufferAttribute(splat, 3));
@@ -274,10 +284,11 @@ export function createWorld(scene, renderer, quality = 'medium') {
   const deadNodes = scatter(45, (x, z, h, ny, d) => h > 2 && h < 30 && ny > 0.8 && d > 40, LIMIT, 0.8, 1.2);
   const woods = [];
   split(treeNodes, 5).forEach((nodes, i) => woods.push(new Field(scene, 'tree', NAT['commontree_' + (i + 1)], nodes, { tint: 0.1, cell: 160 })));
-  split(pineNodes, 5).forEach((nodes, i) => woods.push(new Field(scene, 'tree', NAT['pine_' + (i + 1)], nodes, { tint: 0.1, cell: 160 })));
+  split(pineNodes, 5).forEach((nodes, i) => { const f = new Field(scene, 'tree', NAT['pine_' + (i + 1)], nodes, { tint: 0.1, cell: 160 }); f.nat = 'pine_' + (i + 1); woods.push(f); });   // WH: nat tags the pines (canopy)
   split(twistNodes, 2).forEach((nodes, i) => woods.push(new Field(scene, 'tree', NAT[['twistedtree_2', 'twistedtree_4'][i]], nodes, { tint: 0.1, cell: 120 })));
   split(deadNodes, 2).forEach((nodes, i) => woods.push(new Field(scene, 'tree', NAT[['deadtree_2', 'deadtree_4'][i]], nodes, { tint: 0.1, cell: 120 })));
   for (const f of woods) for (const n of f.nodes) { n.hp = 4; n.col = addCollider({ x: n.x, z: n.z, r: 0.42 * n.s }); n.y -= 0.12; f.write(n); }
+  for (const f of woods) if (/^pine_/.test(f.nat || '')) for (const n of f.nodes) n.col.can = PINE_CAN * n.s;   // WH: boughs down to the ground
 
   split(scatter(180, (x, z, h, ny, d) => h > 0.2 && d > 14 && (ny < 0.9 || R() < 0.08), LIMIT + 25, 0.3, 1.3), 3).forEach((nodes, i) => {
     new Field(scene, 'boulder', NAT['rock_medium_' + (i + 1)], nodes, { tint: 0.1, cell: 160 });
@@ -517,7 +528,7 @@ export function createWorld(scene, renderer, quality = 'medium') {
         const x = px + mod(gx[i] - px) - L / 2, z = pz + mod(gz[i] - pz) - L / 2;
         if (Math.abs(x - gw[i * 2]) < 1 && Math.abs(z - gw[i * 2 + 1]) < 1) continue;
         gw[i * 2] = x; gw[i * 2 + 1] = z; dirty = true;
-        const h = getHeight(x, z), ok = h > 1.1 && h < 30 && slopeY(x, z) > 0.84 && !clearings.some((c) => Math.hypot(x - c.x, z - c.z) < c.r);
+        const h = getHeight(x, z), ok = h > 1.1 && h < 30 && slopeY(x, z) > 0.84 && !clearings.some((c) => Math.hypot(x - c.x, z - c.z) < c.r) && floorMask(x, z) < 0.3;   // FPP-world: no grass on a cave floor
         const s = ok ? gs[i] * smooth(1.1, 2, h) : 0;
         _m.compose(_p.set(x, h - 0.04, z), _q.setFromEuler(_e.set(0, gx[i] * 7, 0)), _s.set(s, s, s));
         for (const m of meshes) m.setMatrixAt(i, _m);
@@ -624,7 +635,8 @@ export function createWorld(scene, renderer, quality = 'medium') {
     updateGrass(px, pz);
     atmosphere.update(dt, camera, env, px, pz, sunDir);
     caves.update(dt, px, pz); landmarks.update(dt, px, pz);
-    for (const c of decorCells) { const on = Math.hypot(c.x - px, c.z - pz) < Q.decor; for (const m of c.meshes) m.visible = on; }
+    const dd = Q.decor * Q.decor;                   // SAVE-PERF: squared distances in the per-frame cell loop
+    for (const c of decorCells) { const dx = c.x - px, dz = c.z - pz, on = dx * dx + dz * dz < dd; for (const m of c.meshes) m.visible = on; }
   }
   return { fields, decor: bushBodies, env, setTime, update, clear, setQuality, river, atmosphere, water: river.mesh, caves, landmarks, lake };
 }
