@@ -601,9 +601,15 @@ function mount(o, anim = false) {
   wpnStowAll('ride'); useCool = 0.8; wHeld = 0; hIdle = 0;   // WPN
   Object.assign(o, { call: false, speed: 0, stun: 0, flee: 0, stay: null });
   if (placing) { placing = null; ghost.visible = false; }
-  if (Math.hypot(N.pos.x - P.pos.x, N.pos.z - P.pos.z) < 10 && nFree()) { N.ride = true; N.node = null; N.act = 0; N.speed = 0; }
+  N.board = null;
+  if (Math.hypot(N.pos.x - P.pos.x, N.pos.z - P.pos.z) < 10 && nFree()) {
+    N.node = null; N.act = 0; N.speed = 0;
+    // RIDE-r4: the E-key mount: Sena walks (or jogs) to the horse's flank on the ground first and climbs on from there
+    // (senaBoard); she used to glide up to 10 m through the air in her seated pose. Loads and story calls seat her at once.
+    if (anim) N.board = { o, t: 0, wp: null }; else N.ride = true;
+  }
   P.tr = anim ? { on: true, t: 0, dur: MOUNT_T, p0: r0, f0 } : null; P.rideW = anim ? 0 : 1; rideShowT = 4;   // WH
-  N.tr = anim && N.ride ? { on: true, t: -0.3, dur: MOUNT_T, p0: n0, f0: nf0 } : null; N.rideW = N.tr ? 0 : 1;
+  N.tr = null; N.rideW = N.ride ? 1 : 0;
   $('bar-horse').style.display = ''; A.hit(300, 0.15, 0.25);
 }
 const clearSeat = (e) => { e.seat = null; e.saddle = null; e.pOff = null; e.h.pose = null; e.h.straddle = false; e.tr = null; e.rideW = 0; e.h.legIK = false; };
@@ -612,9 +618,10 @@ const clearSeat = (e) => { e.seat = null; e.saddle = null; e.pOff = null; e.h.po
 // (leg IK, reins) blends in; Sena follows 0.3 s later. The E-key dismount is the reverse: the horse stops, Aro slides
 // down her left side (Sena her right) and lands with a small knee dip; dismount() itself runs when the slide ends.
 // Input is locked for the duration (updateRide reads rideBusy). Story and load paths still mount / dismount at once.
+const RIDE_BOUGH = 0.5;                             // RIDE-r4: a rider's head clearance from a pine's bough radius (updateRide)
 const MOUNT_T = 0.75, DISMOUNT_T = 0.9, DIS_SWING = 0.42;   // WH: DIS_SWING = the share of the dismount spent swinging the far leg over
 let rideShowT = 0;                                  // seconds the "Dismount" prompt stays up after mounting or stopping
-const rideBusy = () => !!(P.tr || (N.ride && N.tr && N.tr.on && N.tr.t < N.tr.dur * 0.5));
+const rideBusy = () => !!(P.tr || N.board || (N.ride && N.tr && N.tr.on && N.tr.t < N.tr.dur * 0.5));   // RIDE-r4: + Sena on her way to the flank
 function dismountStart() {
   const o = P.ride; if (!o || P.taming || P.tr) return;
   const f = P.face, lx = Math.cos(f), lz = -Math.sin(f), hp = o.root.position;
@@ -624,6 +631,30 @@ function dismountStart() {
   useCool = 0.8;                                    // WH: the ride pose holds while the far leg swings over (rideTrans)
   A.hit(260, 0.12, 0.2);
 }
+// RIDE-r4: Sena boards for two-up. On foot (walk, or a jog from further off) to the flank on the side she is on, level
+// with her seat; from ahead of the chest or behind the rump she goes out to the side first, never through the horse,
+// and round trees (walkTo collides). There the climb starts (rideTrans, tr.up). Stuck for BOARD.give s: she stays afoot.
+const BOARD = { side: 0.74, run: 4.6, walk: 2.3, near: 1.2, give: 6, dur: 0.9 };
+const _bd1 = new THREE.Vector3(), _bd2 = new THREE.Vector3(), _bd3 = new THREE.Vector3();
+function senaBoard(dt) {
+  const b = N.board, o = b.o;
+  if (P.ride !== o || P.taming || !nFree()) { N.board = null; return false; }
+  if ((b.t += dt) > BOARD.give) { N.board = null; N.speed = 0; return false; }
+  const f = o.root.rotation.y, Fx = Math.sin(f), Fz = Math.cos(f), Lx = Math.cos(f), Lz = -Math.sin(f), hp = o.root.position;
+  o.root.updateMatrixWorld(true); o.a.bone('Torso2').getWorldPosition(_bd3);
+  const sf = (_bd3.x - hp.x) * Fx + (_bd3.z - hp.z) * Fz - RIDE_SEAT.N.back;          // her seat, along the horse from its root
+  const dx = N.pos.x - hp.x, dz = N.pos.z - hp.z, fw = dx * Fx + dz * Fz, lat = dx * Lx + dz * Lz;
+  b.sd ??= lat >= 0 ? 1 : -1;                                                        // +1: the horse's left
+  const at = (a, l, out) => out.set(hp.x + Fx * a + Lx * l, 0, hp.z + Fz * a + Lz * l);
+  const spot = at(sf, b.sd * BOARD.side, _bd1);
+  const round = b.sd * lat < 0.9 && (fw > sf + 1.1 || fw < sf - 1.3);               // ahead of the chest / behind the rump
+  const goal = round ? at(fw, b.sd * 1.2, _bd2) : spot, d = Math.hypot(spot.x - N.pos.x, spot.z - N.pos.z);
+  if (round || d > Math.max(0.1, BOARD.walk * dt)) { walkTo(N, goal.x, goal.z, d > BOARD.near ? BOARD.run : BOARD.walk, dt, round ? 0.3 : 0.1); return true; }
+  N.pos.x = spot.x; N.pos.z = spot.z; N.board = null; N.ride = true; N.speed = 0; N.rideW = 0;
+  N.h.root.position.copy(N.pos); N.h.root.position.y = getHeight(N.pos.x, N.pos.z);
+  N.tr = { on: true, up: true, t: 0, dur: BOARD.dur, p0: N.h.root.position.clone(), f0: N.h.root.rotation.y };
+  return false;
+}
 // After seatOn (the root sits on the saddle): move the root along the arc between the ground and the seat.
 function rideTrans(e, dt) {
   const tr = e.tr; if (!tr) return;
@@ -631,6 +662,19 @@ function rideTrans(e, dt) {
   const k = clamp(tr.t / tr.dur, 0, 1), s = smooth01(k), root = e.h.root;
   if (tr.on) {
     if (tr.t < 0) { root.position.copy(tr.p0); root.rotation.y = tr.f0; e.rideW = 0; e.h.legIK = false; return; }
+    if (tr.up) {                                     // RIDE-r4: Sena from beside the flank (senaBoard)
+      // a beat on the ground facing the flank, a hop up (the jump pose) to the seat height, and over onto the back as the
+      // seated pose and the straddle come in; never the seated pose while she is beside the horse or on the grass
+      const u = clamp((k - 0.1) / 0.9, 0, 1), kv = smooth01(Math.min(1, u / 0.6)), kh = smooth01(clamp((u - 0.1) / 0.9, 0, 1));
+      _hn.copy(root.position);
+      root.position.set(tr.p0.x + (_hn.x - tr.p0.x) * kh, tr.p0.y + (_hn.y - tr.p0.y) * kv + Math.sin(Math.PI * Math.min(1, u * 1.1)) * 0.14, tr.p0.z + (_hn.z - tr.p0.z) * kh);
+      root.rotation.y = tr.f0 + wrapA(e.face - tr.f0) * smooth01(Math.min(1, k * 1.5));
+      e.h.pose = u <= 0 ? null : u < 0.42 ? 'jump' : 'ride';
+      e.rideW = smooth01(clamp((u - 0.3) / 0.6, 0, 1)); e.h.legIK = u > 0.45;
+      if (k >= 1) e.tr = null;
+      root.updateMatrixWorld(true);
+      return;
+    }
     const lift = Math.sin(Math.PI * Math.min(1, k * 1.15)) * 0.32;            // up over the horse's back, then down onto it
     _hn.copy(root.position); root.position.lerpVectors(tr.p0, _hn, s); root.position.y += lift;
     root.rotation.y = tr.f0 + wrapA(e.face - tr.f0) * smooth01(k * 1.6);
@@ -658,6 +702,7 @@ function rideTrans(e, dt) {
 }
 function dismount(thrown = false, at = null, nAt = null) {
   const o = P.ride; if (!o) return;
+  N.board = null;                                    // RIDE-r4: she was still on her way to climb on
   const f = P.face, rx = Math.cos(f), rz = -Math.sin(f), hp = o.root.position;
   P.ride = null; P.taming = null; P.jy = 0; P.vy = 0; P.air = false; P.vx = P.vz = 0; P.hv = 0; P.speed = 0;
   if (at) P.pos.set(at.x, 0, at.z); else { P.pos.set(hp.x + rx * (thrown ? 1.8 : 1.3), 0, hp.z + rz * (thrown ? 1.8 : 1.3)); collide(P.pos, 0.35); }   // WH: at = where the slide-down landed
@@ -805,6 +850,15 @@ function updateRide(dt, mx, mz) {
     else if (Math.abs(nx) > LIMIT || Math.abs(nz) > LIMIT) P.hv = 0;
     else {
       P.pos.x = nx; P.pos.z = nz; collide(P.pos, 0.75); collide(P.pos, 0.3, true);   // WH: and the riders out of low pine boughs
+      // RIDE-r4: the riders' heads are not over the horse's root (Aro sits ~0.5 m ahead of it, Sena behind him): each seat
+      // (last frame's, moved with the horse) is kept out of the boughs too, with a head's margin, so riding past a young
+      // pine no longer puts his head 1.6 m from the trunk inside a 1.9 m spread of needles (an all-green first-person view)
+      for (const e of N.ride ? [P, N] : [P]) {
+        if (!e.saddle) continue;
+        const ox = e.saddle.x - o.root.position.x, oz = e.saddle.z - o.root.position.z;
+        _hn.set(P.pos.x + ox, 0, P.pos.z + oz); collide(_hn, RIDE_BOUGH, true);
+        P.pos.x = _hn.x - ox; P.pos.z = _hn.z - oz;
+      }
       _hn.set(P.pos.x + fx * 1.1 * sg, 0, P.pos.z + fz * 1.1 * sg); const px = _hn.x, pz = _hn.z; collide(_hn, 0.5);
       if (Math.hypot(_hn.x - px, _hn.z - pz) > 0.02) P.hv *= Math.max(0, 1 - dt * 10);   // nose against a tree or wall
       rideDist += Math.abs(P.hv) * dt;
@@ -1224,12 +1278,34 @@ function animLodDt(o, dt) {
   if ((frames + (o.lodK ??= (Math.random() * 8) | 0)) % every) return 0;   // staggered so the far ones don't all land on one frame
   const t = o.lodDt; o.lodDt = 0; return t;
 }
+// SAVE-PERF: each unbutchered wolf lying in the world keeps its clone's skeleton bone textures (4 per wolf) and cloned
+// materials, so their number is capped. Beyond WOLF_CORPSES the oldest go: at once when out of sight, otherwise they
+// sink into the ground over CORPSE_SINK s (no pop), then remove() frees them. An alpha (the mantle pelt) is kept 2 min
+// longer than its pack, a kill under 30 s old stays while in view, and the one being butchered is never taken.
+const WOLF_CORPSES = 6, CORPSE_SINK = 2.5;
+let corpseCapT = 0;
+function wolfCorpseCap(dt) {
+  if ((corpseCapT += dt) < 1) return; corpseCapT = 0;
+  const c = animals.filter((o) => o.kind === 'wolf' && o.state === 'dead' && !o.looted && o.sinkT == null && GS.butch?.o !== o);
+  if (c.length <= WOLF_CORPSES) return;
+  const age = (o) => o.deadT - (o.alpha ? 120 : 0);   // an alpha counts as 2 min younger
+  c.sort((a, b) => age(b) - age(a));                 // oldest first
+  for (let i = 0, n = c.length - WOLF_CORPSES; i < c.length && n > 0; i++) {
+    const o = c[i]; if (!o.a.model.visible) { remove(o); n--; } else if (o.deadT > 30) { o.sinkT = 0; n--; }   // a fresh kill in view stays
+  }
+}
+function corpseSink(o, dt) {
+  if (GS.butch?.o === o) { o.sinkT = null; return; }   // (butchering began in the last second: it stays)
+  o.sinkT += dt; o.root.position.y -= dt * 0.4;
+  if (o.sinkT >= CORPSE_SINK) remove(o);
+}
 function updateAnimal(o, dt) {
   const p = o.root.position;
   if (o === P.ride) { if (!o.a.model.visible) o.a.model.visible = true; o.root.matrixWorldAutoUpdate = true; o.lodDt = 0; o.a.update(dt); return; }     // WP4: the ridden horse is moved by updateRide
   { const ad = animLodDt(o, dt * hsK(o)); if (ad > 0 && !(o.state === 'dead' && o.deadT > 6)) o.a.update(ad); } wpnAnimalFx(o, dt);   // WPN hitstop, knockback, flinch · SAVE-PERF animal LOD · WH: a settled corpse's mixer stops
   if (o.state === 'dead') {
     o.deadT += dt; if (o.looted && clock > o.respawn) revive(o);
+    else if (o.sinkT != null) corpseSink(o, dt);   // SAVE-PERF: over the corpse cap, sinking away
     else if (o.kind === 'wolf' && !o.looted) {      // WH: unbutchered wolves go (and free their GPU clones) once out of sight, 15 min at most
       const d = Math.hypot(p.x - P.pos.x, p.z - P.pos.z);
       if ((o.deadT > 300 && d > 60 && !o.a.model.visible) || (o.deadT > 900 && d > 25)) remove(o);
@@ -1345,6 +1421,10 @@ const EVENTS = {
     // STORY: sheltered (resting, in the hut, house or a cave) gets a calmer line than the "get inside" warning
     const roof = R.on || !!R.inside || world.env.cave > 0.5 || structs.some((s) => s.rise >= 1 && (s.kind === 'hut' || s.kind === 'house') && Math.hypot(s.x - P.pos.x, s.z - P.pos.z) < s.radius + 1.5);
     if (roof) { banner('Storm', 'Rain sweeps the valley. Good thing you are under a roof.'); say('Sena', world.env.cave > 0.5 ? 'Listen to it out there. The stone keeps us dry.' : 'Rain again. Good thing we have a roof.'); return; }
+    // SIT-r4: just outside a hut or the house (the hut's morning hand-back leaves him 4-5 m out of its door): the roof is
+    // a few steps away, so she points him back to it instead of warning that they are caught out in the open
+    const near = structs.some((s) => s.rise >= 1 && (s.kind === 'hut' || s.kind === 'house') && Math.hypot(s.x - P.pos.x, s.z - P.pos.z) < s.radius + 7);
+    if (near) { banner('Storm', 'Rain sweeps the valley. Your roof is a few steps away.'); say('Sena', 'The sky is turning. Back under the roof until it passes.'); return; }
     banner('Storm', 'Rain sweeps the valley. Get under a roof or stay by the fire.');
     say('Sena', 'The sky is turning. We should not be out in this.');
   },
@@ -1395,6 +1475,7 @@ function updateEvents(dt) {
   EV.next -= dt;
   EV.next -= dt * survScent();                       // SURV: blood on the wind at night, the wolves find you twice as fast
   if (EV.next > 0 || busy) return;
+  if (clock - R.wokeAt < 45) { EV.next = 45 - (clock - R.wokeAt) + rand() * 20; return; }   // SIT-r4: no storm or pack in the first moments after waking (the night's clock ran out behind the rest)
   EV.next = 160 + rand() * 130;
   if (!reached('fire')) return;
   if (E.night > 0.6) { if (reached('hunt') && !wolves.length) EVENTS.wolves(); else if (EV.storm <= 0) EVENTS.storm(); }
@@ -1463,18 +1544,51 @@ SPEAR_BACK.lean = { p: [-0.09, 0.18, -0.21], r: [-1.72, -0.9, 0.219], s: 0.92 };
 const seatedPose = (h) => h.pose === 'sit' || h.pose === 'sitTalk';
 function wpnBackFit() {
   const run = !P.air && !P.sneak && P.speed > (W.backFit === 'lean' ? 4.6 : 5.6);
-  const k = P.swim ? 'swim' : P.ride ? 'ride' : run || P.sit > 0 || seatedPose(P.h) ? 'lean' : '';
-  if (k === (W.backFit || '')) return;
+  // RIDE-r4: two-up (and while Sena is on her way to climb on, or as the two of them get down) the spear is on its way
+  // to or from her back (spearRestTick): it travels between the two diagonals, his seated 'lean' carry and her rest,
+  // instead of standing up into the saddle pole first (the dismount showed it fly to him and stand vertical).
+  const twoUp = P.ride && (N.ride || N.board);
+  const k = P.swim ? 'swim' : P.ride && !twoUp ? 'ride' : run || twoUp || P.sit > 0 || seatedPose(P.h) ? 'lean' : '';
+  const ka = P.swim ? 'swim' : P.ride ? 'ride' : '';  // the axe keeps the saddle carry two-up too (on foot's angles back into Sena's knee)
+  if (k === (W.backFit || '') && ka === (W.axeFit || '')) return;
   const bl = k === 'ride' ? 0.2 : 0.35;              // the mount climb is short: the saddle carry comes in quickly
-  W.backFit = k;
-  if (k) P.h.fitAdj.spear.back = SPEAR_BACK[k]; else delete P.h.fitAdj.spear.back;
-  if (k === 'ride' || k === 'swim') P.h.fitAdj.axe.hipL = k === 'ride' ? AXE_RIDE : AXE_SWIM; else delete P.h.fitAdj.axe.hipL;
-  if (P.h.slotOf(P.h.spear) === 'back') P.h.place(P.h.spear, 'back', bl);
-  if (P.h.slotOf(P.h.axe) === 'hipL') P.h.place(P.h.axe, 'hipL', bl);
+  if (k !== (W.backFit || '')) {
+    W.backFit = k;
+    if (k) P.h.fitAdj.spear.back = SPEAR_BACK[k]; else delete P.h.fitAdj.spear.back;
+    if (P.h.slotOf(P.h.spear) === 'back') P.h.place(P.h.spear, 'back', bl);
+  }
+  if (ka !== (W.axeFit || '')) {
+    W.axeFit = ka;
+    if (ka) P.h.fitAdj.axe.hipL = ka === 'ride' ? AXE_RIDE : AXE_SWIM; else delete P.h.fitAdj.axe.hipL;
+    if (P.h.slotOf(P.h.axe) === 'hipL') P.h.place(P.h.axe, 'hipL', ka === 'ride' ? 0.2 : 0.35);
+  }
 }
 const senaBasket = makeCarryBasket(); senaBasket.userData.kind = 'basket'; senaBasket.visible = false;
 N.h.place(senaBasket, 'back'); N.h.place(N.h.spear, 'back');
 P.h.useGrip(); N.h.useGrip();
+// RIDE-r4: the sprint clip swings spine_03 (the back socket's bone) through a wide arc every stride, so the sheathed
+// spear waggled between lying across the shoulders (tip past his head) and standing up (top 0.16-0.86 m over the head).
+// At a run its world orientation follows a smoothed copy of the socket's, kept in Aro's own yaw frame so turns are not
+// lagged: the stride's swing is filtered out, the body's lean is kept. Order 45: after the stance, grip and IK passes.
+const STEADY = { tau: 0.55, v0: 3.0, v1: 5.2, back: 0.3 };   // back: the sprint's forward lean also tipped it ahead of his head: tilted back (rad, in his frame)
+const _ssR = new THREE.Quaternion(), _ssS = new THREE.Quaternion(), _ssT = new THREE.Quaternion(), _ssB = new THREE.Quaternion(), _ssX = new THREE.Vector3(1, 0, 0);
+const SS = { q: null, base: new THREE.Quaternion(), out: new THREE.Quaternion(), wrote: false };
+P.h.addOverride('spearSteady', 45, (h, dt) => {
+  const sp = h.spear, sk = h.sock.back;
+  if (SS.wrote && sp.quaternion.equals(SS.out)) sp.quaternion.copy(SS.base);   // undo last frame's correction (nothing re-placed it since)
+  SS.wrote = false;
+  if (sp.parent !== sk || sp.userData.slot !== 'back' || h.blends.some((b) => b.m === sp)) { SS.q = null; return; }
+  sk.updateWorldMatrix(true, false);
+  h.root.getWorldQuaternion(_ssR); sk.getWorldQuaternion(_ssS);
+  const loc = _ssT.copy(_ssR).invert().multiply(_ssS);                       // the socket in Aro's own frame
+  if (!SS.q) SS.q = loc.clone(); else SS.q.slerp(loc, 1 - Math.exp(-(dt || 0) / STEADY.tau));
+  const w = P.ride || P.swim || P.air || P.sit > 0 ? 0 : smooth01((P.speed - STEADY.v0) / (STEADY.v1 - STEADY.v0));
+  if (!(w > 0.001)) return;
+  SS.base.copy(sp.quaternion);
+  _ssB.setFromAxisAngle(_ssX, -STEADY.back);
+  _ssT.copy(_ssS).invert().multiply(_ssR).multiply(_ssB).multiply(SS.q).multiply(SS.base);   // the fit under the steadied socket, in the live socket
+  sp.quaternion.slerp(_ssT, w); SS.out.copy(sp.quaternion); SS.wrote = true;
+});
 
 // World point of mesh-local (0, 0, z) if `kind` sat in `slot` (draw targets: where the hand grabs it).
 function slotPoint(h, kind, slot, z, out) {
@@ -2908,12 +3022,84 @@ const _fsA = new THREE.Vector3();
 function floorSitOverride(e) {
   return (h) => {
     const w = smooth01(e.fsW || 0);
-    if (!(w > 0)) return;
+    if (!(w > 0)) { if (e.fpQ) { fpBase(e, h); e.fpQ = null; } return; }   // SIT-r4: the back and head as the clip left them
     const b = h.bones, yaw = h.root.rotation.y;
     applyPose(h, e.fsLegs ??= samplePose(h, 'sitHold', 0, RST_LEGS), w);   // SIT-r3: the legs held still (the sit loops lift a knee now and then: a foot out of the hot spring)
     _fsA.set(Math.cos(yaw), 0, -Math.sin(yaw));
+    if (e.hearthSeat && e.seat) { hearthFloorPose(e, h, w, yaw); return; }   // SIT-r4: a relaxed floor sit by the hearth
     for (const sd of ['l', 'r']) { rotW(b['thigh_' + sd], _fsA, -FS.hip * w); rotW(b['calf_' + sd], _fsA, -FS.knee * w); }
   };
+}
+// SIT-r4: the hearth floor sit was the chair clip with both legs pushed out straight (a stiff L, hands flat on the thighs).
+// Now, with leg and arm IK on the planks: Aro sits with his outer knee up, his forearm hanging over it, and the inner
+// leg folded flat under it, his other hand resting on that shin; Sena draws both knees up and wraps her arms round
+// them, leaning in a little, her head turned toward him. Both breathe and sway a touch. HFP tunes it (G.hfp).
+const HFP = { lean: 0.2, nLean: 0.3, upF: 0.4, upS: 0.17, foldF: 0.36, foldS: 0.05, nF: 0.38, nS: 0.09, hug: 0.42, look: 0.32 };
+const _fpF = new THREE.Vector3(), _fpR = new THREE.Vector3(), _fpT = new THREE.Vector3(), _fpP = new THREE.Vector3(), _fpK = new THREE.Vector3(), _fpQ = new THREE.Vector3();
+// The sit clips do not key the spine, neck and head every frame, so a turn added on top would pile up frame after frame
+// (he folded over until his head touched the planks). Each frame starts from the clip's own value, or from the last
+// one it wrote when it has not rewritten the bone since our turn.
+const FP_BONES = ['spine_01', 'spine_02', 'neck_01', 'Head'];
+function fpBase(e, h) {
+  const st = e.fpQ ??= {};
+  for (const n of FP_BONES) {
+    const q = h.bones[n].quaternion, k = st[n];
+    if (!k) st[n] = { base: q.clone(), out: q.clone(), has: false };
+    else if (k.has && q.equals(k.out)) q.copy(k.base);
+    else k.base.copy(q);
+  }
+  h.bones.spine_01.updateWorldMatrix(false, true);
+}
+function fpMark(e, h) { for (const n of FP_BONES) { const k = e.fpQ[n]; k.out.copy(h.bones[n].quaternion); k.has = true; } }
+function hearthFloorPose(e, h, w, yaw) {
+  fpBase(e, h);
+  const b = h.bones, fy = e.seat.y, isN = e === N, t = clock;
+  _fpF.set(Math.sin(yaw), 0, Math.cos(yaw));                                  // forward (toward the hearth)
+  _fpR.copy(_fsA);                                                            // the body's left (+X model)
+  const o = isN ? P : N, toO = Math.sign((o.pos.x - e.pos.x) * _fpR.x + (o.pos.z - e.pos.z) * _fpR.z) || 1;   // +1: the partner is on his/her left
+  h.root.updateMatrixWorld(true);
+  const pv = b.pelvis.getWorldPosition(_fpQ), sgn = (sd) => (sd === 'l' ? 1 : -1);
+  if (!isN) {
+    const upSd = toO > 0 ? 'r' : 'l', fdSd = upSd === 'l' ? 'r' : 'l';     // the knee away from Sena is up
+    _fpT.copy(pv).addScaledVector(_fpF, HFP.upF).addScaledVector(_fpR, sgn(upSd) * HFP.upS); _fpT.y = fy + 0.09;
+    b['thigh_' + upSd].getWorldPosition(_fpP).addScaledVector(_fpF, 0.35).addScaledVector(_fpR, sgn(upSd) * 0.12); _fpP.y += 0.7;
+    ikLeg(h, upSd, _fpT, _fpP, w);
+    _fpT.copy(pv).addScaledVector(_fpF, HFP.foldF).addScaledVector(_fpR, sgn(upSd) * HFP.foldS); _fpT.y = fy + 0.07;   // the folded foot tucks in under the raised knee
+    b['thigh_' + fdSd].getWorldPosition(_fpP).addScaledVector(_fpR, sgn(fdSd) * 0.7).addScaledVector(_fpF, 0.25); _fpP.y = fy - 0.1;
+    ikLeg(h, fdSd, _fpT, _fpP, w);
+  } else {
+    for (const sd of ['l', 'r']) {
+      _fpT.copy(pv).addScaledVector(_fpF, HFP.nF).addScaledVector(_fpR, sgn(sd) * HFP.nS); _fpT.y = fy + 0.08;
+      b['thigh_' + sd].getWorldPosition(_fpP).addScaledVector(_fpF, 0.3).addScaledVector(_fpR, sgn(sd) * 0.04); _fpP.y += 0.8;
+      ikLeg(h, sd, _fpT, _fpP, w);
+    }
+  }
+  // the back rounds forward a little (the chair clip sits bolt upright); a slow breath and sway
+  const br = Math.sin(t * 1.4 + (isN ? 1.1 : 0));
+  rotW(b.spine_01, _fpR, (isN ? HFP.nLean : HFP.lean) * 0.55 * w);
+  rotW(b.spine_02, _fpR, ((isN ? HFP.nLean : HFP.lean) * 0.45 + br * 0.012) * w);
+  rotW(b.Head, _fpR, -(isN ? 0.18 : 0.12) * w);                               // the eyes back up to the fire
+  rotW(b.neck_01, _V_UP, toO * HFP.look * (isN ? 0.55 : 0.15) * w * (0.85 + 0.15 * Math.sin(t * 0.37)));   // she turns her head toward him
+  rotW(b.Head, _V_UP, toO * HFP.look * (isN ? 0.45 : 0.1) * w);
+  if (!isN) {
+    const upSd = toO > 0 ? 'r' : 'l', fdSd = upSd === 'l' ? 'r' : 'l';
+    b['calf_' + upSd].getWorldPosition(_fpK);                                 // the forearm over the raised knee, the hand hanging loose past it
+    _fpT.copy(_fpK).addScaledVector(_fpF, 0.13).addScaledVector(_fpR, -sgn(upSd) * 0.03); _fpT.y -= 0.12 - br * 0.01;
+    b['upperarm_' + upSd].getWorldPosition(_fpP).addScaledVector(_fpR, sgn(upSd) * 0.45).addScaledVector(_fpF, -0.1); _fpP.y -= 0.2;
+    ik2(h, upSd, _fpT, _fpP, w);
+    b['calf_' + fdSd].getWorldPosition(_fpK); b['foot_' + fdSd].getWorldPosition(_fpT);   // the other hand on the folded shin
+    _fpT.lerp(_fpK, 0.5); _fpT.y += 0.09;
+    b['upperarm_' + fdSd].getWorldPosition(_fpP).addScaledVector(_fpR, sgn(fdSd) * 0.5).addScaledVector(_fpF, -0.25); _fpP.y -= 0.3;
+    ik2(h, fdSd, _fpT, _fpP, w);
+  } else {
+    for (const sd of ['l', 'r']) {                                           // arms round her shins, hands crossed in front
+      b['calf_' + sd].getWorldPosition(_fpK); b['foot_' + sd].getWorldPosition(_fpT);
+      _fpT.lerp(_fpK, HFP.hug + 0.3).addScaledVector(_fpF, 0.09).addScaledVector(_fpR, -sgn(sd) * 0.11); _fpT.y += br * 0.006;
+      b['upperarm_' + sd].getWorldPosition(_fpP).addScaledVector(_fpR, sgn(sd) * 0.5).addScaledVector(_fpF, 0.05); _fpP.y -= 0.25;
+      ik2(h, sd, _fpT, _fpP, w);
+    }
+  }
+  fpMark(e, h);
 }
 function floorSitEase(e, dt) {
   if (!e.fsOv) { e.fsOv = true; e.h.addOverride('floorSit', 12, floorSitOverride(e)); }
@@ -3108,9 +3294,10 @@ const RST_LAY = {
 };
 // Pose tuning (G.restTune live-edits it): legs blend toward the standing legs (less splay), knee bend, head turn,
 // Aro's small roll toward Sena, Sena's roll onto her side and her curled legs ([down leg, upper leg]).
-const RT = { legIdle: 0.5, hip: 0.05, knee: 0.14, turn: 0.45, rollA: 0.12, rollN: 1.42, sHip: [0.4, 0.8], sKnee: [0.6, 1.1], sHead: 0.22, sAdd: 0.85,
-  hold: [0.1, 0.07, 0.57], belly: [0.11, 0.06, -0.03], cheek: [0.1, 0.02, 0.1], breathe: 0.03, ankle: 0.065, dSheet: 0.03, dCap: 0.36, dFall: 0.24, dDrop: 0.15, dTop: 1.0, dReach: 0.4, dPass: 10 };   // SIT-r3 drape: thinner sheet, shorter fall, cover sized to the sleepers
-const RST_LEGS = (b) => /^(thigh|calf|foot|ball)_/.test(b), _V_UP = new THREE.Vector3(0, 1, 0);
+const RT = { legIdle: 0.5, hip: 0.05, knee: 0.08, turn: 0.45, rollA: 0.12, rollN: 1.42, sHip: [0.4, 0.8], sKnee: [0.6, 1.1], sHead: 0.22, sAdd: 0.85,
+  hold: [0.1, 0.07, 0.57], belly: [0.11, 0.06, -0.03], cheek: [0.16, 0.05, 0.22], breathe: 0.03, ankle: 0.065, footP: 0.5, stack: 0.09, dSheet: 0.05, dCap: 0.3, dDrop: 0.15, dTop: 1.0, dReach: 0.55, dPass: 6,
+  dRun: 0.32, dDome: 0.15, dSide: 1.4, dSag: 0.2, dGuard: 0.55 };   // SIT-r3 drape: cover sized to the sleepers; SIT-r4: a ridge per sleeper (dRun down the body, dDome across, dSide the fall off its sides, dSag the dip between two)
+const RST_LEGS = (b) => /^(thigh|calf|foot|ball)_/.test(b), RST_FINGERS = (b) => /^(thumb|index|middle|ring|pinky)_0[1-3]_/.test(b), _V_UP = new THREE.Vector3(0, 1, 0);
 const DREAM = {
   awaken: [['Sena', '…warm… the sparks look like little stars…'], ['Aro', '(The river never stops talking. Neither does she, in her sleep.)']],
   fire: [['Sena', '…warm… the sparks look like little stars…'], ['Aro', '(The fire held. We held.)']],
@@ -3262,6 +3449,17 @@ function rstLieOverride(e) {
       _rd.crossVectors(_rc, _V_UP); if (_rd.lengthSq() < 1e-6) continue; _rd.normalize();
       rotW(b['thigh_' + sd], _rd, Math.asin(clamp(lack / d, 0, 0.6)) * w);
     }
+    // SIT-r4: relaxed feet (the toes tip forward and fall a little outward, not straight up into the blanket), and on
+    // her side Sena's upper leg rests on the lower one, foot on foot (the hip turn lifted that foot 0.26 m off the mat,
+    // a peak in the cover)
+    for (const sd of ['l', 'r']) if (!isN || w2 < 1) rotW(b['foot_' + sd], right, RT.footP * w * (isN ? 1 - w2 : 1));
+    if (isN && w2 > 0) {
+      const up = L.down === 'l' ? 'r' : 'l';
+      b['foot_' + L.down].getWorldPosition(_ra); _ra.y += RT.stack; _ra.addScaledVector(Lay.fwd, -0.03);
+      b['thigh_' + up].getWorldPosition(_rb); b['calf_' + up].getWorldPosition(_rc);
+      _rd.addVectors(_rb, _ra).multiplyScalar(0.5); _rc.sub(_rd).multiplyScalar(2).add(_rd);   // the knee stays where the hip turn put it
+      ikLeg(h, up, _ra, _rc, w * w2);
+    }
     // arms: both hands rest on the belly (the hold override then takes the near/upper hand); rolled onto her side,
     // Sena's upper hand rests in front of her and her lower hand slides under her cheek
     if (cal) return;
@@ -3276,11 +3474,12 @@ function rstLieOverride(e) {
       }
       ik2(h, sd, _ra, _rb, w);
     }
-    if (isN && w2 > 0) {
-      b.Head.getWorldPosition(_ra); _ra.addScaledVector(right, L.side * RT.cheek[0]); _ra.y -= RT.cheek[1]; _ra.addScaledVector(Lay.fwd, RT.cheek[2]);
-      _rb.copy(_ra).addScaledVector(Lay.fwd, 0.5); _rb.addScaledVector(right, L.side * 0.3);
+    if (isN && w2 > 0) {                                                     // SIT-r4: her lower hand lies on the bed in front of her chest, not up by her face
+      b.Head.getWorldPosition(_ra); _ra.addScaledVector(right, L.side * RT.cheek[0]); _ra.y = Lay.matY + RT.cheek[1]; _ra.addScaledVector(Lay.fwd, RT.cheek[2]);
+      _rb.copy(_ra).addScaledVector(Lay.fwd, 0.45); _rb.addScaledVector(right, -L.side * 0.1); _rb.y -= 0.25;
       ik2(h, L.down, _ra, _rb, w * w2);
     }
+    applyPose(h, L.IDLE, w, RST_FINGERS);                                    // SIT-r4: relaxed, curled fingers (the death clip's last frame splays them)
   };
 }
 // Holding hands (order 30): Aro's near hand and Sena's upper hand meet on the blanket between them.
@@ -3488,9 +3687,9 @@ function rstKneelOverride(e) {
   };
 }
 // Shape the blanket over the sleepers' hips and legs (from the waist down), centred between them and aligned to the bed.
-const DRAPE_BONES = [['spine_01', 0.13], ['pelvis', 0.15], ['thigh_l', 0.11], ['thigh_r', 0.11], ['calf_l', 0.09], ['calf_r', 0.09], ['foot_l', 0.1], ['foot_r', 0.1], ['ball_l', 0.09], ['ball_r', 0.09], ['ball_leaf_l', 0.08], ['ball_leaf_r', 0.08]];
-const DRAPE_MIDS = [['thigh_l', 'calf_l', 0.1], ['thigh_r', 'calf_r', 0.1], ['calf_l', 'foot_l', 0.085], ['calf_r', 'foot_r', 0.085], ['foot_l', 'ball_leaf_l', 0.085], ['foot_r', 'ball_leaf_r', 0.085]];   // SIT-r3: + the instep
-const _dp = [];                                   // STORY: RT.dSheet/dCap/dFall: a thin cloth laid over the bodies, never a tent of lumps
+const DRAPE_BONES = [['spine_01', 0.11], ['pelvis', 0.12], ['thigh_l', 0.105], ['thigh_r', 0.105], ['calf_l', 0.075], ['calf_r', 0.075], ['foot_l', 0.08], ['foot_r', 0.08], ['ball_l', 0.07], ['ball_r', 0.07], ['ball_leaf_l', 0.065], ['ball_leaf_r', 0.065], ['hand_l', 0.05], ['hand_r', 0.05]];   // SIT-r4: the limbs' real thickness (the old radii stood the cover 0.4 m up); a hand resting under the cover's edge
+const DRAPE_MIDS = [['thigh_l', 'calf_l', 0.08], ['thigh_r', 'calf_r', 0.08], ['calf_l', 'foot_l', 0.07], ['calf_r', 'foot_r', 0.07], ['foot_l', 'ball_leaf_l', 0.07], ['foot_r', 'ball_leaf_r', 0.07]];   // SIT-r3: + the instep
+const _dp = [], DRAPE_NZ = 40;                    // STORY: a thin cloth laid over the bodies, never a tent of lumps (SIT-r4: NZ rows per sleeper's ridge)
 function rstDrape(k) {
   const L = R.L, bl = R.blanket;
   if (!L || !bl) return;
@@ -3505,22 +3704,24 @@ function rstDrape(k) {
   let zEnd = low ? Math.min(bz + bl2 / 2 + 0.12, D.head[0][1] + 1.86) : bz + bl2 / 2 + 0.14;
   const drop = Math.min(RT.dDrop, D.mat - D.floor - 0.01);                                                    // the skirt hangs ~0.15 m, never to the floor
   // SIT-r3: the cover lies on the bodies like cloth: each limb's top is its bone plus most of its own thickness (dTop),
-  // a short fall (dFall) off each limb, and only a thin sheet (dSheet) between them, so there is no single tent or
-  // loaf over the two of them. Sena's knees, curled on her side, reach past a fixed-width cover: on a floor bed it
+  // and only a thin sheet (dSheet) between the sleepers (SIT-r4: the ridges below). Sena's knees, curled on her side, reach past a fixed-width cover: on a floor bed it
   // grows (shelter-local) to reach dReach past the furthest knee or foot, so nothing pokes out of its edge.
   _dp.length = 0;
   const O = W2(L, [0, 0], 0);
   let xa = 1e9, xb = -1e9, zb = -1e9;
-  const add = (v, r) => {
-    _dp.push([v.x, v.z, v.y - L.matY + r * RT.dTop + 0.02, r]);
+  const pts = [[], []];                                                        // SIT-r4: shelter-local [x, z, top, r] per sleeper
+  const add = (v, r, si) => {
+    const top = v.y - L.matY + r * RT.dTop + 0.02;
+    _dp.push([v.x, v.z, top, r]);
     const dx = v.x - O.x, dz = v.z - O.z, lx = dx * L.right.x + dz * L.right.z, lz = dx * L.fwd.x + dz * L.fwd.z;
+    pts[si].push([lx, lz, top, r]);
     if (lz > zTop) { xa = Math.min(xa, lx - r); xb = Math.max(xb, lx + r); zb = Math.max(zb, lz + r); }
   };
-  if (k > 0) for (const e of R.together ? [P, N] : [P]) {
-    if (!e.lie) continue;
-    for (const [n, r] of DRAPE_BONES) add(e.h.bones[n].getWorldPosition(_re), r);
-    for (const [a, b2, r] of DRAPE_MIDS) add(e.h.bones[b2].getWorldPosition(_rf).add(e.h.bones[a].getWorldPosition(_re)).multiplyScalar(0.5), r);
-  }
+  if (k > 0) (R.together ? [P, N] : [P]).forEach((e, si) => {
+    if (!e.lie) return;
+    for (const [n, r] of DRAPE_BONES) add(e.h.bones[n].getWorldPosition(_re), r, si);
+    for (const [a, b2, r] of DRAPE_MIDS) add(e.h.bones[b2].getWorldPosition(_rf).add(e.h.bones[a].getWorldPosition(_re)).multiplyScalar(0.5), r, si);
+  });
   if (low && xb > xa) {
     const a = Math.min(x0 - wid / 2, xa - RT.dReach), b = Math.max(x0 + wid / 2, xb + RT.dReach);
     x0 = (a + b) / 2; wid = b - a; zEnd = Math.max(zEnd, Math.min(zb + RT.dReach + 0.22, bz + bl2 / 2 + 0.6));   // past the toes by more than the soft run-out below
@@ -3530,34 +3731,78 @@ function rstDrape(k) {
   for (const c of kids) if (c.rest > 0 && R.kidsIn) for (const n of ['pelvis', 'calf_l', 'calf_r', 'spine_02']) { const v = c.h.bones[n].getWorldPosition(_re); _dp.push([v.x, v.z, v.y - L.matY + 0.05, 0.08]); }
   rstCradleCover(1);                                 // the baby stays tucked in while her parents get up
   const kk = smooth01(k), half = bw / 2, end = bz + bl2 / 2;
+  // SIT-r4: one smooth ridge per sleeper instead of a bump per bone (the bumps read as a lumpy mound with peaks at the
+  // knees and feet). Down the bed, each row takes the highest limb within reach (a soft fall of dRun along the body),
+  // and across it the ridge spans the limbs' width with a low dome, then falls off the sides at a cloth angle (dSide).
+  // A ridge never rises above dCap; the limb guard below (needAt) still keeps every foot and knee under the cloth.
+  const NZ = DRAPE_NZ, pz0 = zTop - 0.1, pdz = (zEnd + 0.2 - pz0) / (NZ - 1), profs = [];
+  for (const ps of pts) {
+    if (!ps.length) continue;
+    const top = new Float32Array(NZ), xl = new Float32Array(NZ), xr = new Float32Array(NZ), tmp = new Float32Array(NZ);
+    let cx = 0; for (const p of ps) cx += p[0]; cx /= ps.length;
+    for (let j = 0; j < NZ; j++) {
+      const z = pz0 + j * pdz;
+      let t = 0, a = 1e9, b = -1e9;
+      for (const [px, pz, pt, r] of ps) {
+        if (pz < zTop - r) continue;                                            // above the waist: not under the cover
+        const dd = Math.max(0, Math.abs(pz - z) - r);
+        if (dd < RT.dRun) t = Math.max(t, Math.min(RT.dCap, pt) * (1 - smooth01(dd / RT.dRun)));
+        if (dd < 0.12) { a = Math.min(a, px - r); b = Math.max(b, px + r); }
+      }
+      top[j] = t; xl[j] = a < b ? a : cx; xr[j] = a < b ? b : cx;
+    }
+    for (let j = 0; j < NZ; j++) if (xl[j] === cx && xr[j] === cx) {           // rows past the toes: keep the last width
+      let m = j; while (m > 0 && xl[m] === cx && xr[m] === cx) m--; xl[j] = xl[m]; xr[j] = xr[m];
+    }
+    for (const A of [top, xl, xr]) for (let p = 0; p < 3; p++) {
+      for (let j = 0; j < NZ; j++) tmp[j] = (A[Math.max(0, j - 1)] + 2 * A[j] + A[Math.min(NZ - 1, j + 1)]) / 4;
+      A.set(tmp);
+    }
+    profs.push({ top, xl, xr });
+  }
+  const ridge = (sx, sz) => {
+    const f = clamp((sz - pz0) / pdz, 0, NZ - 1.001), j = Math.floor(f), u = f - j;
+    let h = 0, ca = 0, cb = 0, ta = 0, tb = 0;
+    profs.forEach(({ top, xl, xr }, n) => {
+      const t = top[j] + (top[j + 1] - top[j]) * u;
+      const a = xl[j] + (xl[j + 1] - xl[j]) * u, b = xr[j] + (xr[j + 1] - xr[j]) * u, c = (a + b) / 2, hw = Math.max(0.06, (b - a) / 2);
+      if (n) { cb = c; tb = t; } else { ca = c; ta = t; }
+      if (!(t > 0.005)) return;
+      const q = Math.abs(sx - c) / hw;
+      const v = q <= 1 ? t * (1 - RT.dDome * q * q) : t * (1 - RT.dDome) * (1 - smooth01((q - 1) * hw / (0.06 + t * RT.dSide)));
+      h = Math.max(h, v);
+    });
+    // between the two sleepers the cloth spans the gap from one body to the other (sagging a little), not down to the mattress
+    if (profs.length > 1 && (sx - ca) * (sx - cb) < 0) {
+      const m = Math.abs(sx - ca) / Math.abs(cb - ca), lo = ta + (tb - ta) * m;
+      h = Math.max(h, lo * (1 - RT.dDome) * (1 - RT.dSag * Math.sin(Math.PI * m)));
+    }
+    return h;
+  };
   bl.userData.drape((lx, lz) => {
     const sx = x0 + lx * wid, sz = (zTop + zEnd) / 2 + lz * (zEnd - zTop);                // shelter-local
     const ex = Math.abs(sx - bx) - half, ez = sz - end;
     const out = low ? 0 : Math.max(ex, ez, 0);
-    _re.set(lx, 0, lz); bl.localToWorld(_re);
     // a flat sheet a hand above the mattress over the whole sleeping area (bridges the gap between the two bodies) ...
     let h = 0.02 + RT.dSheet * kk * (1 - smooth01(Math.max(ex + 0.12, ez + 0.1, 0) / 0.18));
-    // ... raised only where a knee, hip or foot is higher, with a long, soft fall and a hard cap
-    for (const [x, z, top, r] of _dp) {
-      const d = Math.hypot(_re.x - x, _re.z - z);
-      if (d < r + RT.dFall) h = Math.max(h, Math.min(RT.dCap, top) * (1 - smooth01((d - r) / RT.dFall)) * kk + 0.02);
-    }
+    // ... raised along each sleeper's ridge (SIT-r4)
+    h = Math.max(h, ridge(sx, sz) * kk + 0.02);
     if (low) {                                                                       // floor bed / cave hides: the cover thins out over its last 20 cm onto the mat
       const ebx = Math.abs(lx) * wid - wid / 2, ebz = Math.abs(lz) * (zEnd - zTop) - (zEnd - zTop) / 2, eb = Math.max(ebx, ebz);
       const o2 = Math.max(ex, ez, 0);                                                // past the hides' own edge it drapes down to the ground
-      const hem = Math.min(smooth01(-ebx / 0.2), smooth01(-ebz / 0.3));            // SIT-r3: a 20 cm hem at the sides, a long soft run-out past the feet (no wall at the foot)
+      const hem = Math.min(smooth01(-ebx / 0.2), smooth01(-ebz / (lz > 0 ? 0.3 : 0.05)));   // SIT-r4: no long run-out at the waist (the cover lay flat across his hips there)            // SIT-r3: a 20 cm hem at the sides, a long soft run-out past the feet (no wall at the foot)
       return 0.012 + (h - 0.012) * hem - (eb > -0.04 ? Math.min(drop, 0.04 + eb) : 0) - (o2 > 0 ? Math.min(drop, o2 * 0.9) : 0);   // SIT-r3: off the hides' edge in a slope, not a step
     }
     if (out > 0) { const hang = -Math.min(drop, out * 1.6) + 0.01; return Math.max(hang, h - out * 2.4); }   // raised bed: the edge rolls over and hangs a short skirt
     return h;
   }, RT.dPass, (lx, lz) => {                         // SIT-r3: smoothed hard (dPass), then never below a limb's own surface (a round limb of radius r)
-    if (!(kk > 0)) return -1;
+    if (!(kk > 0) || !RT.dGuard) return -1;      // SIT-r4: dGuard (how much of each limb's radius the cloth must clear after smoothing; 0 = off)
     _re.set(lx, 0, lz); bl.localToWorld(_re);
     let n = -1;
     for (const [x, z, top, r] of _dp) {
       const d2 = (_re.x - x) ** 2 + (_re.z - z) ** 2;
       const R2 = r * r * 2.3;                        // a little wider than the bone's radius (a foot or a knee is not a sphere)
-      if (d2 < R2) n = Math.max(n, (top - r * RT.dTop - 0.02 + r * Math.sqrt(1 - d2 / R2) + 0.03) * kk);
+      if (d2 < R2) n = Math.max(n, (top - r * RT.dTop - 0.02 + r * RT.dGuard * Math.sqrt(1 - d2 / R2) + 0.012) * kk);   // SIT-r4: only a real poke-through (the ridge already clears each limb by its radius; the full-radius guard raised a spike at every toe)
     }
     return n;
   });
@@ -4923,7 +5168,7 @@ function goreTarget(p) {
     if (Math.hypot(o.root.position.x - p.x, o.root.position.z - p.z) < 2.5) return { label: 'End its suffering', key: true, act() { goreMercy(o); } };
   }
   for (const o of animals) {
-    if (o.state !== 'dead' || o.looted || o.deadT < 1.2) continue;
+    if (o.state !== 'dead' || o.looted || o.deadT < 1.2 || o.sinkT != null) continue;   // SAVE-PERF: not one sinking away
     if (Math.hypot(o.root.position.x - p.x, o.root.position.z - p.z) < 2.7) {
       const pc = o.butchT ? ` ${Math.floor((o.butchT / goreNeed(o)) * 100)}%` : '';
       return { label: `Butcher the ${o.kind}${pc} (hold E)`, key: true, act() { goreButcherStart(o); } };
@@ -9295,6 +9540,7 @@ function updateSena(dt) {
   if (survSena(dt)) return;                          // SURV: she tends Aro's wounds, or walks him with his arm over her shoulders
   if (arcSena(dt)) return;                           // ARC: scripted Sena (the lake at dusk, the fire with Tamu, sick in bed)
   if (romSena(dt)) return;                           // ROM: scenes, hand in hand, a talk
+  if (N.board && senaBoard(dt)) { settle(N, dt, false); return; }   // RIDE-r4: on foot to the horse's flank, then the climb
   if (N.ride && !P.ride) { N.ride = false; N.seat = null; N.h.pose = null; N.h.straddle = false; }
   if (N.ride) { N.speed = 0; N.node = null; settle(N, dt, false); return; }   // WP4: riding behind Aro (seated by updateHorses)
   if (N.sit > 0) { N.sit -= dt; N.speed = 0; if (N.hearth) N.hearth.seen = clock; if (N.sit <= 0) endSit(N); settle(N, dt, false); return; }
@@ -9539,8 +9785,8 @@ const FP = {
   tw: 0, back: false, turning: false, reach: null, lastShot: null, lastShotT: 1, pump: 0, swimT: 0, bodyMats: [], headMats: [],
   pos: new THREE.Vector3(), held: [], shift: new THREE.Vector3(), shifted: false,
 };
-const fpU = { hide: { value: 0 }, hideR: { value: 0 }, hideL: { value: 0 }, only: { value: 0 }, eye: { value: new THREE.Vector3(0, -1e4, 0) } };   // Aro's body (P)
-const fpUA = { hide: { value: 0 }, hideR: { value: 0 }, hideL: { value: 0 }, only: { value: 1 }, eye: { value: new THREE.Vector3(0, -1e4, 0) } };  // the viewmodel arms rig
+const fpU = { hide: { value: 0 }, hideR: { value: 0 }, hideL: { value: 0 }, only: { value: 0 }, eye: { value: new THREE.Vector3(0, -1e4, 0) }, near: { value: 0.14 } };   // Aro's body (P) (RIDE-r4 near: where the eye fade starts)
+const fpUA = { hide: { value: 0 }, hideR: { value: 0 }, hideL: { value: 0 }, only: { value: 1 }, eye: { value: new THREE.Vector3(0, -1e4, 0) }, near: { value: 0.14 } };  // the viewmodel arms rig
 const _fa = new THREE.Vector3(), _fb = new THREE.Vector3(), _fc = new THREE.Vector3(), _fm = new THREE.Matrix4(), _fm2 = new THREE.Matrix4();
 const _fq = new THREE.Quaternion(), _fq2 = new THREE.Quaternion(), _fs = new THREE.Vector3(), _fe = new THREE.Euler();
 const _fBox = new THREE.Box3();   // WH: near-eye cull of carried gear while riding
@@ -9549,6 +9795,7 @@ const fpBob = () => (settings.fppBob ?? 0.7) * (settings.reduceMotion ? 0.25 : 1
 // below the horizon: looking ahead showed no horse at all. Down 0.12 m (a seated eye height) and back 0.1 m, her ears
 // and mane sit in the lower third and the reins run up to them.
 const FPP_RIDE_EYE = { y: 0.12, b: 0.1 };
+const FPP_RIDE_NEAR = 0.22;                          // RIDE-r4: extra reach of the near-eye body fade in the saddle (m; fppVm)
 function fppPitchMax() { return view === 'fpp' ? (P.ride && !P.taming ? 0.72 : 1.45) : 1.25; }   // FPP-world: riding, the look down stops at the mane (past it the forearms filled the view; FHW-r4: 0.9 still gave them half the frame)
 // Per-vertex mask from the skin weights: 1 head + neck, 2 right arm, 3 left arm (upper arm down to the fingers).
 function fpMask(mesh) {
@@ -9566,15 +9813,15 @@ function fpMask(mesh) {
 }
 function fpMaterial(mat, u, key) {
   mat.onBeforeCompile = (sh) => {
-    sh.uniforms.uFpHide = u.hide; sh.uniforms.uFpHideR = u.hideR; sh.uniforms.uFpHideL = u.hideL; sh.uniforms.uFpOnly = u.only; sh.uniforms.uFpEye = u.eye;
+    sh.uniforms.uFpHide = u.hide; sh.uniforms.uFpHideR = u.hideR; sh.uniforms.uFpHideL = u.hideL; sh.uniforms.uFpOnly = u.only; sh.uniforms.uFpEye = u.eye; sh.uniforms.uFpNear = u.near;
     sh.vertexShader = 'attribute float fppMask;\nflat varying float vFpMask;\nvarying vec3 vFpW;\n' + sh.vertexShader.replace('#include <begin_vertex>', '#include <begin_vertex>\n  vFpMask = fppMask;')
       .replace('#include <project_vertex>', '#include <project_vertex>\n  vFpW = (modelMatrix * vec4(transformed, 1.0)).xyz;');
     // FHW-r4: in first person, Aro's own body fades out (dithered) 0.14-0.22 m from the eye. The seated riding eye sits in
     // his upper chest, so looking down the near plane sliced it flat (a beige slab across the bottom of the view), and
     // looking aside his shoulder and neck cut-out filled the frame. Colour pass only: his shadow is untouched.
-    sh.fragmentShader = 'uniform float uFpHide, uFpHideR, uFpHideL, uFpOnly;\nuniform vec3 uFpEye;\nflat varying float vFpMask;\nvarying vec3 vFpW;\n' + sh.fragmentShader.replace('void main() {', `void main() {
+    sh.fragmentShader = 'uniform float uFpHide, uFpHideR, uFpHideL, uFpOnly, uFpNear;\nuniform vec3 uFpEye;\nflat varying float vFpMask;\nvarying vec3 vFpW;\n' + sh.fragmentShader.replace('void main() {', `void main() {
   if (uFpHide > 0.5) {
-    float fpA = clamp((distance(vFpW, uFpEye) - 0.14) / 0.08, 0.0, 1.0);
+    float fpA = clamp((distance(vFpW, uFpEye) - uFpNear) / 0.08, 0.0, 1.0);
     if (fpA < 1.0 && fpA <= fract(52.9829189 * fract(dot(gl_FragCoord.xy, vec2(0.06711056, 0.00583715))))) discard;
   }
   if (uFpHide > 0.5 && vFpMask > 0.5 && vFpMask < 1.5) discard;
@@ -9959,6 +10206,10 @@ function fppVm(dt) {
   // Aro's head, neck, hair and eyes stop drawing colour; the shadow pass still has all of him
   fpU.hide.value = on ? 1 : 0;
   fpU.eye.value.copy(camera.position);               // FHW-r4: the near-eye body fade centre (camera placed by fppCamera this frame)
+  // RIDE-r4: the seated riding eye is inside his upper chest: looking 60+ degrees aside, his own shoulder and trapezius
+  // (0.15-0.35 m off) filled the lower half of the view as huge clipped polygons. In the saddle the fade reaches further
+  // out (the reins' arms are the viewmodel's; his thighs and knees, 0.6 m+ away, still show looking down).
+  fpU.near.value = 0.14 + (on && P.ride && !P.taming ? FPP_RIDE_NEAR * smooth01(((P.rideW ?? 1) - 0.4) / 0.5) : 0);
   for (const m of FP.headMats) { m.colorWrite = !on; m.depthWrite = !on; }
   const near = on ? 0.06 : 0.15;
   if (camera.near !== near) { camera.near = near; camera.updateProjectionMatrix(); }
@@ -10325,7 +10576,8 @@ function frame(now) {
     saveT += dt; if (saveT > 20 && !busy) { saveT = 0; save(); }
   } else if (!playing) { settle(P, dt, false); settle(N, dt, false); }
   for (const o of [...animals]) updateAnimal(o, dt);
-  if (playing && !paused) cmbUpdate(dt);             // CMB raiders, predators, glints, brace, Sena
+  wolfCorpseCap(dt);                                 // SAVE-PERF: at most WOLF_CORPSES unbutchered wolves lie about
+  if (playing && !paused) cmbUpdate(dt);            // CMB raiders, predators, glints, brace, Sena
   updateHorses(dt);                                  // WP4: riders' seats, herd, heart, kicks, peak ride
   updateWorldThings(dt);
   updateFireLights();                                // SAVE-PERF campfire light pool
@@ -10418,7 +10670,7 @@ Object.assign(window.G, {
   restMenu(s) { rstOpen(s || rstNearest()); return R.opts.map((o) => o[1]); },
   restChoose: (i) => rstChoose(i),
   restKey: (code) => rstKey({ code, repeat: false }),
-  restTune: RT, restLay: RST_LAY,
+  restTune: RT, restLay: RST_LAY, hfp: HFP,   // SIT-r4 hfp: the hearth floor pose
   lie(who = 'both', on = true, s) {
     s ||= rstNearest();
     if (!on) { R.freeze = null; rstAbort(); return false; }

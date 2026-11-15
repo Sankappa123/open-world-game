@@ -307,7 +307,7 @@ export function createCaves(scene, { NAT, rockTex, addCollider, clear, Field, pm
       const perp = [Math.cos(bt), -Math.sin(bt)];
       const bed = new THREE.Group();
       const hideM = new THREE.MeshStandardMaterial({ color: 0x7a5a3a, roughness: 1 }), strawM = new THREE.MeshStandardMaterial({ color: 0xa8955a, roughness: 1 });
-      const pile = new THREE.Mesh(new THREE.SphereGeometry(1, 14, 8), strawM); pile.scale.set(1.6, 0.14, 1.2); bed.add(pile);
+      const pile = new THREE.Mesh(new THREE.SphereGeometry(1, 14, 8), strawM); pile.scale.set(1.14, 0.12, 0.66); bed.add(pile);   // SIT-r4: the straw is a fringe round the hides (at 1.6 m it ran 0.6 m past their foot: a pale slab beyond the blanket)
       const h1 = new THREE.Mesh(new THREE.BoxGeometry(2.0, 0.04, 1.0), hideM); h1.position.set(0, 0.15, -0.5); h1.rotation.y = 0.08; bed.add(h1);
       const h2 = new THREE.Mesh(new THREE.BoxGeometry(2.0, 0.04, 1.0), hideM.clone()); h2.material.color.set(0x6a4a30); h2.position.set(0.05, 0.16, 0.5); h2.rotation.y = -0.06; bed.add(h2);
       bed.position.set(bx, k.floor, bz); bed.rotation.y = bt + Math.PI / 2;
