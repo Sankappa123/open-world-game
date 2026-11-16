@@ -399,7 +399,11 @@ export function createWorld(scene, renderer, quality = 'medium') {
       return out.splice(0);
     };
     const open = (x, z, h, ny) => h > 1 && h < 20 && ny > 0.86 && forest(x, z) < 0.25;
-    const bank = (lo, hi) => () => { const z = (HR() * 2 - 1) * LIMIT; return [riverX(z) + (HR() < 0.5 ? -1 : 1) * lerp(lo, hi, HR()), z]; };
+    // SURV: the channel is under water out to about 12 m from the centre line, so a bank spot is measured from the
+    // waterline (the first dry ground walking out from the river), not from the centre.
+    const shore = (z, sd) => { const cx = riverX(z); for (let d = 5; d < 26; d += 0.4) if (getHeight(cx + sd * d, z) > 0.06) return d; return 26; };
+    const bankAt = (z, sd, lo, hi) => [riverX(z) + sd * (shore(z, sd) + lerp(lo, hi, HR())), z];
+    const bank = (lo, hi, zmax = LIMIT) => () => bankAt((HR() * 2 - 1) * zmax, HR() < 0.5 ? -1 : 1, lo, hi);
     // yarrow: feathery stems with flat cream flower heads
     const yr = rng(51), yParts = [];
     for (let i = 0; i < 7; i++) {
@@ -414,25 +418,25 @@ export function createWorld(scene, renderer, quality = 'medium') {
     // mint: a low clump of bright paired leaves with lilac spikes, right at the water's edge (within about 6 m)
     const mr = rng(52), mParts = [];
     for (let i = 0; i < 9; i++) {
-      const a = mr() * 6.283, d = mr() * 0.2, x = Math.cos(a) * d, z = Math.sin(a) * d, h = 0.14 + mr() * 0.14;
+      const a = mr() * 6.283, d = mr() * 0.26, x = Math.cos(a) * d, z = Math.sin(a) * d, h = 0.18 + mr() * 0.16;
       mParts.push(part(new THREE.CylinderGeometry(0.006, 0.008, h, 3), 0x3f6a2c, x, h / 2, z));
-      for (let k = 0; k < 3; k++) { const y = h * (0.35 + k * 0.3), b = mr() * 3.14 + k * 1.57; for (const sd of [-1, 1]) mParts.push(part(ico(0.05, 0), k === 2 ? 0x5bb04a : 0x4a9a3c, x + Math.cos(b) * 0.045 * sd, y, z + Math.sin(b) * 0.045 * sd, 0, b, 0, 1.25, 0.28, 0.8)); }
+      for (let k = 0; k < 3; k++) { const y = h * (0.35 + k * 0.3), b = mr() * 3.14 + k * 1.57; for (const sd of [-1, 1]) mParts.push(part(ico(0.06, 0), k === 2 ? 0x5bb04a : 0x4a9a3c, x + Math.cos(b) * 0.045 * sd, y, z + Math.sin(b) * 0.045 * sd, 0, b, 0, 1.25, 0.28, 0.8)); }
       if (i % 3 === 0) mParts.push(part(new THREE.CapsuleGeometry(0.016, 0.06, 2, 5), 0xb497d6, x, h + 0.05, z));
     }
-    const mint = spot(64, bank(1.5, 6), (x, z, h) => h > -0.25 && h < 1.4);
-    mint.push(...spot(6, () => { const z = (HR() * 2 - 1) * 50; return [riverX(z) + (HR() < 0.6 ? -1 : 1) * lerp(1.5, 5.5, HR()), z]; }, (x, z, h) => h > -0.25 && h < 1.4));
+    const mint = spot(64, bank(0.2, 5), (x, z, h) => h > 0.04 && h < 1.6, 2.5);
+    mint.push(...spot(6, bank(0.2, 4.5, 50), (x, z, h) => h > 0.04 && h < 1.6, 2.5));
     // willow: a riverbank shrub of slender grey stems and narrow silver-green leaves (the bark is the medicine)
     const wr = rng(53), wParts = [];
-    for (let i = 0; i < 6; i++) {
-      const a = (i / 6) * 6.283 + wr() * 0.6, lean = 0.12 + wr() * 0.22, h = 1.3 + wr() * 0.8, tx = Math.cos(a) * lean, tz = Math.sin(a) * lean;
-      wParts.push(part(new THREE.CylinderGeometry(0.016, 0.034, h, 5), 0x7d6e5c, Math.sin(tz) * h * 0.5, h / 2, -Math.sin(tx) * h * 0.5, tx, 0, tz));
-      for (let k = 0; k < 9; k++) {
-        const u = 0.45 + (k / 9) * 0.55, px = Math.sin(tz) * h * u, pz = -Math.sin(tx) * h * u, b = wr() * 6.283;
-        wParts.push(part(new THREE.ConeGeometry(0.022, 0.24, 3), wr() < 0.5 ? 0x9cb07a : 0x8aa070, px + Math.cos(b) * 0.07, h * u * Math.cos(lean) - 0.06, pz + Math.sin(b) * 0.07, Math.PI + Math.cos(b) * 0.5, b, Math.sin(b) * 0.5, 1, 1, 0.3));
+    for (let i = 0; i < 8; i++) {                    // SURV: a fuller shrub (it read as a tripod of bare sticks): 8 stems, drooping leaf sprays from a third of the way up
+      const a = (i / 8) * 6.283 + wr() * 0.6, lean = 0.12 + wr() * 0.26, h = 1.2 + wr() * 0.9, tx = Math.cos(a) * lean, tz = Math.sin(a) * lean;
+      wParts.push(part(new THREE.CylinderGeometry(0.014, 0.034, h, 5), 0x7d6e5c, Math.sin(tz) * h * 0.5, h / 2, -Math.sin(tx) * h * 0.5, tx, 0, tz));
+      for (let k = 0; k < 16; k++) {
+        const u = 0.3 + (k / 16) * 0.72, px = Math.sin(tz) * h * u, pz = -Math.sin(tx) * h * u, b = wr() * 6.283, out = 0.08 + u * 0.1;
+        wParts.push(part(new THREE.ConeGeometry(0.034, 0.3 + wr() * 0.12, 3), [0x9cb07a, 0x8aa070, 0xa9bd86][(wr() * 3) | 0], px + Math.cos(b) * out, h * u * Math.cos(lean) - 0.08, pz + Math.sin(b) * out, Math.PI + Math.cos(b) * 0.75, b, Math.sin(b) * 0.75, 1, 1, 0.3));
       }
     }
-    const willow = spot(28, bank(3, 9), (x, z, h, ny) => h > 0.15 && h < 2.2 && ny > 0.8, 7);
-    willow.push(...spot(3, () => { const z = (HR() * 2 - 1) * 45; return [riverX(z) + (HR() < 0.6 ? -1 : 1) * lerp(3, 8, HR()), z]; }, (x, z, h, ny) => h > 0.15 && h < 2.2 && ny > 0.8, 7));
+    const willow = spot(28, bank(1, 7), (x, z, h, ny) => h > 0.15 && h < 2.6 && ny > 0.8, 7);
+    willow.push(...spot(3, bank(1, 6, 45), (x, z, h, ny) => h > 0.15 && h < 2.6 && ny > 0.8, 7));
     return [
       new Field(scene, 'yarrow', one(flat(merge(yParts))), yarrow, { shadow: false, tint: 0.1, cell: 128 }),
       new Field(scene, 'mint', one(flat(merge(mParts))), mint, { shadow: false, tint: 0.1, cell: 128 }),

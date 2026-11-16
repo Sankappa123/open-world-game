@@ -7041,6 +7041,28 @@ function arcShot(at, t = 40, side = 1) {
   if (view === 'fpp') return;                        // first person: keep the player's own eyes
   camShot = ARCS.shot = { pos, look: lk, t };
 }
+// A spoken exchange as shot / reverse shot: each line is framed on its speaker, from the side of whoever they speak to.
+const ARC_WHO = { Korr: 'korr', Tamu: 'tamu', Wena: 'wena', Pell: 'pell' };
+function arcCloseUp(who, other, d = 3.6, side = 1) {
+  if (view === 'fpp' || !who || !other) return;
+  const a = who.pos, b = other.pos || other, dx = b.x - a.x, dz = b.z - a.z, L = Math.hypot(dx, dz) || 1, fx = dx / L, fz = dz / L;
+  const k = who.child ? 0.72 : 1, low = who.mode === 'sit' ? 0.55 : 0, gy = Math.max(getHeight(a.x, a.z), 0.2);
+  d = Math.min(d, Math.max(2.2, L - 1.2));
+  let cx = a.x + fx * d + fz * 1.25 * side, cz = a.z + fz * d - fx * 1.25 * side;
+  const cy = Math.max(getHeight(cx, cz), 0.25) + 1.5;                      // never under the bank or the water
+  camShot = ARCS.shot = { pos: new THREE.Vector3(cx, Math.max(cy, gy + 1.45 * k - low * 0.3), cz), look: new THREE.Vector3(a.x, gy + 1.42 * k - low, a.z), t: 60 };
+}
+async function arcTalk(lines, other = ARCS.focus) {
+  for (const l of lines || []) {
+    if (!l) continue;
+    const npc = ARC_WHO[l[0]] ? arcGet(ARC_WHO[l[0]]) : null;
+    if (npc && !npc.hidden) { arcCloseUp(npc, P, 3.6, 1); if (!P.ride && !keys.KeyW && !keys.KeyS && !keys.KeyA && !keys.KeyD) arcFace(P, npc.pos); }   // Aro looks at whoever speaks to him
+    else if ((l[0] === 'Sena' || l[0] === 'Aro') && other && other !== N) arcCloseUp(l[0] === 'Sena' ? N : P, other, 3.4, l[0] === 'Sena' ? -1 : 1);
+    else if (l[0] === 'Sena' && other === N) arcCloseUp(N, P, 3.2, 1);
+    else if (l[0] === 'Aro' && other === N) arcCloseUp(P, N, 3.2, -1);
+    say(l[0], l[1]); await arcSubsDone();
+  }
+}
 function arcFace(e, tp) { e.face = Math.atan2(tp.x - e.pos.x, tp.z - e.pos.z); }
 
 // ----- choices: arcChoose wraps choose() and records the consequences
@@ -7254,7 +7276,8 @@ const ARC_PROPS = {
     const n = Math.max(12, Math.round(Math.hypot(ex - sx, ez - sz) / 1.6));
     for (let i = 0; i <= n; i++) { const k = i / n, wob = Math.sin(k * 9) * 1.4 * (1 - k); pts.push([sx + (ex - sx) * k + wob * 0.6, sz + (ez - sz) * k - wob * 0.4, 0.55 + ((i * 37) % 10) / 22]); }
     pts.push([ex, ez, 2.2]);
-    arcDecals(g, pts, 0.6);
+    if (!ARCS.trailCut) { ARCS.trailCut = true; for (const [x, z] of pts) world.clear(x, z, 0.8); }   // a dragged swath through the grass (the drops were hidden under the blades)
+    arcDecals(g, pts, 0.85);
     return {};
   },
   snowcamp(g) {                                      // Wena's camp, found empty: a snowed-in windbreak, a dead fire, her sling. No one.
@@ -7316,7 +7339,7 @@ function arcProp(key, on) {
 // ----- seasons: autumn gold on grass and leaves, winter snow on the ground and in the air (one shader patch, one Points)
 function arcSeasonBoot() {
   let t = null;
-  scene.traverse((o) => { if (!t && o.isMesh && o.material?.customProgramCacheKey?.() === 'hearthborn-terrain') t = o; });
+  scene.traverse((o) => { if (!t && o.isMesh && !o.isInstancedMesh && String(o.material?.customProgramCacheKey?.() || '').startsWith('hearthborn-terrain')) t = o; });   // (world.js re-keys it '-cave')
   if (t) {
     const m = t.material, prev = m.onBeforeCompile;
     m.onBeforeCompile = (sh, r) => {
@@ -7328,7 +7351,8 @@ function arcSeasonBoot() {
         float arcS = uSnow * smoothstep(0.6, 0.88, arcN) * smoothstep(-0.1, 0.7, vWp.y) * smoothstep(0.25, 0.5, arcM * 0.55 + uSnow * 0.6);
         diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.8, 0.83, 0.88), arcS);`);
     };
-    m.customProgramCacheKey = () => 'hearthborn-terrain-arc';
+    const key0 = m.customProgramCacheKey();
+    m.customProgramCacheKey = () => key0 + '-arc';
     m.needsUpdate = true;
   }
   const n = 1600, pos = new Float32Array(n * 3);
@@ -7339,6 +7363,21 @@ function arcSeasonBoot() {
   pts.frustumCulled = false; pts.visible = false; scene.add(pts);
   ARCS.snow = { pts, pos, n };
 }
+// Snow on the foliage: grass and leaves take the same uSnow as the ground (grass also lies lower under it).
+const ARC_SNOWK = { grass: 0.74, leaf: 0.5, pine: 0.46, flower: 0.8 };
+function arcSnowMat(m, kind) {
+  if (m.userData.arcSnow) return;
+  m.userData.arcSnow = true;
+  const prev = m.onBeforeCompile, key0 = (() => { try { return m.customProgramCacheKey?.() || m.name || ''; } catch { return m.name || ''; } })();
+  m.onBeforeCompile = (sh, r) => {
+    prev?.call(m, sh, r);
+    sh.uniforms.uSnow = ARCS.uSnow;
+    if (kind === 'grass' || kind === 'flower') sh.vertexShader = 'uniform float uSnow;\n' + sh.vertexShader.replace('#include <begin_vertex>', `#include <begin_vertex>\n transformed.y *= 1.0 - uSnow * ${kind === 'grass' ? '0.5' : '0.7'};`);
+    sh.fragmentShader = 'uniform float uSnow;\n' + sh.fragmentShader.replace('#include <map_fragment>', `#include <map_fragment>\n diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.84, 0.87, 0.92), uSnow * ${ARC_SNOWK[kind].toFixed(2)});`);
+  };
+  m.customProgramCacheKey = () => key0 + '-arcsnow-' + kind;
+  m.needsUpdate = true;
+}
 function arcSeasonMats() {
   const list = [], seen = new Set();
   scene.traverse((o) => {
@@ -7347,13 +7386,14 @@ function arcSeasonMats() {
       if (!m || !m.color || seen.has(m)) continue;
       seen.add(m);
       let key = ''; try { key = m.customProgramCacheKey?.() || ''; } catch { key = ''; }
-      const kind = key === 'hearthborn-grass' || key === 'hearthborn-natgrass' || m.name === 'Grass' ? 'grass' : m.name === 'Leaves' || m.name === 'Leaves_NormalTree' ? 'leaf' : null;
-      if (kind) list.push({ m, kind, base: m.color.clone() });
+      const kind = key === 'hearthborn-grass' || key === 'hearthborn-natgrass' || m.name === 'Grass' ? 'grass' : m.name === 'Leaves' || m.name === 'Leaves_NormalTree' || m.name === 'Leaves_TwistedTree' ? 'leaf'
+        : m.name === 'Leaves_Pine' ? 'pine' : m.name === 'Flowers' ? 'flower' : null;
+      if (kind) { list.push({ m, kind, base: m.color.clone() }); arcSnowMat(m, kind); }
     }
   });
   return list;
 }
-const ARC_TINT = { grass: { a: [1.18, 0.95, 0.6], w: [0.98, 0.92, 0.74] }, leaf: { a: [1.5, 0.8, 0.36], w: [0.72, 0.6, 0.44] } };
+const ARC_TINT = { grass: { a: [1.18, 0.95, 0.6], w: [0.98, 0.92, 0.74] }, leaf: { a: [1.5, 0.8, 0.36], w: [0.72, 0.6, 0.44] }, pine: { a: [1, 1, 1], w: [0.9, 0.94, 0.96] }, flower: { a: [1, 0.95, 0.8], w: [0.9, 0.9, 0.9] } };
 function arcSeasonTick(dt) {
   const s = ARCS.season, se = S.arc.season, ta = se === 'autumn' ? 1 : 0, tw = se === 'winter' ? 1 : 0;
   const k = s.snap ? 1 : Math.min(1, dt * 0.06);
@@ -7371,8 +7411,8 @@ function arcSeasonTick(dt) {
   sn.pts.visible = on;
   if (!on) return;
   const storm = E.storm, fall = (1.3 + storm * 2.2) * dt, wind = (0.35 + storm * 3.2) * dt;
-  sn.pts.material.opacity = Math.min(0.95, s.w * (0.5 + storm * 0.45));
-  sn.pts.material.size = 0.1 + storm * 0.05;
+  sn.pts.material.opacity = Math.min(0.95, s.w * (0.7 + storm * 0.25));
+  sn.pts.material.size = 0.15 + storm * 0.05;
   sn.pts.position.set(camera.position.x, camera.position.y - 10, camera.position.z);
   const p = sn.pos;
   for (let i = 0; i < sn.n; i++) {
@@ -7590,12 +7630,12 @@ async function arcTamuFound() {
   A.tamuFound = true;
   await arcScene('outcast', async () => {
     ARCS.focus = t; arcShot(t, 60); t.talk = true;
-    arcSay(L.found); await arcSubsDone();
+    await arcTalk(L.found);
     t.talk = false;
     await arcChoose('outcast', 'The Wounded Stranger', ARC_OPTS.outcast(), { def: null, note: 'Tamu, of the Ash People. Korr\'s spear is still in him.' });
     const c = A.choices.outcast;
     if (c === 'help') {
-      arcSay(L.help); await arcSubsDone();
+      await arcTalk(L.help);
       await arcFade(L.helpFade, () => { arcTamuHome(); const h = arcHome(); if (h) { P.pos.set(h.x + 3.5, 0, h.z + 4); N.pos.set(h.x + 4.5, 0, h.z + 3); } S.time = (S.time + 3) % 24; }, 2800);
       toast('Tend his wound: E beside Tamu, with a poultice');
     } else if (c === 'kill') {
@@ -7603,7 +7643,7 @@ async function arcTamuFound() {
       await arcFade('', () => { arcTamuBody(); arcSfx(140, 0.25, 0.7); }, 600);   // a hard cut: it is over before the screen comes back
       arcSay(L.kill); await arcSubsDone();
     } else {
-      arcSay(L.leave); await arcSubsDone();
+      await arcTalk(L.leave);
       t.mode = 'sit'; t.dropFar = true;              // he stays against the tree; gone once you are out of sight
     }
   });
@@ -7649,11 +7689,11 @@ async function arcFord() {
     const k = arcGet('korr');
     ARCS.focus = k; arcShot(k, 80); arcTalkers(['korr', 'hunter0', 'hunter1', 'hunter2']);
     if (Math.hypot(N.pos.x - P.pos.x, N.pos.z - P.pos.z) > 25) N.pos.set(P.pos.x - side * 1.5, 0, P.pos.z + 1.2);
-    arcSay(L.fordArrive); await arcSubsDone();
+    await arcTalk(L.fordArrive);
     await arcChoose('ford', 'The Ford', ARC_OPTS.ford(), { timer: 12, def: 2, note: 'Korr waits on the far bank. His hunters watch your hands.' });
     const c = A.choices.ford;
-    arcSay(L[c]); await arcSubsDone();
-    arcAshLeave(70);
+    await arcTalk(L[c]);
+    arcAshLeave(70); arcShot(k, 80);
     arcSay([L.after[c]]); await arcSubsDone();
   });
 }
@@ -7669,7 +7709,7 @@ async function arcReckoning() {
     k.mode = 'walk'; k.tx = P.pos.x + (k.pos.x - P.pos.x) * 0.45; k.tz = P.pos.z + (k.pos.z - P.pos.z) * 0.45; k.then = 'talk'; k.look = 'P';
     await arcWait(1.5);
     ARCS.focus = k; arcShot(k, 90);
-    arcSay(L.meet); await arcSubsDone();
+    await arcTalk(L.meet);
     await arcChoose('korr', 'Korr', ARC_OPTS.korr(), { def: null, note: 'His hunters are on their feet around the fire. Korr has not reached for his spear. Yet.' });
     const c = A.choices.korr;
     if (c === 'kill') {                              // phase C: a CMB duel (typeof cmbDuel === 'function'); until then a hard cut
@@ -7677,8 +7717,8 @@ async function arcReckoning() {
       arcSenaSays(L.kill);
     } else if (c === 'spare') {
       await arcFade(L.spareFade, () => { k.mode = 'sit'; k.jy = -0.44; }, 2400);
-      arcSay(L.spare); await arcSubsDone();
-    } else { arcSay(L.peace); await arcSubsDone(); }
+      await arcTalk(L.spare);
+    } else { await arcTalk(L.peace); }
     if (A.horseFate === 'taken') { arcHorseBack(); arcSay([L.horseBack]); await arcSubsDone(); }
     await arcFade(L.thawFade, () => { A.thaw = true; A.season = 'spring'; if (c !== 'kill') arcAshLeave(0.01); arcFoal(); }, 3200);
     arcSay(L.foal); await arcSubsDone();
@@ -7735,11 +7775,11 @@ async function arcDoor() {
   await arcScene('door', async () => {
     arcKnock();
     ARCS.focus = w; arcShot(w, 80);
-    arcSay(L.door); await arcSubsDone();
+    await arcTalk(L.door);
     const n = arcStored() + ARCD.countFood(S.inv);
     await arcChoose('door', 'Strangers at the Door', ARC_OPTS.door(), { def: null, note: `A woman and a small boy, white with snow. You have ${n} meals that keep.` });
     const c = A.choices.door;
-    arcSay(L[c]); await arcSubsDone();
+    await arcTalk(L[c]);
     if (c === 'share') { await arcFade('That night there were four by the fire.', () => { arcDrop('wena'); arcDrop('pell'); arcWenaHome(); }, 2200); }
     else { for (const e of [w, p]) { e.mode = 'leave'; e.spd = 1.2; e.tx = e.pos.x + Math.sin(a) * 80; e.tz = e.pos.z + Math.cos(a) * 80; } }
   });
@@ -7963,7 +8003,7 @@ function arcBeats(id) {
         A.warned = true;
         arcScene('warn', async () => {
           const pl = arcGet('pell'); if (pl) { pl.hidden = false; pl.mode = 'stand'; pl.pos.set(p.x + 1.6, 0, p.z + 1.2); pl.look = 'P'; ARCS.focus = pl; }
-          arcSay(ARCD.L.raid.warn); await arcSubsDone();
+          await arcTalk(ARCD.L.raid.warn);
           await arcChoose('raid', 'Korr is coming', ARC_OPTS.raid(), { def: 0, note: 'Pell heard them at the ruins. Tomorrow night.' });
         });
         break;
@@ -8004,7 +8044,7 @@ function arcJealousBeat() {
   arcScene('jealous', async () => {
     const L = ARCD.L.jealous;
     ARCS.focus = N; arcShot(N, 60);
-    arcSay(L.scene); await arcSubsDone();
+    await arcTalk(L.scene, arcGet('tamu'));
     await arcChoose('jealous', 'At the Fire', ARC_OPTS.jealous(), { def: null, note: 'Sena and Tamu are laughing together by the fire.' });
     ARCS.jealous = false; t.talk = false;
     const ch = A.choices.jealous;
@@ -8029,10 +8069,10 @@ function arcLakeBeat() {
   arcScene('reconcile', async () => {
     const L = ARCD.L.reconcile;
     ARCS.focus = N; arcShot(N, 60);
-    arcSay(L.scene); await arcSubsDone();
+    await arcTalk(L.scene);
     await arcChoose('reconcile', 'At Mirror Lake', ARC_OPTS.reconcile(), { def: null, note: 'Sena does not look at you. She is waiting.' });
     const ch = A.choices.reconcile;
-    arcSay(L[ch]); await arcSubsDone();
+    await arcTalk(L[ch]);
     if (ch === 'afraid' && settings.romance !== 'off' && typeof romEmbrace === 'function') romEmbrace(true);   // ROM: the embrace scene
     ARCS.lake = false;
   });
@@ -8606,7 +8646,7 @@ function survRack(s, t) {
     for (const h of s.hang.filter((h) => h[1] >= 90)) give(h[0] === 'fish' ? 'driedfish' : 'dried', 1);
     s.hang = s.hang.filter((h) => h[1] < 90); bump('dried', ready); A.hit(800, 0.12, 0.3); drawInv();
   });
-  if ((S.inv.meat > 0 || S.inv.fish > 0) && s.hang.length < 4) return t('Hang meat to dry', () => {
+  if ((S.inv.meat > 0 || S.inv.fish > 0) && s.hang.length < 4) return t(S.inv.meat > 0 ? 'Hang meat to dry' : 'Hang fish to dry', () => {
     while (s.hang.length < 4 && (S.inv.meat > 0 || S.inv.fish > 0)) { const k = S.inv.meat > 0 ? 'meat' : 'fish'; S.inv[k]--; s.hang.push([k, 0]); }
     toast(slow ? 'Hung up to dry: about 3 hours, and it keeps for good (rain stops it)' : 'Hung up to dry (ready in about 90 s)'); A.hit(500, 0.1, 0.3); drawInv();
   });

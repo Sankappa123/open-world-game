@@ -164,7 +164,7 @@ let DR = null, SP = null, MIST = null, decalMat = null;
 const decals = [], decalQ = [], pieces = [], emitters = [], carcasses = [];
 function makeDrops() {
   const geo = new THREE.IcosahedronGeometry(1, 1);   // round beads (80 triangles each)
-  const mat = new THREE.MeshStandardMaterial({ color: 0x6b0907, roughness: 0.22, metalness: 0, emissive: 0x160000 });
+  const mat = new THREE.MeshStandardMaterial({ color: 0x8e0b08, roughness: 0.22, metalness: 0, emissive: 0x2a0202 });   // arterial red that still reads red at 5 m in daylight and in shade
   const m = new THREE.InstancedMesh(geo, mat, POOL.drops);
   m.frustumCulled = false; m.castShadow = false; m.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
   _m.makeScale(0, 0, 0); for (let i = 0; i < POOL.drops; i++) m.setMatrixAt(i, _m);
@@ -219,7 +219,9 @@ export function initGore(sc, heightFn, quality = 'medium') {
   ready = true; applyCaps();
 }
 export function setGore({ blood, gore, screenBlood, reduceFlash, quality } = {}) {
+  const was = cfg.blood;
   if (blood !== undefined) cfg.blood = blood !== 'off' && blood !== false;
+  if (was && !cfg.blood) bloodOffSwap();
   if (gore !== undefined && LEVEL[gore]) cfg.level = gore;
   if (screenBlood !== undefined) cfg.screen = !!screenBlood;
   if (reduceFlash !== undefined) cfg.reduceFlash = !!reduceFlash;
@@ -227,10 +229,27 @@ export function setGore({ blood, gore, screenBlood, reduceFlash, quality } = {})
   cfg.k = LEVEL[cfg.level];
   G.uGore.value = cfg.k.u; G.uBloodOn.value = cfg.blood ? 1 : 0;
   if (decalMat) decalMat.color.set(cfg.blood ? 0x4a0606 : 0x5a4632);
+  if (fleshMat) { fleshMat.color.set(cfg.blood ? 0x5a0a07 : 0x4e3d2c); fleshMat.emissive.set(cfg.blood ? 0x0c0000 : 0); }   // stump caps left from before Blood went off
   applyCaps();
   return { ...cfg };
 }
 export const goreCfg = () => cfg;
+// Blood switched off mid-game: settings always win, so what is already in the world changes too. Flying drops, mist, spurts
+// and screen blood go; blood on the ground turns to brown scuffs; severed pieces and stump caps are removed (the limb stays cut).
+function bloodOffSwap() {
+  if (!ready) return;
+  for (let i = 0; i < DR.n; i++) if (DR.live[i]) killDrop(i);
+  for (const f of MIST.list) f.s.visible = false;
+  emitters.length = 0;
+  for (let i = 0; i < SP.n; i++) if (SP.live[i] && SP.kind[i] !== 3) {
+    SP.kind[i] = 3; SP.alpha[i] = 0.7; SP.gd[i] = 0; SP.size[i] = Math.min(SP.size[i], 0.6);
+    SP.aSp.setXYZ(i, 7, SP.alpha[i], 0); splatMatrix(i); splatColor(i);
+  }
+  SP.aSp.needsUpdate = true; SP.m.instanceMatrix.needsUpdate = true; if (SP.m.instanceColor) SP.m.instanceColor.needsUpdate = true;
+  clearPieces();
+  for (const c of carcasses) c.u.uFlesh.value = 0;
+  clearScreen();
+}
 // Gore low or quality low: half the drop and splat pools, no static decals, no dismemberment.
 function lowMode() { return cfg.level === 'low' || cfg.quality === 'low'; }
 let capDrops = POOL.drops, capSplats = POOL.splats;
