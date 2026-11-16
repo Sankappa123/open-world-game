@@ -48,6 +48,7 @@ export async function loadPeople() {
   const tl = new THREE.TextureLoader();
   const skin = (f) => { const t = tl.load('/models/' + f); t.flipY = false; t.colorSpace = THREE.SRGBColorSpace; return t; };
   Object.assign(lib, { male, female, hair: { parted: hairM, beard, long: hairF, buns, buzz }, light: { male: skin('male_light.jpg'), female: skin('female_light.jpg') } });
+  lib.childSkin = childSkin('/models/male_light.jpg');   // CHILD: a child's face (no stubble, soft brows) on the male base mesh
 
   // Keep rotations only (so each body keeps its own proportions) plus the hip height, scaled per body.
   const refHip = anims.scene.getObjectByName('pelvis').position.length();
@@ -79,8 +80,11 @@ export async function loadPeople() {
   }
 }
 
-export function makeHuman({ female = false, light = false, tint = 0xffffff, hair = female ? 'long' : 'parted', beard = !female, hairColor = 0x6a5140, scale = 1 } = {}) {
-  const who = female ? 'female' : 'male';
+export function makeHuman({ female = false, light = false, tint = 0xffffff, hair = female ? 'long' : 'parted', beard = !female, hairColor = 0x6a5140, scale = 1, child = null } = {}) {
+  // CHILD: children (Lio, Pell, the village children) are built on the MALE base mesh (flat chest, no adult female shape)
+  // with child proportions from bone scales and a full tunic; see childBody below. The rig choice never follows `female`.
+  if (child) { beard = false; light = true; }
+  const who = female && !child ? 'female' : 'male';
   const model = SkeletonUtils.clone(lib[who].scene);
   const root = new THREE.Group();
   root.add(model);
@@ -92,7 +96,8 @@ export function makeHuman({ female = false, light = false, tint = 0xffffff, hair
     if (!body || o.geometry.attributes.position.count > body.geometry.attributes.position.count) body = o;
   });
   model.traverse((o) => { if (o.isSkinnedMesh && o !== body && /hair/i.test(o.material.name)) o.material.color.set(hairColor); });
-  if (light) body.material.map = lib.light[who];
+  if (light) body.material.map = child ? lib.childSkin : lib.light[who];
+  if (child) body.material.normalMap = null;                           // CHILD: no adult muscle / wrinkle relief
   body.material.color.set(tint);
   body.material.roughness = 1;
   const bones = Object.fromEntries(body.skeleton.bones.map((b) => [b.name, b]));
@@ -111,6 +116,7 @@ export function makeHuman({ female = false, light = false, tint = 0xffffff, hair
   // WPN sockets: the right hand (h.grip is an alias), the left hand, the back (spine_03) and both hips (pelvis).
   const sock = {};
   for (const [slot, b] of Object.entries(SLOT_BONE)) { sock[slot] = new THREE.Group(); sock[slot].name = 'sock_' + slot; bones[b].add(sock[slot]); }
+  const kid = child ? childBody(model, body, bones, CHILD[child] || CHILD.girl) : null;   // CHILD: proportions + clothes, before the scale
   const grip = sock.hand;
   const spear = makeSpear(), axe = makeAxe();
   spear.userData.kind = 'spear'; axe.userData.kind = 'axe';
@@ -128,8 +134,29 @@ export function makeHuman({ female = false, light = false, tint = 0xffffff, hair
   let shot = null, shotW = 0, shotKey = null, fading = null;
 
   // pose: a loop that overrides the movement state; straddle spreads the legs (riding behind); lie is read by settle() in main
-  const h = { root, spear, axe, grip, sock, bones, who, crouch: 0, pose: null, straddle: false, lie: false, has: (k) => !!act[k] || !!lib.clips[who]?.[k], overrides: [], blends: [], gripR: 0, gripL: 0 };
+  const h = { root, spear, axe, grip, sock, bones, who, kid, crouch: 0, pose: null, straddle: false, lie: false, has: (k) => !!act[k] || !!lib.clips[who]?.[k], overrides: [], blends: [], gripR: 0, gripL: 0 };
   // Bone overrides run after mixer.update, sorted by order (10 body, 15 stance, 20 fingers, 30 IK, 40 additive).
+  // CHILD: the clips' hip height, for the shorter legs; and a child's carriage: the chest eases back a little (the
+  // tummy leads, not the chest), and the adult clips carry the head forward over the chest, which on a big child's head
+  // reads as a stoop, so the neck and head tip back.
+  if (kid) h.overrides.push({ id: 'childHip', order: 1, fn: (hh) => {
+    hh.bones.pelvis.position.multiplyScalar(kid.legK);
+    if (hh.kidLie) {                                                   // asleep: lying straight, legs together (under her own cover)
+      for (const [b, q] of kid.restQ) hh.bones[b].quaternion.copy(q);
+      // the feet relax: the toes fall forward toward the foot of the bed (in the bind pose they point straight up, and
+      // the wrapped feet stood up under her cover). The turn's sign is found once, from where the toes go.
+      _cq.setFromRotationMatrix(_cm.extractRotation(root.matrixWorld)); _cax.set(1, 0, 0).applyQuaternion(_cq);
+      for (const sd of ['l', 'r']) {
+        const f = hh.bones['foot_' + sd], t = hh.bones['ball_' + sd]; if (!f || !t) continue;
+        if (!kid.footSign) { const y0 = t.getWorldPosition(_cv1).y; rotWorld(f, _cax, 0.3); const y1 = t.getWorldPosition(_cv1).y; f.quaternion.copy(kid.restQ.find(([b]) => b === 'foot_' + sd)[1]); kid.footSign = y1 < y0 ? 1 : -1; }
+        rotWorld(f, _cax, 0.85 * kid.footSign);
+      }
+      return;
+    }
+    if (hh.lie || hh.pose === 'sit') return;
+    _cq.setFromRotationMatrix(_cm.extractRotation(root.matrixWorld)); _cax.set(1, 0, 0).applyQuaternion(_cq);
+    for (const [b, a] of [['spine_02', -0.03], ['spine_03', -0.03], ['neck_01', -0.24], ['Head', -0.08]]) rotWorld(hh.bones[b], _cax, a);
+  } });
   h.removeOverride = (id) => { const i = h.overrides.findIndex((o) => o.id === id); if (i >= 0) h.overrides.splice(i, 1); };
   h.addOverride = (id, order, fn) => { h.removeOverride(id); h.overrides.push({ id, order, fn }); h.overrides.sort((a, b) => a.order - b.order); };
   // timeScale is optional (default 1.5 for 'use', 1.7 otherwise). Keys ending in U are upper-body only.
@@ -257,4 +284,541 @@ function ikChain(A, B, C, target, pole, w) {
   aimBone(A, _f.copy(_b).sub(_a), _g.copy(_e).sub(_a), w);
   B.getWorldPosition(_b); C.getWorldPosition(_c);
   aimBone(B, _f.copy(_c).sub(_b), _g.copy(_a).addScaledVector(_n, d).sub(_b), w);
+}
+
+// ---------- CHILD: children's bodies and clothes ----------
+// GUARDRAIL (CLAUDE.md content limits): children are never sexualised or shown in revealing clothing. A child is the
+// male base mesh (flat chest) with child proportions from per-bone scales (a big head, short neck, narrow shoulders,
+// short limbs), a cleaned-up face texture, and a modest garment that covers the shoulders to the knees: a fitted tunic
+// shell grown from the body's own skinned vertices (so it follows every animation), a rolled collar, a flared
+// knee-length skinned skirt, and foot wraps. The base mesh's painted underwear is entirely under the tunic shell.
+// The body itself is remodelled into a young child's (childGeo): slight soft limbs and a round, soft child's face.
+// head/neck/arms/legs/spine: bone scales; legK also scales the clips' hip height (the 'childHip' override).
+export const CHILD = {
+  girl: { head: 1.52, headShape: [1.06, 0.97, 1.04], hand: 0.82, neck: 0.7, clav: 0.78, arms: 0.82, legs: 0.78, spine: 0.95, chest: 0.9, tunic: 0x9a5236, wrap: 0x5e4430, skirt: 1 },
+  boy: { head: 1.46, headShape: [1.05, 0.97, 1.03], hand: 0.84, neck: 0.72, clav: 0.8, arms: 0.84, legs: 0.8, spine: 0.96, chest: 0.91, tunic: 0x6e6448, wrap: 0x4e3a28, skirt: 0.7 },
+};
+const _cv1 = new THREE.Vector3(), _cv2 = new THREE.Vector3(), _cm = new THREE.Matrix4(), _cq = new THREE.Quaternion(), _cax = new THREE.Vector3(), _cq2 = new THREE.Quaternion(), _cq3 = new THREE.Quaternion();
+function rotWorld(bone, axis, ang) {                                   // turn a bone about a world axis (children follow)
+  bone.getWorldQuaternion(_cq2); bone.parent.getWorldQuaternion(_cq3);
+  bone.quaternion.copy(_cq3.invert().multiply(_cq2.premultiply(new THREE.Quaternion().setFromAxisAngle(axis, ang))));
+  bone.updateWorldMatrix(false, true);
+}
+// Vertex normals averaged across UV seams (split vertices at one position), so a remodelled mesh shows no seam lines.
+function weldNormals(g) {
+  g.computeVertexNormals();
+  const p = g.attributes.position, nr = g.attributes.normal, acc = new Map(), q = 1e4 / Math.max(1e-6, g.boundingSphere?.radius || 1);
+  const k = (i) => Math.round(p.getX(i) * q) + ',' + Math.round(p.getY(i) * q) + ',' + Math.round(p.getZ(i) * q);
+  for (let i = 0; i < p.count; i++) { const kk = k(i); let a = acc.get(kk); if (!a) acc.set(kk, (a = [0, 0, 0])); a[0] += nr.getX(i); a[1] += nr.getY(i); a[2] += nr.getZ(i); }
+  for (let i = 0; i < p.count; i++) { const a = acc.get(k(i)), l = Math.hypot(a[0], a[1], a[2]) || 1; nr.setXYZ(i, a[0] / l, a[1] / l, a[2] / l); }
+  nr.needsUpdate = true;
+}
+function childBody(model, body, bones, cfg) {
+  model.updateMatrixWorld(true);
+  const bw = (n) => bones[n].getWorldPosition(new THREE.Vector3());
+  const bind = { spine3: bw('spine_03').y, foot: bw('foot_l').y, pelvis: bw('pelvis'), spine1: bw('spine_01').y, thigh: bw('thigh_l').y, knee: bw('calf_l').y };
+  const b0 = Object.fromEntries(Object.keys(bones).map((k) => [k, bw(k)]));   // the unscaled bind pose
+  const g0 = body.geometry, pos = g0.attributes.position, si = g0.attributes.skinIndex, sw = g0.attributes.skinWeight;
+  const names = body.skeleton.bones.map((b) => b.name), n = pos.count, main = new Array(n);
+  for (let i = 0; i < n; i++) {
+    let best = 0, bi = 0;
+    for (let k = 0; k < 4; k++) { const w = sw.getComponent(i, k); if (w > best) { best = w; bi = si.getComponent(i, k); } }
+    main[i] = names[bi] || '';
+  }
+  const headC = (() => {                                              // the head's centre relative to its bone (bind pose)
+    const hb = body.skeleton.bones.indexOf(bones.Head);
+    const c = new THREE.Vector3(); let m = 0;
+    for (let i = 0; i < n; i++) { let w = 0; for (let k = 0; k < 4; k++) if (si.getComponent(i, k) === hb) w += sw.getComponent(i, k); if (w < 0.9) continue; c.add(_cv1.fromBufferAttribute(pos, i).applyMatrix4(body.matrixWorld)); m++; }
+    return m ? c.divideScalar(m).sub(bw('Head')) : null;
+  })();
+  // 0. the child's own body shape (shared per child type): slight soft limbs, a young child's face (childGeo)
+  const cache = (cfg._geo ||= {});
+  const cg = cache.body ||= childGeo(g0, main, model, body, b0);
+  body.geometry = cg;
+  model.traverse((o) => {
+    if (!o.isSkinnedMesh) return;
+    if (/eyebrow/i.test(o.name)) o.visible = false;                   // no adult brows: faint ones are painted in the skin (childSkin)
+    if (/^eyes$/i.test(o.name) && cg.userData.eyes) o.geometry = cg.userData.eyes;   // the larger eyes
+  });
+  // No shadows received on the bare skin. The sun's large normal bias (world.js, 0.4 m) moves each shadow lookup 40 cm
+  // out along the normal, which on the child's enlarged head lands inside the head's own shadow: hard, dithered dark
+  // patches over the brow, round the eyes and down a cheek (read as bruises), and a shadowed neck under a pale face.
+  // The skin is evenly lit at every hour; the clothes still take shadows.
+  model.traverse((o) => { if (o.isSkinnedMesh && (o === body || /^eyes$/i.test(o.name))) o.receiveShadow = false; });
+  // 1. proportions. Scales cascade down the chain, so the head's own scale is divided by the neck's.
+  const set = (n, s) => { if (bones[n]) Array.isArray(s) ? bones[n].scale.set(...s) : bones[n].scale.setScalar(s); };
+  set('spine_01', cfg.spine);
+  set('spine_03', cfg.chest);                                         // a slighter ribcage (uniform: a non-uniform parent scale shears the head)
+  set('neck_01', cfg.neck / cfg.chest); set('Head', cfg.headShape.map((k) => k * cfg.head / cfg.neck));   // a rounder, shorter face (Head has no child bones: no shear)
+  set('hand_l', cfg.hand); set('hand_r', cfg.hand);
+  for (const sd of ['l', 'r']) { set('clavicle_' + sd, cfg.clav / cfg.chest); set('upperarm_' + sd, cfg.arms / cfg.clav); set('thigh_' + sd, cfg.legs); }   // narrow shoulders, short limbs
+  bones.pelvis.position.multiplyScalar(cfg.legs);                    // the rest pose stands on the shorter legs too
+  model.updateMatrixWorld(true);
+  // the head grows about its bone (the base of the skull), which pushed the face forward over the chest (a stoop):
+  // slide the Head bone back so the larger head sits balanced over the neck
+  if (headC) {
+    const h1 = bones.Head.getWorldPosition(new THREE.Vector3()), k = cfg.head * cfg.spine - 1;
+    h1.z -= headC.z * k * 1.15;
+    bones.Head.position.copy(bones.neck_01.worldToLocal(h1));
+    model.updateMatrixWorld(true);
+  }
+
+  // 2. the tunic shell and the foot wraps: copies of the child body mesh, pushed out along the normals, keeping only the
+  // triangles whose vertices are mostly driven by the covered bones. They share the body's skeleton and skin weights.
+  body.updateWorldMatrix(true, false);
+  const wy = new Float32Array(n);                                     // bind-pose world height of each vertex
+  for (let i = 0; i < n; i++) wy[i] = _cv1.fromBufferAttribute(pos, i).applyMatrix4(body.matrixWorld).y;
+  const unit = 1 / _cv2.setFromMatrixScale(body.matrixWorld).x;      // world metres -> mesh units
+  const TUNIC = /^(pelvis|spine_0[123]|clavicle_[lr]|upperarm_[lr]|thigh_[lr])$/;
+  // Cloth, not skin: the shell is welded (UV seams), Taubin-smoothed (the muscle sculpt and grooves are filled in, no
+  // shrinking), then held at least `off` out from the body everywhere; the cut edges stay put.
+  // The geometries depend only on the child type, so they are built once per type and shared (CHILD[type]._geo).
+  const shell = (key, keep, off, color, passes = 0, hang = null) => {
+    let g = cache[key];
+    if (!g) {
+    g = cg.clone(); const p = g.attributes.position, nr = g.attributes.normal;
+    const src = g.index ? g.index.array : Array.from({ length: n }, (_, i) => i), idx = [];
+    for (let t = 0; t < src.length; t += 3) if (keep(src[t]) && keep(src[t + 1]) && keep(src[t + 2])) idx.push(src[t], src[t + 1], src[t + 2]);
+    const q = 0.0005 * unit, gid = new Int32Array(n).fill(-1), key = new Map(); let G = 0;
+    for (const i of idx) if (gid[i] < 0) { const k = Math.round(p.getX(i) / q) + ',' + Math.round(p.getY(i) / q) + ',' + Math.round(p.getZ(i) / q); let v = key.get(k); if (v === undefined) { v = G++; key.set(k, v); } gid[i] = v; }
+    const gp = new Float64Array(G * 3), gn = new Float64Array(G * 3), go = new Float64Array(G), cnt = new Float64Array(G), nb = Array.from({ length: G }, () => new Set()), edge = new Map();
+    for (let i = 0; i < n; i++) { const v = gid[i]; if (v < 0 || cnt[v]) { if (v >= 0) { gn[v * 3] += nr.getX(i); gn[v * 3 + 1] += nr.getY(i); gn[v * 3 + 2] += nr.getZ(i); } continue; } cnt[v] = 1; gp[v * 3] = p.getX(i); gp[v * 3 + 1] = p.getY(i); gp[v * 3 + 2] = p.getZ(i); gn[v * 3] = nr.getX(i); gn[v * 3 + 1] = nr.getY(i); gn[v * 3 + 2] = nr.getZ(i); go[v] = off(i) * unit; }
+    for (let v = 0; v < G; v++) { const l = Math.hypot(gn[v * 3], gn[v * 3 + 1], gn[v * 3 + 2]) || 1; gn[v * 3] /= l; gn[v * 3 + 1] /= l; gn[v * 3 + 2] /= l; }
+    for (let t = 0; t < idx.length; t += 3) for (let e = 0; e < 3; e++) {
+      const a = gid[idx[t + e]], b = gid[idx[t + (e + 1) % 3]]; if (a === b) continue;
+      nb[a].add(b); nb[b].add(a); const k = a < b ? a + ':' + b : b + ':' + a; edge.set(k, (edge.get(k) || 0) + 1);
+    }
+    const fixed = new Uint8Array(G); for (const [k, c] of edge) if (c === 1) { const [a, b] = k.split(':'); fixed[+a] = fixed[+b] = 1; }
+    const base = gp.slice(), cur = gp.slice(), tmp = new Float64Array(G * 3);
+    for (let v = 0; v < G; v++) for (let c = 0; c < 3; c++) cur[v * 3 + c] += gn[v * 3 + c] * go[v];
+    for (let it = 0; it < passes * 2; it++) {
+      const lam = it % 2 ? -0.53 : 0.5;
+      for (let v = 0; v < G; v++) {
+        if (fixed[v] || !nb[v].size) { tmp.set(cur.subarray(v * 3, v * 3 + 3), v * 3); continue; }
+        let x = 0, y = 0, z = 0; for (const u of nb[v]) { x += cur[u * 3]; y += cur[u * 3 + 1]; z += cur[u * 3 + 2]; }
+        const k = nb[v].size; tmp[v * 3] = cur[v * 3] + lam * (x / k - cur[v * 3]); tmp[v * 3 + 1] = cur[v * 3 + 1] + lam * (y / k - cur[v * 3 + 1]); tmp[v * 3 + 2] = cur[v * 3 + 2] + lam * (z / k - cur[v * 3 + 2]);
+      }
+      cur.set(tmp);
+    }
+    for (let v = 0; v < G; v++) {                                     // never closer to the body than its offset
+      const d = (cur[v * 3] - base[v * 3]) * gn[v * 3] + (cur[v * 3 + 1] - base[v * 3 + 1]) * gn[v * 3 + 1] + (cur[v * 3 + 2] - base[v * 3 + 2]) * gn[v * 3 + 2];
+      if (d < go[v]) for (let c = 0; c < 3; c++) cur[v * 3 + c] += gn[v * 3 + c] * (go[v] - d);
+    }
+    if (hang) {                                                       // world-space shaping (the smock front), then back to mesh space
+      const inv = new THREE.Matrix4().copy(body.matrixWorld).invert(), nm = new THREE.Matrix3().getNormalMatrix(body.matrixWorld), wn = new THREE.Vector3(), W = [];
+      for (let v = 0; v < G; v++) W.push(_cv1.set(cur[v * 3], cur[v * 3 + 1], cur[v * 3 + 2]).applyMatrix4(body.matrixWorld).clone());
+      const ctx = hang.prep(W);
+      for (let v = 0; v < G; v++) {
+        wn.set(gn[v * 3], gn[v * 3 + 1], gn[v * 3 + 2]).applyMatrix3(nm).normalize();
+        if (!fixed[v] && hang.fn(W[v], wn, ctx, v)) { W[v].applyMatrix4(inv); cur[v * 3] = W[v].x; cur[v * 3 + 1] = W[v].y; cur[v * 3 + 2] = W[v].z; }
+      }
+    }
+    for (let i = 0; i < n; i++) { const v = gid[i]; if (v >= 0) p.setXYZ(i, cur[v * 3], cur[v * 3 + 1], cur[v * 3 + 2]); }
+    g.setIndex(idx); g.computeBoundingSphere(); weldNormals(g);
+    cache[key] = g;
+    }
+    const m = new THREE.SkinnedMesh(g, new THREE.MeshStandardMaterial({ color, roughness: 1, metalness: 0, map: weave(), side: THREE.DoubleSide }));   // both sides: no see-through at the cut edges
+    m.castShadow = true; m.receiveShadow = true; m.frustumCulled = false;
+    m.position.copy(body.position); m.quaternion.copy(body.quaternion); m.scale.copy(body.scale);
+    body.parent.add(m); m.bind(body.skeleton, body.bindMatrix);
+    return m;
+  };
+  // the smock front: from the most forward point of the chest the cloth falls straight down (a slight A-line) past the
+  // waist to the hips, so the front is one flat, straight line: no waist shaping, no curve above a waist, no belt
+  const yC = (b0.spine_03.y + b0.neck_01.y) / 2, yB = bind.thigh;  // bind (unscaled) heights: the shell is built in the bind shape
+  const smock = { prep: (W) => { let zM = -1e9, yM = yC; for (const w of W) if (w.y < yC && w.y > yB && Math.abs(w.x) < 0.1 && w.z > zM) { zM = w.z; yM = w.y; } return [zM, yM]; },
+    fn: (w, wn, [zM, yM]) => { if (w.y > yM || w.y < yB || wn.z < 0.1 || Math.abs(w.x) > 0.17) return false; const t = Math.min(1, (yM - w.y) / 0.03), zt = zM + (yM - w.y) * 0.05 - Math.max(0, Math.abs(w.x) - 0.06) * 0.25; if (w.z >= zt) return false; w.z += (zt - w.z) * t * Math.min(1, wn.z * 2); return true; } };
+  const tunic = shell('tunic', (i) => TUNIC.test(main[i]), (i) => (/^thigh/.test(main[i]) ? 0.008 : /^upperarm/.test(main[i]) ? 0.014 : 0.02), cfg.tunic, 30, smock);
+  const wrapTop = bind.foot + 0.1;
+  const wraps = shell('wraps', (i) => /^(foot|ball)_/.test(main[i]) || (/^calf_/.test(main[i]) && wy[i] < wrapTop), () => 0.01, cfg.wrap, 3);
+  tunic.name = 'childTunic'; wraps.name = 'childWraps';
+
+  // 3. the hems: a soft rolled band over each of the tunic's open cut edges (the neck, and both short sleeves), skinned
+  // like the tunic edge under it, so no cut edge shows its triangle steps (a ragged, torn-looking hem)
+  const tg = tunic.geometry, tp = tg.attributes.position, tIdx = tg.index.array, edgeN = new Map();
+  for (let t = 0; t < tIdx.length; t += 3) for (let e = 0; e < 3; e++) { const x = tIdx[t + e], y = tIdx[t + (e + 1) % 3]; const k = x < y ? x + ':' + y : y + ':' + x; edgeN.set(k, (edgeN.get(k) || 0) + 1); }
+  const edgeV = []; { const seen = new Set(); for (const [k, c] of edgeN) if (c === 1) for (const i of k.split(':').map(Number)) if (!seen.has(i)) { seen.add(i); edgeV.push([new THREE.Vector3().fromBufferAttribute(tp, i).applyMatrix4(body.matrixWorld), i]); } }
+  // band(key, ring, axis, e1, e2, th): ring = [[world pos, vertex]] round the axis; per bearing (about the axis, in the
+  // e1/e2 plane) the edge's reach and its range along the axis, widened to the neighbouring bearings' extremes and then
+  // smoothed, so the band covers every step of the cut
+  const band = (key, ring, ax, e1, e2, th, shade) => {
+    if (ring.length < 6) return null;
+    const c = new THREE.Vector3(); for (const [v] of ring) c.add(v); c.divideScalar(ring.length);
+    const SEGc = 36, BR = new Float64Array(SEGc), LO = new Float64Array(SEGc).fill(1e9), HI = new Float64Array(SEGc).fill(-1e9), NI = new Int32Array(SEGc).fill(-1), ND = new Float64Array(SEGc).fill(1e9), d3 = new THREE.Vector3();
+    for (const [v, i] of ring) {
+      d3.subVectors(v, c); const s = d3.dot(ax), p1 = d3.dot(e1), p2 = d3.dot(e2);
+      const b = Math.atan2(p2, p1), k = ((Math.round(b / (Math.PI * 2) * SEGc) % SEGc) + SEGc) % SEGc, r = Math.hypot(p1, p2);
+      BR[k] = Math.max(BR[k], r); LO[k] = Math.min(LO[k], s); HI[k] = Math.max(HI[k], s);
+      const d = Math.abs(Math.atan2(Math.sin(b - k / SEGc * Math.PI * 2), Math.cos(b - k / SEGc * Math.PI * 2))); if (d < ND[k]) { ND[k] = d; NI[k] = i; }
+    }
+    for (let pass = 0; pass < 2; pass++) for (let k = 0; k < SEGc; k++) {   // fill empty bearings from their neighbours
+      if (NI[k] >= 0) continue;
+      for (let d = 1; d < SEGc / 2; d++) { const j = [(k + d) % SEGc, (k - d + SEGc) % SEGc].find((q) => NI[q] >= 0); if (j !== undefined) { BR[k] = BR[j]; LO[k] = LO[j]; HI[k] = HI[j]; NI[k] = NI[j]; break; } }
+    }
+    const widen = (A, f) => { const B = A.slice(); for (let k = 0; k < SEGc; k++) A[k] = f(B[(k + SEGc - 1) % SEGc], B[k], B[(k + 1) % SEGc]); };
+    widen(BR, Math.max); widen(LO, Math.min); widen(HI, Math.max);
+    const smooth = (A, it) => { for (let t = 0; t < it; t++) { const B = A.slice(); for (let k = 0; k < SEGc; k++) A[k] = (B[(k + SEGc - 1) % SEGc] + 2 * B[k] + B[(k + 1) % SEGc]) / 4; } };
+    for (let k = 0; k < SEGc; k++) BR[k] = Math.max(BR[k], 0.03);
+    smooth(BR, 3); smooth(LO, 3); smooth(HI, 3);
+    let g = cache[key];
+    if (!g) {
+      const cv = [], cuv = [], csi = [], csw = [], cix = [], RAD = 8, inv = new THREE.Matrix4().copy(body.matrixWorld).invert(), L = new THREE.Vector3();
+      for (let k = 0; k <= SEGc; k++) {
+        const kk = k % SEGc, a = kk / SEGc * Math.PI * 2, o1 = Math.cos(a), o2 = Math.sin(a), lo = LO[kk] - 0.006, hi = Math.max(HI[kk], LO[kk] + 0.012) + 0.005, mid = (lo + hi) / 2, hh = (hi - lo) / 2;
+        for (let r = 0; r <= RAD; r++) {                               // a rounded section: out over the cut and back in
+          const b = (r / RAD) * Math.PI * 2, rr = BR[kk] - 0.002 + (Math.cos(b) * 0.5 + 0.5) * th, s = mid + Math.sin(b) * hh;
+          L.copy(c).addScaledVector(ax, s).addScaledVector(e1, o1 * rr).addScaledVector(e2, o2 * rr).applyMatrix4(inv); cv.push(L.x, L.y, L.z); cuv.push(k / SEGc * 6, r / RAD);
+          for (let q = 0; q < 4; q++) { csi.push(tg.attributes.skinIndex.getComponent(NI[kk], q)); csw.push(tg.attributes.skinWeight.getComponent(NI[kk], q)); }
+        }
+      }
+      for (let k = 0; k < SEGc; k++) for (let r = 0; r < RAD; r++) { const a = k * (RAD + 1) + r, b = a + RAD + 1; cix.push(a, b, a + 1, a + 1, b, b + 1); }
+      g = cache[key] = new THREE.BufferGeometry();
+      g.setAttribute('position', new THREE.Float32BufferAttribute(cv, 3)); g.setAttribute('uv', new THREE.Float32BufferAttribute(cuv, 2)); g.setAttribute('skinIndex', new THREE.Uint16BufferAttribute(csi, 4)); g.setAttribute('skinWeight', new THREE.Float32BufferAttribute(csw, 4)); g.setIndex(cix); g.computeVertexNormals();
+    }
+    const m = new THREE.SkinnedMesh(g, new THREE.MeshStandardMaterial({ color: new THREE.Color(cfg.tunic).multiplyScalar(shade), roughness: 1, metalness: 0, side: THREE.DoubleSide, map: weave() }));
+    m.castShadow = true; m.receiveShadow = true; m.frustumCulled = false; m.name = key === 'collar' ? 'childCollar' : 'childCuff';
+    m.position.copy(body.position); m.quaternion.copy(body.quaternion); m.scale.copy(body.scale);
+    body.parent.add(m); m.bind(body.skeleton, body.bindMatrix);
+    return m;
+  };
+  const neckW = b0.neck_01;                                            // the cut edge's vertices around the neck (bind world)
+  const collar = band('collar', edgeV.filter(([v]) => v.distanceTo(neckW) < 0.14 && Math.abs(v.x - neckW.x) < 0.11), new THREE.Vector3(0, 1, 0), new THREE.Vector3(0, 0, 1), new THREE.Vector3(1, 0, 0), 0.013, 0.82);
+  const cuffs = ['l', 'r'].map((sd) => {                               // the short sleeves' hems, round the upper arm's axis
+    const A = b0['upperarm_' + sd], B = b0['lowerarm_' + sd], ax = new THREE.Vector3().subVectors(B, A), len = ax.length(); ax.normalize();
+    const e1 = new THREE.Vector3(0, 1, 0).addScaledVector(ax, -ax.y).normalize(), e2 = new THREE.Vector3().crossVectors(ax, e1);
+    const d3 = new THREE.Vector3(), ring = edgeV.filter(([v]) => { d3.subVectors(v, A); const s = d3.dot(ax); return s > len * 0.3 && s < len * 1.1 && d3.addScaledVector(ax, -s).length() < 0.1; });
+    return band('cuff_' + sd, ring, ax, e1, e2, 0.009, 0.86);
+  });
+
+  // 4. the skirt: an open, flared, elliptical tube from the waist to the knee. It is skinned: the top on the pelvis, the
+  // lower sides partly on the thighs, so it swings with each stride and opens over a horse's back instead of the legs
+  // pressing through it. Built in the child's (scaled) rest pose with its own bind inverses. Sized from the body's hips.
+  const ext = (y0, y1) => {                                            // half-widths of the hips/waist band (bind pose)
+    let rx = 0, rz0 = 1e9, rz1 = -1e9;
+    for (let i = 0; i < n; i++) {
+      if (wy[i] < y0 || wy[i] > y1 || !/^(pelvis|thigh_[lr]|spine_01)$/.test(main[i])) continue;
+      _cv1.fromBufferAttribute(pos, i).applyMatrix4(body.matrixWorld);
+      rx = Math.max(rx, Math.abs(_cv1.x - bind.pelvis.x)); rz0 = Math.min(rz0, _cv1.z); rz1 = Math.max(rz1, _cv1.z);
+    }
+    return [rx, (rz1 - rz0) / 2, (rz1 + rz0) / 2];
+  };
+  const hip = ext(bind.thigh - 0.06, bind.thigh + 0.02), waist = ext(bind.spine1 - 0.03, bind.spine1 + 0.03);
+  const P0 = bw('pelvis'), yW = bw('spine_01').y - 0.02, yH = Math.min(P0.y - 0.04, bw('thigh_l').y - 0.03), yK = bw('calf_l').y + 0.03;
+  const cz = hip[2], fl = cfg.skirt;
+  const rings = [[yW, waist[0] + 0.02, waist[1] + 0.02], [yH, hip[0] + 0.05, hip[1] + 0.055]];
+  for (let r = 1; r <= 4; r++) { const t = r / 4; rings.push([yH + (yK - yH) * t, hip[0] + 0.05 + (0.012 + 0.07 * fl) * t, hip[1] + 0.055 + (0.025 + 0.07 * fl) * t]); }
+  const SEG = 32, vs = [], uv = [], ssi = [], ssw = [];
+  const bi = (nm) => body.skeleton.bones.indexOf(bones[nm]), iP = bi('pelvis'), iL = bi('thigh_l'), iR = bi('thigh_r');
+  const lSide = Math.sign(bw('thigh_l').x - P0.x) || 1;
+  body.parent.updateMatrixWorld(true);
+  for (const [y, rx, rz] of rings) for (let k = 0; k <= SEG; k++) {
+    const a = (k / SEG) * Math.PI * 2, x = Math.sin(a) * rx, z = cz + Math.cos(a) * rz;
+    const L = body.parent.worldToLocal(new THREE.Vector3(P0.x + x, y, z)); vs.push(L.x, L.y, L.z); uv.push(k / SEG * 3, (y - yK) * 6);
+    const t = Math.max(0, Math.min(1, (yH - y) / (yH - yK))), f = Math.min(1, Math.abs(x) / rx * 1.5), wT = Math.pow(t, 0.9) * 0.82 * f;
+    ssi.push(iP, Math.sign(x) === lSide ? iL : iR, 0, 0); ssw.push(1 - wT, wT, 0, 0);
+  }
+  const ix = [];
+  for (let r = 0; r < rings.length - 1; r++) for (let k = 0; k < SEG; k++) { const a = r * (SEG + 1) + k, b = a + SEG + 1; ix.push(a, b, a + 1, a + 1, b, b + 1); }
+  const sg = cache.skirt || new THREE.BufferGeometry();
+  if (!cache.skirt) { cache.skirt = sg; sg.setAttribute('position', new THREE.Float32BufferAttribute(vs, 3)); sg.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2)); sg.setAttribute('skinIndex', new THREE.Uint16BufferAttribute(ssi, 4)); sg.setAttribute('skinWeight', new THREE.Float32BufferAttribute(ssw, 4)); sg.setIndex(ix); sg.computeVertexNormals(); }
+  const skirt = new THREE.SkinnedMesh(sg, new THREE.MeshStandardMaterial({ color: cfg.tunic, roughness: 1, metalness: 0, side: THREE.DoubleSide, map: weave() }));
+  skirt.castShadow = true; skirt.receiveShadow = true; skirt.frustumCulled = false; skirt.name = 'childSkirt';
+  body.parent.add(skirt); skirt.updateMatrixWorld(true);
+  skirt.bind(new THREE.Skeleton(body.skeleton.bones));                // inverses from the child's own rest pose (now)
+  const restQ = ['thigh_l', 'thigh_r', 'calf_l', 'calf_r', 'foot_l', 'foot_r'].map((b) => [b, bones[b].quaternion.clone()]);   // the bind pose: straight legs
+  return { legK: cfg.legs, tunic, wraps, skirt, collar, cuffs, restQ };
+}
+
+// CHILD: the male base mesh remodelled into a young child's body (in the bind pose; the skin weights are kept, so every
+// clip still drives it). Arms: drawn in toward the bone line (slight limbs) and smoothed (no sculpted biceps or forearm
+// muscle). Calves: smoothed. Head: the adult features (brow ridge, cheekbones, the sharp nose, the jaw angle) are
+// smoothed away, the lower face is shortened (a short chin; the eyes sit lower in the head), the cheeks are filled out,
+// the eyes are enlarged, and the mouth is closed. b0 = bone positions in the unscaled bind pose (world).
+let lineN = [], headGid = null;                                       // childGeo: the mouth line's normal sources (head weld ids)
+function childGeo(g0, main, model, body, b0) {
+  lineN = []; headGid = null;
+  const g = g0.clone(), p = g.attributes.position, n = p.count, src = g.index ? g.index.array : Array.from({ length: n }, (_, i) => i);
+  const W = new Float64Array(n * 3);
+  for (let i = 0; i < n; i++) { _cv1.fromBufferAttribute(p, i).applyMatrix4(body.matrixWorld); W[i * 3] = _cv1.x; W[i * 3 + 1] = _cv1.y; W[i * 3 + 2] = _cv1.z; }
+  // weld a vertex selection (UV seams split vertices), with its neighbours; vertices touching unselected ones are fixed
+  const weld = (sel) => {
+    const q = 0.0004, gid = new Int32Array(n).fill(-1), key = new Map(); let G = 0;
+    for (let i = 0; i < n; i++) { if (!sel(i)) continue; const k = Math.round(W[i * 3] / q) + ',' + Math.round(W[i * 3 + 1] / q) + ',' + Math.round(W[i * 3 + 2] / q); let v = key.get(k); if (v === undefined) { v = G++; key.set(k, v); } gid[i] = v; }
+    const cur = new Float64Array(G * 3), fixed = new Uint8Array(G), nb = Array.from({ length: G }, () => new Set());
+    for (let i = 0; i < n; i++) { const v = gid[i]; if (v >= 0) { cur[v * 3] = W[i * 3]; cur[v * 3 + 1] = W[i * 3 + 1]; cur[v * 3 + 2] = W[i * 3 + 2]; } }
+    for (let t = 0; t < src.length; t += 3) {
+      const a = src[t], b = src[t + 1], c = src[t + 2];
+      if (gid[a] < 0 || gid[b] < 0 || gid[c] < 0) { for (const x of [a, b, c]) if (gid[x] >= 0) fixed[gid[x]] = 1; continue; }
+      for (const [x, y] of [[a, b], [b, c], [c, a]]) if (gid[x] !== gid[y]) { nb[gid[x]].add(gid[y]); nb[gid[y]].add(gid[x]); }
+    }
+    return { gid, G, cur, fixed, nb };
+  };
+  const taubin = (R, passes, pin = null) => {                          // volume-keeping smoothing; fixed / pinned stay put
+    const { G, cur, fixed, nb } = R, tmp = new Float64Array(G * 3);
+    for (let it = 0; it < passes * 2; it++) {
+      const lam = it % 2 ? -0.53 : 0.5;
+      for (let v = 0; v < G; v++) {
+        if (fixed[v] || (pin && pin[v]) || !nb[v].size) { tmp[v * 3] = cur[v * 3]; tmp[v * 3 + 1] = cur[v * 3 + 1]; tmp[v * 3 + 2] = cur[v * 3 + 2]; continue; }
+        let x = 0, y = 0, z = 0; for (const u of nb[v]) { x += cur[u * 3]; y += cur[u * 3 + 1]; z += cur[u * 3 + 2]; }
+        const k = nb[v].size; tmp[v * 3] = cur[v * 3] + lam * (x / k - cur[v * 3]); tmp[v * 3 + 1] = cur[v * 3 + 1] + lam * (y / k - cur[v * 3 + 1]); tmp[v * 3 + 2] = cur[v * 3 + 2] + lam * (z / k - cur[v * 3 + 2]);
+      }
+      cur.set(tmp);
+    }
+  };
+  const back = (R) => { for (let i = 0; i < n; i++) { const v = R.gid[i]; if (v >= 0) { W[i * 3] = R.cur[v * 3]; W[i * 3 + 1] = R.cur[v * 3 + 1]; W[i * 3 + 2] = R.cur[v * 3 + 2]; } } };
+  const ss = (a, b, x) => { const t = Math.min(1, Math.max(0, (x - a) / (b - a))); return t * t * (3 - 2 * t); };
+
+  // ARMS: slight, soft limbs
+  for (const sd of ['l', 'r']) {
+    const A = b0['upperarm_' + sd], B = b0['lowerarm_' + sd], C = b0['hand_' + sd], lAB = A.distanceTo(B), lBC = B.distanceTo(C);
+    const re = new RegExp('^(upperarm|lowerarm)_' + sd + '$'), Q = new THREE.Vector3(), P = new THREE.Vector3(), seg = new THREE.Line3();
+    const R = weld((i) => re.test(main[i]));
+    for (let v = 0; v < R.G; v++) {
+      if (R.fixed[v]) continue;
+      P.set(R.cur[v * 3], R.cur[v * 3 + 1], R.cur[v * 3 + 2]);
+      seg.set(A, B); const t1 = seg.closestPointToPointParameter(P, true); seg.at(t1, Q); let d = P.distanceTo(Q), s = t1 * lAB, q = Q.clone();
+      seg.set(B, C); const t2 = seg.closestPointToPointParameter(P, true); seg.at(t2, Q); if (P.distanceTo(Q) < d) { s = lAB + t2 * lBC; q = Q; }
+      const k = 1 - 0.24 * ss(0.02, 0.1, s);                          // drawn in, but not at the shoulder (the tunic sleeve)
+      R.cur[v * 3] = q.x + (P.x - q.x) * k; R.cur[v * 3 + 1] = q.y + (P.y - q.y) * k; R.cur[v * 3 + 2] = q.z + (P.z - q.z) * k;
+    }
+    taubin(R, 18); back(R);
+  }
+  // CALVES (bare below the hem): smoothed
+  { const R = weld((i) => /^calf_[lr]$/.test(main[i])); taubin(R, 8); back(R); }
+  // CHEST: flat, with no pectoral relief: the front of the ribcage is held to the breastbone's line, then smoothed
+  {
+    const zs = b0.spine_03.z, mid = new Map(), bin = (y) => Math.round(y / 0.01);
+    for (let i = 0; i < n; i++) if (/^spine_0[123]$/.test(main[i]) && Math.abs(W[i * 3]) < 0.012 && W[i * 3 + 2] > zs) { const b = bin(W[i * 3 + 1]); mid.set(b, Math.max(mid.get(b) ?? -1e9, W[i * 3 + 2])); }
+    const zmid = (y) => { const b = bin(y); return mid.get(b) ?? mid.get(b - 1) ?? mid.get(b + 1) ?? null; };
+    const sel = (i) => /^(spine_0[23]|clavicle_[lr])$/.test(main[i]) && W[i * 3 + 2] > zs && Math.abs(W[i * 3]) < 0.14;
+    for (let i = 0; i < n; i++) {
+      if (!sel(i)) continue;
+      const zm = zmid(W[i * 3 + 1]); if (zm === null) continue;
+      const lim = zm + 0.002 - W[i * 3] * W[i * 3] * 0.6;               // a gently rounded, flat front
+      if (W[i * 3 + 2] > lim) W[i * 3 + 2] = lim + (W[i * 3 + 2] - lim) * 0.15;
+    }
+    const R = weld(sel); taubin(R, 10); back(R);
+    // the back too: no adult shoulder-blade and lat muscle relief, a child's straight, slight back
+    const midB = new Map();
+    for (let i = 0; i < n; i++) if (/^spine_0[123]$/.test(main[i]) && Math.abs(W[i * 3]) < 0.012 && W[i * 3 + 2] < zs) { const b = bin(W[i * 3 + 1]); midB.set(b, Math.min(midB.get(b) ?? 1e9, W[i * 3 + 2])); }
+    const zmb = (y) => { const b = bin(y); return midB.get(b) ?? midB.get(b - 1) ?? midB.get(b + 1) ?? null; };
+    const selB = (i) => /^(spine_0[123]|clavicle_[lr])$/.test(main[i]) && W[i * 3 + 2] < zs && Math.abs(W[i * 3]) < 0.17;
+    for (let i = 0; i < n; i++) {
+      if (!selB(i)) continue;
+      const zm = zmb(W[i * 3 + 1]); if (zm === null) continue;
+      const lim = zm - 0.004 + W[i * 3] * W[i * 3] * 0.8;
+      if (W[i * 3 + 2] < lim) W[i * 3 + 2] = lim + (W[i * 3 + 2] - lim) * 0.15;
+    }
+    const RB = weld(selB); taubin(RB, 10); back(RB);
+  }
+
+  // HEAD
+  const eyes = []; model.traverse((o) => { if (o.isSkinnedMesh && /^eyes$/i.test(o.name)) eyes.push(o); });
+  const ec = [];                                                     // the two eyeball centres (bind world): [left (+x), right]
+  if (eyes[0]) { const ep = eyes[0].geometry.attributes.position, L = [0, 0, 0, 0], Rr = [0, 0, 0, 0]; for (let i = 0; i < ep.count; i++) { _cv1.fromBufferAttribute(ep, i).applyMatrix4(eyes[0].matrixWorld); const a = _cv1.x > 0 ? L : Rr; a[0] += _cv1.x; a[1] += _cv1.y; a[2] += _cv1.z; a[3]++; } for (const a of [L, Rr]) if (a[3]) ec.push(new THREE.Vector3(a[0] / a[3], a[1] / a[3], a[2] / a[3])); }
+  const info = { eyes: ec.map((e) => e.toArray().map((x) => +x.toFixed(4))) };
+  if (ec.length === 2) {
+    const eyeY = (ec[0].y + ec[1].y) / 2, eyeZ = (ec[0].z + ec[1].z) / 2, u = Math.abs(ec[0].x - ec[1].x);   // u: eye spacing (~6 cm)
+    const R = weld((i) => main[i] === 'Head'), { G, cur, fixed, nb } = R;
+    lineN = []; headGid = R.gid;
+    const cur0 = cur.slice();                                          // the head as it came (the open mouth's inside keeps its depth)
+    const ed = (v) => Math.min(...ec.map((e) => Math.hypot(cur[v * 3] - e.x, cur[v * 3 + 1] - e.y, cur[v * 3 + 2] - e.z)));
+    const lidR = u * 0.25, pin = new Uint8Array(G), mt = new Uint8Array(G);   // mt: 1 the inside of the mouth, 2 a sealed lip edge
+    const mouthY = eyeY - u * 1.107, mW = u * 0.36;                   // the mouth line and half-width (the base mesh's lips are parted)
+    for (let v = 0; v < G; v++) {                                      // close the mouth: the lips meet on the mouth line, smaller
+      const x = cur[v * 3], y = cur[v * 3 + 1], z = cur[v * 3 + 2], dy = y - mouthY;
+      if (Math.abs(x) > mW || Math.abs(dy) > u * 0.2 || z < eyeZ) continue;
+      const fx = 1 - ss(mW * 0.6, mW, Math.abs(x));
+      if (z < eyeZ + u * 0.3 && Math.abs(dy) < u * 0.1) { cur[v * 3 + 1] = mouthY; cur[v * 3 + 2] = z - u * 0.05; pin[v] = 1; mt[v] = 1; continue; }   // the inside of the mouth, sunk behind the lips
+      if (Math.abs(dy) < u * 0.065) { cur[v * 3 + 1] = mouthY + dy * (1 - fx); pin[v] = 1; if (fx > 0.2) mt[v] = 2; }   // the lip edges, sealed
+      else cur[v * 3 + 1] = mouthY + dy * (1 - 0.4 * fx);              // thinner lips
+      cur[v * 3] = x * (1 - 0.15 * fx);                                 // a smaller mouth
+    }
+    let zMax = -1e9, yMin = 1e9, yMax = -1e9;
+    for (let v = 0; v < G; v++) { if (ed(v) < lidR) pin[v] = 1; zMax = Math.max(zMax, cur[v * 3 + 2]); yMin = Math.min(yMin, cur[v * 3 + 1]); yMax = Math.max(yMax, cur[v * 3 + 1]); }
+    const hops = new Int32Array(G).fill(99), qu = [];                 // graph distance from the neck seam (deformations fade there)
+    for (let v = 0; v < G; v++) if (fixed[v]) { hops[v] = 0; qu.push(v); }
+    for (let h = 0; h < qu.length; h++) { const v = qu[h]; for (const w of nb[v]) if (hops[w] > hops[v] + 1) { hops[w] = hops[v] + 1; qu.push(w); } }
+    const light = cur.slice(); { const L = { ...R, cur: light }; taubin(L, 4, pin); }
+    const heavy = cur.slice(); { const H = { ...R, cur: heavy }; taubin(H, 70, pin); }
+    // the mouth: the lip line and the mouth's inner surface (behind it) are pulled onto the heavily smoothed face
+    const front = (v) => cur[v * 3 + 2] > eyeZ - u * 0.9;
+    for (let v = 0; v < G; v++) {
+      const x = cur[v * 3], y = cur[v * 3 + 1];
+      let w = front(v) ? 0.9 : 0.45;                                  // the features go; the back of the head barely changes
+      w *= ss(lidR, lidR * 1.6, ed(v));                                // the eyelids keep their shape
+      if (Math.abs(x) < u * 0.45 && Math.abs(y - mouthY) < u * 0.1 && front(v)) w *= 0.3;   // the sealed lips keep their shape
+      else if (Math.abs(x) < u * 0.45 && y > mouthY && y < eyeY - u * 0.3 && front(v)) w = 1;   // the nose and under it: fully smoothed
+      for (let c = 0; c < 3; c++) cur[v * 3 + c] = light[v * 3 + c] + (heavy[v * 3 + c] - light[v * 3 + c]) * w;
+    }
+    // shape: a shorter lower face and chin, full cheeks, bigger eyes
+    const hc = new THREE.Vector3(0, (yMin + yMax) / 2 + u * 0.3, eyeZ - u * 1.2), dir = new THREE.Vector3();
+    for (let v = 0; v < G; v++) {
+      if (fixed[v]) continue;
+      const fade = Math.min(1, hops[v] / 5);
+      let x = cur[v * 3], y = cur[v * 3 + 1], z = cur[v * 3 + 2];
+      const de = ed(v);
+      if (de < lidR * 1.5) {                                           // open, bright eyes: the upper lid rolls up over the eyeball, the lower a little down
+        const e = ec[Math.abs(x - ec[0].x) < Math.abs(x - ec[1].x) ? 0 : 1], dy0 = y - e.y, dz0 = z - e.z;
+        const th = (dy0 > 0 ? 0.3 : -0.06) * (1 - ss(lidR, lidR * 1.5, de)), c = Math.cos(th), sn = Math.sin(th);
+        y = e.y + dy0 * c + dz0 * sn; z = e.z - dy0 * sn + dz0 * c;
+      }
+      if (de < u * 0.9) {                                              // the eyes and lids grow about the eye centres
+        const e = ec[Math.abs(x - ec[0].x) < Math.abs(x - ec[1].x) ? 0 : 1], k = 0.16 * (1 - ss(lidR * 0.9, u * 0.9, de));
+        x += (x - e.x) * k; y += (y - e.y) * k; z += (z - e.z) * k * 0.5;
+      }
+      {                                                                // a small button nose: the bridge and tip pressed back toward the face
+        const zRef = eyeZ + u * 0.33, wn = (1 - ss(u * 0.18, u * 0.36, Math.abs(x))) * ss(eyeY - u * 0.95, eyeY - u * 0.8, y) * (1 - ss(eyeY - u * 0.15, eyeY + u * 0.05, y));
+        if (z > zRef) z = zRef + (z - zRef) * (1 - 0.6 * wn);
+      }
+      const yl = eyeY - u * 0.35;
+      if (y < yl) {                                                    // a shorter, rounder lower face; the chin set back
+        const dy = yl - y; y += dy * 0.24 * fade; x *= 1 + 0.07 * fade * ss(0, u * 0.5, dy);
+        if (z > eyeZ - u * 1.2) z -= (z - (eyeZ - u * 1.2)) * 0.07 * ss(u * 0.7, u * 1.5, dy) * fade;   // (below the mouth only: no recess under the nose)
+      }
+      dir.set(x - hc.x, (y - hc.y) * 0.7, z - hc.z).normalize();
+      for (const sx of [-1, 1]) {                                      // round, full cheeks
+        const dx = x - sx * u * 0.6, dyc = y - (eyeY - u * 0.95), g2 = Math.exp(-(dx * dx + dyc * dyc) / (2 * (u * 0.45) ** 2));
+        if (z > eyeZ - u * 0.8) { const a = u * 0.16 * g2 * fade; x += dir.x * a; y += dir.y * a; z += dir.z * a; }
+      }
+      cur[v * 3] = x; cur[v * 3 + 1] = y; cur[v * 3 + 2] = z;
+    }
+    { const L = { ...R }; taubin(L, 2, pin); }
+    // a soft, closed child's mouth. The sealed lip edges came out of the steps above as an uneven, lumpy line (each
+    // vertex where its own lip put it), with deep pits at the corners and a ledge under the nose. Now: a smooth surface
+    // is fitted to the face round the mouth (z = F(x, y), symmetric in x); the lips, the skin under the nose and over
+    // the chin are eased onto it (fully at the mouth, fading out by the nose, the cheeks and the chin); every lip edge
+    // and corner vertex lies on one clean, level line on it (the corners turned up a touch); and the inside of the mouth
+    // is folded away well behind. The mouth itself is drawn by the skin texture (childSkin): small, soft and closed.
+    {
+      let ym = 0, nm = 0;
+      for (let v = 0; v < G; v++) if (mt[v] === 2) { ym += cur[v * 3 + 1]; nm++; }
+      if (nm > 3) {
+        ym /= nm;
+        const lineV = [], lw = u * 0.46, lineY = (x) => ym + u * 0.025 * (x / lw) ** 2, fr = (v) => cur[v * 3 + 2] > eyeZ - u * 0.3;
+        const wz = (x, dy) => (1 - ss(u * 0.42, u * 0.62, Math.abs(x))) * (dy > 0 ? 1 - ss(u * 0.18, u * 0.32, dy) : 1 - ss(u * 0.24, u * 0.42, -dy));
+        const A = Array.from({ length: 5 }, () => new Float64Array(6));   // least squares: z = c0 + c1 y' + c2 y'^2 + c3 x^2 + c4 x^2 y'
+        for (let v = 0; v < G; v++) {
+          const x = cur[v * 3], y = cur[v * 3 + 1] - ym, z = cur[v * 3 + 2];
+          if (mt[v] || !fr(v) || wz(x, y) > 0.02 || Math.abs(x) > u * 1.0 || y > u * 0.3 || y < -u * 0.65) continue;
+          const b = [1, y, y * y, x * x, x * x * y];
+          for (let i = 0; i < 5; i++) { for (let j = 0; j < 5; j++) A[i][j] += b[i] * b[j]; A[i][5] += b[i] * z; }
+        }
+        for (let i = 0; i < 5; i++) {                                    // Gauss-Jordan
+          let pv = i; for (let r = i + 1; r < 5; r++) if (Math.abs(A[r][i]) > Math.abs(A[pv][i])) pv = r;
+          [A[i], A[pv]] = [A[pv], A[i]]; const d = A[i][i] || 1e-12;
+          for (let j = i; j < 6; j++) A[i][j] /= d;
+          for (let r = 0; r < 5; r++) if (r !== i) { const f = A[r][i]; for (let j = i; j < 6; j++) A[r][j] -= f * A[i][j]; }
+        }
+        const C = A.map((r) => r[5]), F = (x, y) => C[0] + C[1] * y + C[2] * y * y + C[3] * x * x + C[4] * x * x * y;
+        // which vertices are skin and which the inside of the mouth: by their texture (the mouth's inside is mapped low
+        // on the sheet, v > 0.55; the face high). A vertex on both is the lip's rim, and goes on the line.
+        const uva = g.attributes.uv, face = new Uint8Array(G), inside = new Uint8Array(G);
+        for (let i = 0; i < n; i++) { const v = R.gid[i]; if (v < 0) continue; if (uva.getY(i) > 0.55) inside[v] = 1; else face[v] = 1; }
+        for (let v = 0; v < G; v++) {
+          const near = Math.abs(cur[v * 3]) < lw * 1.2 && Math.abs(cur[v * 3 + 1] - ym) < u * 0.2;
+          if (inside[v] && !face[v] && (mt[v] || near)) mt[v] = 1;
+          else if (mt[v]) mt[v] = 2;
+          else if (fr(v) && Math.abs(cur[v * 3]) < lw && Math.abs(cur[v * 3 + 1] - ym) < u * 0.05) mt[v] = 2;   // the corners join the line
+        }
+        for (let v = 0; v < G; v++) {
+          const x = cur[v * 3], dy = cur[v * 3 + 1] - ym;
+          if (mt[v] === 1) { const xx = Math.max(-lw * 0.97, Math.min(lw * 0.97, x * 0.95)); cur[v * 3] = xx; cur[v * 3 + 1] = lineY(xx) + (cur0[v * 3 + 1] - mouthY) * 0.8; cur[v * 3 + 2] = F(xx, 0) - u * 0.08 - Math.max(0, F(cur0[v * 3], 0) - cur0[v * 3 + 2]) * 0.5; continue; }   // folded away inside: a closed pocket behind the line (so nothing shows through it)
+          if (mt[v] === 2) { const xx = Math.sign(x) * Math.min(Math.abs(x), lw); cur[v * 3] = xx; cur[v * 3 + 1] = lineY(xx); cur[v * 3 + 2] = F(xx, lineY(xx) - ym); lineV.push(v); continue; }
+          if (!fr(v)) continue;
+          const w = wz(x, dy); if (w > 0) cur[v * 3 + 2] += (F(x, dy) - cur[v * 3 + 2]) * w;
+        }
+        // the line's shading: its vertices border the pocket behind, which tipped their normals up or down (a bright,
+        // ragged seam). Each takes the normal of the nearest lip vertex off the line (applied after weldNormals below).
+        const off = []; for (let v = 0; v < G; v++) if (!mt[v] && fr(v) && Math.abs(cur[v * 3]) < lw * 1.3 && Math.abs(cur[v * 3 + 1] - ym) < u * 0.25) off.push(v);
+        for (const v of lineV) { let best = -1, bd = 1e9; for (const w of off) { const d = (cur[w * 3] - cur[v * 3]) ** 2 + (cur[w * 3 + 1] - cur[v * 3 + 1]) ** 2 * 0.5; if (d < bd) { bd = d; best = w; } } if (best >= 0) lineN.push([v, best]); }
+      }
+    }
+    back(R);
+    Object.assign(info, { eyeY, eyeZ, u, zMax, yMin, yMax, G });
+    // the eyeballs grow with the lids (their own copy of the eye mesh)
+    if (eyes[0] && !eyes[0].userData.childGrown) {
+      const eg = eyes[0].geometry.clone(), epp = eg.attributes.position, inv = new THREE.Matrix4().copy(eyes[0].matrixWorld).invert();
+      for (let i = 0; i < epp.count; i++) { _cv1.fromBufferAttribute(epp, i).applyMatrix4(eyes[0].matrixWorld); const e = _cv1.x > 0 ? ec[0] : ec[1]; _cv1.sub(e).multiplyScalar(1.16).add(e).applyMatrix4(inv); epp.setXYZ(i, _cv1.x, _cv1.y, _cv1.z); }
+      eg.computeVertexNormals(); g.userData.eyes = eg;
+    }
+  }
+  const inv = new THREE.Matrix4().copy(body.matrixWorld).invert();
+  for (let i = 0; i < n; i++) { _cv1.set(W[i * 3], W[i * 3 + 1], W[i * 3 + 2]).applyMatrix4(inv); p.setXYZ(i, _cv1.x, _cv1.y, _cv1.z); }
+  g.computeBoundingSphere(); weldNormals(g);
+  if (lineN.length) {                                                  // the mouth line's normals (see the mouth above)
+    const nr = g.attributes.normal, byG = new Map();
+    for (let i = 0; i < n; i++) { const v = headGid[i]; if (v >= 0 && !byG.has(v)) byG.set(v, i); }
+    for (const [v, w] of lineN) { const j = byG.get(w); if (j === undefined) continue; for (let i = 0; i < n; i++) if (headGid[i] === v) nr.setXYZ(i, nr.getX(j), nr.getY(j), nr.getZ(j)); }
+    nr.needsUpdate = true;
+  }
+  return g;
+}
+// A coarse woven-cloth texture (tinted by the material colour), shared.
+let weaveT = null;
+function weave() {
+  if (weaveT) return weaveT;
+  const c = document.createElement('canvas'); c.width = c.height = 64; const g = c.getContext('2d');
+  g.fillStyle = '#d8d8d8'; g.fillRect(0, 0, 64, 64);
+  for (let y = 0; y < 64; y += 4) for (let x = 0; x < 64; x += 4) { const o = ((x + y) / 4) % 2; g.fillStyle = o ? '#c4c4c4' : '#ececec'; g.fillRect(x, y, o ? 4 : 3, o ? 3 : 4); }
+  for (let i = 0; i < 260; i++) { g.fillStyle = `rgba(${Math.random() < 0.5 ? '0,0,0' : '255,255,255'},0.08)`; g.fillRect(Math.random() * 64, Math.random() * 64, 1 + Math.random() * 6, 1); }
+  weaveT = new THREE.CanvasTexture(c); weaveT.wrapS = weaveT.wrapT = THREE.RepeatWrapping; weaveT.repeat.set(10, 10); weaveT.colorSpace = THREE.SRGBColorSpace;
+  return weaveT;
+}
+// The child's skin: the male texture evened out into smooth young skin. The whole sheet is blurred and laid under an
+// even skin tone (no painted muscle shading on the arms and legs, no stubble, no brow shadow, no colour steps at the
+// UV seams), the eyes are kept, and a child's face is painted: rosy cheeks, faint fine brows, a small closed mouth.
+function childSkin(url) {
+  const cv = document.createElement('canvas'); cv.width = cv.height = 1024;
+  const tex = new THREE.CanvasTexture(cv); tex.flipY = false; tex.colorSpace = THREE.SRGBColorSpace;
+  const img = new Image();
+  img.onload = () => {
+    const g = cv.getContext('2d', { willReadFrequently: true });
+    g.drawImage(img, 0, 0, 1024, 1024);
+    const keep = (cx, cy, rx, ry) => {                                 // a soft-edged copy of a patch (the eyes)
+      const t = document.createElement('canvas'); t.width = rx * 2; t.height = ry * 2; const tg = t.getContext('2d');
+      tg.drawImage(cv, cx - rx, cy - ry, rx * 2, ry * 2, 0, 0, rx * 2, ry * 2);
+      tg.globalCompositeOperation = 'destination-in'; tg.translate(rx, ry); tg.scale(1, ry / rx);
+      const gr = tg.createRadialGradient(0, 0, rx * 0.6, 0, 0, rx); gr.addColorStop(0, '#000'); gr.addColorStop(1, 'rgba(0,0,0,0)');
+      tg.fillStyle = gr; tg.fillRect(-rx, -rx, rx * 2, rx * 2);
+      return () => g.drawImage(t, cx - rx, cy - ry);
+    };
+    const eyeL = keep(137, 184, 22, 14), eyeR = keep(242, 184, 22, 14);
+    // the painted underwear patches stay (they are under the tunic); everything else becomes even skin
+    const blur = document.createElement('canvas'); blur.width = blur.height = 1024; const bg = blur.getContext('2d');
+    bg.filter = 'blur(10px)'; bg.drawImage(cv, 0, 0); bg.filter = 'none';
+    g.drawImage(blur, 0, 0);
+    g.fillStyle = 'rgba(236,184,152,0.72)'; g.fillRect(0, 0, 1024, 1024);
+    g.save(); g.filter = 'blur(18px)'; g.fillStyle = 'rgba(236,184,152,0.85)'; g.beginPath(); g.ellipse(190, 230, 170, 150, 0, 0, Math.PI * 2); g.fill(); g.restore();   // the face: no stubble or mouth shadow
+    g.save(); g.filter = 'blur(14px)';
+    g.fillStyle = 'rgba(240,128,118,0.34)'; g.beginPath(); g.ellipse(104, 236, 42, 30, 0, 0, Math.PI * 2); g.ellipse(276, 236, 42, 30, 0, 0, Math.PI * 2); g.fill();   // rosy cheeks
+    g.fillStyle = 'rgba(236,140,124,0.25)'; g.beginPath(); g.ellipse(190, 228, 16, 10, 0, 0, Math.PI * 2); g.fill();   // the nose tip
+    g.restore();
+    g.save(); g.filter = 'blur(6px)'; g.fillStyle = 'rgba(246,200,172,0.45)'; g.beginPath(); g.ellipse(190, 247, 44, 10, 0, 0, Math.PI * 2); g.fill(); g.restore();   // an even skin under the nose (no shadowed 'moustache')
+    eyeL(); eyeR();
+    g.save(); g.filter = 'blur(4px)'; g.fillStyle = 'rgba(236,184,152,0.45)'; g.beginPath(); g.ellipse(137, 163, 26, 7, 0, 0, Math.PI * 2); g.ellipse(242, 163, 26, 7, 0, 0, Math.PI * 2); g.fill(); g.restore();   // soft upper lids
+    g.save(); g.filter = 'blur(2.5px)'; g.strokeStyle = 'rgba(120,82,60,0.45)'; g.lineWidth = 4; g.lineCap = 'round';
+    for (const sx of [-1, 1]) { g.beginPath(); g.moveTo(190 + sx * 24, 152); g.quadraticCurveTo(190 + sx * 52, 140, 190 + sx * 78, 150); g.stroke(); }   // faint, fine, arched brows
+    g.restore();
+    // the mouth. The lips' rims are folded onto one closed line in the mesh (childGeo), which maps to texture rows
+    // ~263-282 (x 155-227; the centre at x 190): the strips just above and below it are the lips. Painted: even skin over
+    // the whole band (no adult lip colour or shadow), a soft rose on the upper and lower lip in the middle only (a small
+    // mouth), and a short, soft closed line that fades out at both ends.
+    g.save(); g.filter = 'blur(3px)'; g.fillStyle = 'rgb(236,184,152)'; g.fillRect(138, 252, 106, 46); g.restore();
+    g.save(); g.filter = 'blur(3px)';
+    g.fillStyle = 'rgba(222,140,124,0.55)'; g.beginPath(); g.ellipse(190, 259, 19, 5, 0, 0, Math.PI * 2); g.fill();   // the upper lip
+    g.fillStyle = 'rgba(226,146,130,0.6)'; g.beginPath(); g.ellipse(190, 287, 16, 6, 0, 0, Math.PI * 2); g.fill();   // the lower lip, a little fuller
+    g.restore();
+    g.save(); g.filter = 'blur(2px)'; g.fillStyle = 'rgba(206,146,126,0.85)'; g.fillRect(142, 262, 98, 22); g.restore();   // the rest of the line: a soft, slightly deeper skin tone (it was a bright seam)
+    { const gr = g.createLinearGradient(170, 0, 210, 0); gr.addColorStop(0, 'rgba(160,86,76,0)'); gr.addColorStop(0.25, 'rgba(160,86,76,0.75)'); gr.addColorStop(0.75, 'rgba(160,86,76,0.75)'); gr.addColorStop(1, 'rgba(160,86,76,0)');
+      g.save(); g.filter = 'blur(1.5px)'; g.fillStyle = gr; g.fillRect(170, 264, 40, 18); g.restore(); }   // the closed line
+    // the inside of the mouth (x ~110-145, rows ~690-722) is folded away into a pocket behind the line; a sliver of it
+    // can show along the line, so it is painted the line's soft rose-brown (never the pale teeth, never a bright seam)
+    g.save(); g.filter = 'blur(3px)'; g.fillStyle = 'rgb(168,102,90)'; g.fillRect(96, 676, 64, 60); g.restore();
+    // the nostrils and the underside of the button nose: soft, not dark
+    g.save(); g.filter = 'blur(4px)'; g.fillStyle = 'rgba(236,184,152,0.6)'; g.beginPath(); g.ellipse(190, 236, 22, 7, 0, 0, Math.PI * 2); g.fill(); g.restore();
+    tex.needsUpdate = true;
+  };
+  img.src = url;
+  return tex;
 }

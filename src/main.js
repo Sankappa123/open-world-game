@@ -3638,15 +3638,12 @@ function rstNOut(dt) {
   R.nOut.t += dt;
   if (rstWalk(N, dt, 1.6) || R.nOut.t > 9) { R.nOut = null; N.rest = 0; N.speed = 0; N.path = null; N.wait = 2; }
 }
-// Kids sleep with the old pose (WP6 kidsToBed); a child in the parents' bed lies between them, head on the pillow line.
+// Kids sleep in their own beds (WP6 kidsToBed / kidBed): the baby in her cradle, the girl in her nursery bedroll, or
+// (no cradle / no nursery) on her own small mat with her own cover beside the parents' bed.
+// GUARDRAIL: a child never sleeps in the parents' bed or under their blanket.
 function rstKids(L) {
   kidsToBed(L.s);
   R.kidsIn = false; for (const c of kids) c.inBed = false;
-  kids.forEach((c, i) => {
-    if (inCradle(L.s, i) || inNursery(L.s, i)) return;   // STORY: a baby stays in the cradle, a grown girl sleeps in her nursery
-    const len = 1.5 * kidScale(c.k), mid = W2(L, [(L.D.head[0][0] + L.D.head[1][0]) / 2, L.D.head[0][1] - 0.05], L.matY + 0.07);
-    c.restPos = mid.addScaledVector(L.fwd, len); c.face = L.yaw; c.inBed = true; R.kidsIn = true;
-  });
 }
 // Bed props: the blanket (always), and a bedroll (hide mat + pillows) for the bare house floor or rolled hides in the cave.
 function rstProps(L) {
@@ -3728,7 +3725,6 @@ function rstDrape(k) {
   }
   bl.position.copy(W2(L, [x0, (zTop + zEnd) / 2], L.matY)); bl.rotation.y = L.yaw; bl.scale.set(wid, 1, zEnd - zTop);
   bl.updateMatrixWorld(true);
-  for (const c of kids) if (c.rest > 0 && R.kidsIn) for (const n of ['pelvis', 'calf_l', 'calf_r', 'spine_02']) { const v = c.h.bones[n].getWorldPosition(_re); _dp.push([v.x, v.z, v.y - L.matY + 0.05, 0.08]); }
   rstCradleCover(1);                                 // the baby stays tucked in while her parents get up
   const kk = smooth01(k), half = bw / 2, end = bz + bl2 / 2;
   // SIT-r4: one smooth ridge per sleeper instead of a bump per bone (the bumps read as a lumpy mound with peaks at the
@@ -3807,31 +3803,38 @@ function rstDrape(k) {
     return n;
   });
 }
-// STORY: a little blanket over the baby in her cradle (house-local cradle at 1.8, 1.2; mattress top 0.6), up to her chest.
+// STORY: the child's own bed. The baby is a swaddled bundle in her cradle (no cover: the swaddle is her wrap); the girl
+// has a hide bedroll (makeBedroll, scaled to her) with her own small cover to her chest, in the nursery or, without
+// one, on her own mat beside the parents' bed (kidBed). Never the parents' blanket.
 const _cv = [];
-// The grown girl's nursery bed: a hide bedroll (makeBedroll, scaled to her) with the same kind of cover to her chest.
 function rstCradleCover(k) {
-  const c = kids[0], s = R.s, cr = s && inCradle(s, 0), nu = s && inNursery(s, 0);
-  if (R.kidRoll) R.kidRoll.visible = !!(nu && c && c.rest > 0);
-  if (!s || s.kind !== 'house' || !c || !(c.rest > 0) || !(cr || nu)) { if (R.kidBl) R.kidBl.visible = false; return; }
+  const c = kids[0], s = R.s, cr = s && inCradle(s, 0), roll = !!(s && c && !cr && c.rest > 0);
+  if (R.kidRoll) R.kidRoll.visible = roll;
+  if (!s || !c || !(c.rest > 0) || cr) { if (R.kidBl) R.kidBl.visible = false; return; }
   if (!R.kidBl) { R.kidBl = makeBlanket(1, 1); scene.add(R.kidBl); }
-  if (nu && !R.kidRoll) { R.kidRoll = makeBedroll(true); R.kidRoll.scale.set(0.5, 1, 0.56); for (const p of R.kidRoll.userData.pillows) { p.position.set(0, 0.07, -0.86); p.scale.set(0.7, 0.75, 1); } scene.add(R.kidRoll); }
-  if (nu) { R.kidRoll.visible = true; R.kidRoll.position.copy(toWorld(s, [-4.8, 0.19, -0.05])); R.kidRoll.rotation.y = s.rot || 0; }
-  const bl = R.kidBl, base = s.group.position.y + (cr ? 0.6 : 0.23), W = cr ? 0.5 : 0.82, Lz = cr ? 0.34 : 0.78;   // round 2: the cradle cover up to her belly, so her arms and face show
-  bl.visible = true; bl.position.copy(toWorld(s, cr ? [1.8, 0.6, 1.4] : [-4.8, 0.23, 0.18])); bl.rotation.y = s.rot || 0; bl.scale.set(W, 1, Lz); bl.updateMatrixWorld(true);
+  // round 3: the mat and the cover reach well past her feet (the cover's foot edge used to end at her toes, where it
+  // folded up round the wrapped feet and tore)
+  if (!R.kidRoll) { R.kidRoll = makeBedroll(true); R.kidRoll.scale.set(0.5, 1, 0.66); for (const p of R.kidRoll.userData.pillows) { p.position.set(0, 0.07, -0.78); p.scale.set(0.7, 0.75, 1); } scene.add(R.kidRoll); }
+  const F = kidBed(s, 0), gy = s.group?.position.y ?? 0;
+  R.kidRoll.visible = true; R.kidRoll.position.copy(toWorld(s, [F[0], F[1] - 0.045, F[2] - 0.47])); R.kidRoll.rotation.y = s.rot || 0;
+  if (c.baby) { R.kidBl.visible = false; return; }                                   // a swaddled baby on her mat: already wrapped
+  const bl = R.kidBl, base = gy + F[1] - 0.005, W = 0.84, Lz = 0.94;
+  bl.visible = true; bl.position.copy(toWorld(s, [F[0], F[1] - 0.005, F[2] - 0.25])); bl.rotation.y = s.rot || 0; bl.scale.set(W, 1, Lz); bl.updateMatrixWorld(true);
+  // what the cover must clear: her body and legs by their thickness, and the wrapped feet to the tips of the toes
+  // (sampled along the foot: the ankle, the ball and past it; the foot wraps are a centimetre proud of the skin)
   _cv.length = 0;
-  for (const [n, r] of [['spine_01', 0.06], ['pelvis', 0.06], ['thigh_l', 0.045], ['thigh_r', 0.045], ['calf_l', 0.04], ['calf_r', 0.04], ['foot_l', 0.035], ['foot_r', 0.035]]) {
-    const v = c.h.bones[n].getWorldPosition(_re); _cv.push([v.x, v.z, Math.max(0, v.y - base) + r * 0.8, r]);
+  for (const [n, r] of [['spine_01', 0.08], ['pelvis', 0.08], ['thigh_l', 0.07], ['thigh_r', 0.07], ['calf_l', 0.06], ['calf_r', 0.06], ['foot_l', 0.065], ['foot_r', 0.065], ['ball_l', 0.05], ['ball_r', 0.05]]) {
+    const b = c.h.bones[n]; if (!b) continue;
+    const v = b.getWorldPosition(_re); _cv.push([v.x, v.z, Math.max(0, v.y - base) + r * 1.1, r]);   // over her, not through: each limb's own thickness and more
+    if (/^ball_/.test(n)) { const f = c.h.bones['foot_' + n.slice(-1)].getWorldPosition(_rb), tip = _re.clone().lerp(f, -0.7); _cv.push([tip.x, tip.z, Math.max(0, tip.y - base) + 0.05, 0.045]); }   // the toe tips
   }
-  const kk = smooth01(k);
+  const kk = smooth01(k), need = (wx, wz) => { let h = 0; for (const [x, z, top, r] of _cv) { const d = Math.hypot(wx - x, wz - z); if (d < r) h = Math.max(h, (top + 0.01) * kk); } return h; };
   bl.userData.drape((lx, lz) => {
     _re.set(lx, 0, lz); bl.localToWorld(_re);
     let h = 0.012;
-    for (const [x, z, top, r] of _cv) { const d = Math.hypot(_re.x - x, _re.z - z); if (d < r + 0.1) h = Math.max(h, top * (1 - smooth01((d - r) / 0.1)) * kk + 0.012); }
-    if (!cr) return h;                                                              // on the floor bedroll: lies flat at the edges
-    const out = Math.abs(lx) * W - 0.21;                                            // over the cradle's sides: tuck down
-    return out > 0 ? Math.min(h, 0.012 - out * 1.5) : h;
-  }, 2);
+    for (const [x, z, top, r] of _cv) { const d = Math.hypot(_re.x - x, _re.z - z); if (d < r + 0.14) h = Math.max(h, top * (1 - smooth01((d - r) / 0.14)) * kk + 0.012); }
+    return 0.012 + (h - 0.012) * smooth01((0.5 - lz) * Lz / 0.13);                // on the floor bedroll: lies flat at the edges, and falls flat to the mat past her feet (no lifted, folded foot edge)
+  }, 3, (lx, lz) => { _re.set(lx, 0, lz); bl.localToWorld(_re); return need(_re.x, _re.z); });   // never through her, after the smoothing
 }
 // The shelter's camera shot: from where the camera is now to pos/look over dur (cut = jump straight there).
 function rstShot(pos, lookPt, dur, cut = false) {
@@ -4078,7 +4081,7 @@ function rstStartWake() {
     // round 2: from the front corner of the room, inside the walls: Lio in her cradle in the foreground, the hearth, and
     // her parents waking in the bed behind (the old close shot showed a closed box in a dark corner and no one else)
     rstShot(toWorld(R.s, [2.72, 1.6, 2.15]), toWorld(R.s, [0.85, 0.48, 0.15]), 0.01, true);
-    setTimeout(() => { if (R.on && R.phase === 'wake') rstShot(R.L.cam.wake, R.L.cam.wakeLook, 2.2); }, 3200);   // then a slow move back to the parents
+    setTimeout(() => { if (R.on && R.phase === 'wake') rstShot(R.L.cam.wake, R.L.cam.wakeLook, 0.01, true); }, 3200);   // then a cut back to the parents (round 3: a slow move crossed Sena's path to the door: a frame of her hair)
   }
   if (R.ext) { $('restdip').classList.add('on'); setTimeout(() => $('restdip').classList.remove('on'), 120); }
 }
@@ -4145,8 +4148,6 @@ function rstHoldTick(dt) {
     const a = P.h.bones.spine_02.getWorldPosition(_ra), b = N.h.bones.spine_02.getWorldPosition(_rb);
     R.holdPt = (R.holdPt || new V3()).copy(a).lerp(b, RT.hold[2]).addScaledVector(R.L.fwd, RT.hold[0]);
     R.holdPt.y = R.L.matY + RT.hold[1];
-    const kid = R.kidsIn && kids.find((c) => c.rest > 0 && c.inBed);
-    if (kid) { kid.h.bones.spine_02.getWorldPosition(R.holdPt).addScaledVector(R.L.fwd, 0.06); R.holdPt.y += 0.07; }   // both hands rest on Lio between them
     P.L.hold = N.L.hold = Math.min(1, P.L.hold + dt);
   }
 }
@@ -4191,7 +4192,7 @@ function rstMorningLine() {
   if (R.mode === 'nap') line = 'Mm… just a little longer… all right, I\'m up.';
   else if (R.storm) line = s.kind === 'hut' ? 'The rain found a hole in the thatch — right on my nose.' : 'The rain sang on the roof all night.';
   else if (k === 'houseFloor') line = 'A floor is still a floor, even under a roof. A bed would be nice.';
-  else if (kids.length && cnt('slept') % 3 === 0) line = `${kids[0].k.name || 'Lio'} kicked me twice in the night. She dreams of running.`;
+  else if (kids.length && cnt('slept') % 3 === 0) line = `${kids[0].k.name || 'Lio'} slept the night through in her own little bed. She dreams of running.`;   // GUARDRAIL: her own bed, never theirs
   else if (R.tier === 'Snug') line = 'Warm hearth, soft furs… I could stay here forever.';
   else if (k === 'cave') line = 'Stone is a cold pillow. I miss our bed.';
   else if (k === 'hut') line = 'My back aches a little from the ground — but I slept.';
@@ -5774,7 +5775,9 @@ function romSat(s) {
 // 5. Death of a main character is non-graphic.
 // 6. Settings always win: Romance "Fade early" cuts at the embrace; "Off" hides kiss, embrace, hand-holding and night options.
 // 7. The 21+ content notice is shown on the title screen until accepted.
-const romKidsOk = () => kids.length === 0 || (!!S.home.cradle && (kids.length === 1 || !!S.home.nursery));
+// GUARDRAIL: the parents' night together only when every child is in her own room: the baby in her cradle, the girl in
+// her nursery. A child on her own mat beside their bed (no nursery, or the annex on sloped ground) blocks it.
+const romKidsOk = () => { if (!kids.length) return true; const h = structs.find((s) => s.kind === 'house' && s.rise >= 1); return !!h && kids.every((c, i) => inCradle(h, i) || inNursery(h, i)); };
 function romNightBlock(s) {
   return ROMD.nightBlock({ romance: romSetting(), close: S.close, firstKiss: S.rom.firstKiss, house: s?.kind === 'house' && s === homeHouse(), bed: !!S.home.bed,
     time: S.time, rift: S.arc?.rift || 0, hostile: hostileNear(35, s ? { x: s.x, z: s.z } : P.pos), day: S.day, lastNight: S.rom.dayCaps.night ?? null, kidsOk: romKidsOk() });
@@ -5832,8 +5835,8 @@ async function romNight(s) {
   const ok = romBedNow(s);
   for (const c of kids) c.h.root.visible = true;
   if (ok) {
-    kids.forEach((c, i) => { if (i > 0 && S.home.nursery) { c.restPos = toWorld(s, [-4.8, 0.32, 0]); c.inBed = false; } });
-    R.kidsIn = kids.some((c) => c.inBed);
+    for (const c of kids) c.inBed = false;                                               // GUARDRAIL: the children keep their own beds
+    R.kidsIn = false;
     const order = ['Rested', 'Well rested', 'Snug'], ti = Math.min(2, order.indexOf(R.tier) + 1);
     R.tier = order[ti]; R.comfort = Math.max(R.comfort, [0, 3, 6][ti]);
     ROM.nightPending = true; S.rom.nights = (S.rom.nights || 0) + 1; S.rom.dayCaps.night = S.day; romShared();
@@ -6888,7 +6891,7 @@ const ARC_LOOK = {
   korr: { hair: 'parted', beard: true, tint: 0x8b8680, hairColor: 0x181412, scale: 1.07 },
   tamu: { hair: 'buzz', beard: false, tint: 0xaaa49d, hairColor: 0x2b221c },
   wena: { female: true, hair: 'buns', tint: 0xd6ccc2, hairColor: 0x3b2a20 },
-  pell: { hair: 'buzz', beard: false, light: true, tint: 0xeee4da, hairColor: 0x4a3828, scale: 0.56 },
+  pell: { child: 'boy', hair: 'buzz', tint: 0xeee4da, hairColor: 0x4a3828, scale: 0.83 },   // CHILD: a boy's body and tunic (about 1.27 m)
 };
 const arcHunterLook = (i) => ({ hair: i % 2 ? 'buzz' : 'parted', beard: i !== 1, tint: [0x9d978f, 0x8e8983, 0xa49e96, 0x96918a][i % 4], hairColor: [0x2a2420, 0x1c1916, 0x3a2e26, 0x231d19][i % 4] });
 const arcGet = (id) => ARCS.npcs.find((n) => n.id === id) || null;
@@ -7450,8 +7453,15 @@ function arcWenaHome() {
   p.home = d; p.mode = 'stand'; p.look = 'P';
 }
 function arcPellTick() {                             // Pell potters about near Wena by day
-  const p = arcGet('pell'); if (!p || p.hidden || p.mode === 'walk') return;
-  if (rand() < 0.15) { const a = rand() * 6.283, r = 1.5 + rand() * 3; p.tx = p.home.x + Math.cos(a) * r; p.tz = p.home.z + Math.sin(a) * r; p.mode = 'walk'; p.spd = 1.3; p.then = 'stand'; }
+  const p = arcGet('pell'); if (!p || p.hidden || p.mode === 'walk' || p.still) return;   // still: tests hold him for a portrait
+  if (rand() >= 0.15) return;
+  // only to open ground: the spot and the way there clear of every wall (he never walks into the house)
+  const clear = (x, z) => { _kv.set(x, 0, z); collide(_kv, 0.5); return Math.hypot(_kv.x - x, _kv.z - z) < 0.01; };
+  for (let t = 0; t < 6; t++) {
+    const a = rand() * 6.283, r = 1.5 + rand() * 3, tx = p.home.x + Math.cos(a) * r, tz = p.home.z + Math.sin(a) * r;
+    if (![0.25, 0.5, 0.75, 1].every((k) => clear(p.pos.x + (tx - p.pos.x) * k, p.pos.z + (tz - p.pos.z) * k))) continue;
+    p.tx = tx; p.tz = tz; p.mode = 'walk'; p.spd = 1.3; p.then = 'stand'; return;
+  }
 }
 async function arcDoor() {
   const A = S.arc, L = ARCD.L.winter, h = arcHome();
@@ -7899,7 +7909,7 @@ function arcHooks(G) {
         choice: MAT.choice?.id || null, card: [$('card-sub')?.textContent, $('card-season')?.textContent, $('card-recap')?.textContent] }),
       spot: (id) => arcSpot(id), opts: (id) => ARC_OPTS[id]?.().map((o) => ({ label: o.label, value: o.value, ok: !o.req || !!o.req() })),
       epilogue: () => ARCD.epilogueLines(S.arc, S.rom), memories: () => S.arc.memory.map((m) => m.text), bed: () => arcBed(), camp: () => arcCampPos(),
-      target: () => arcTarget(P.pos), sync: () => { ARCS.ch = -1; },
+      target: () => arcTarget(P.pos), sync: () => { ARCS.ch = -1; }, npc: (id) => arcGet(id),   // tests: the live arc NPC (e.g. Pell for a portrait)
       skip: () => { subs.length = 0; subT = 0; $('sub').classList.remove('on'); for (const w of ARCS.waits) if (!w.subs) w.t = clock; },   // tests: fast-forward lines and waits
       season: () => { ARCS.season.snap = true; },    // tests: jump the season tint instead of easing it
       beats: () => arcBeats(CH[S.ch].id), memTab: () => { $('maptabs').querySelector('[data-mt="mem"]').click(); },
@@ -7914,7 +7924,7 @@ function spawnVillagers() {
   const looks = [
     { hair: 'buzz', light: true, hairColor: 0x8a6a45 }, { female: true, hair: 'buns', hairColor: 0x7a4a32 },
     { hair: 'parted', beard: false, tint: 0xd9c0b0, hairColor: 0x2e2622 }, { female: true, light: true, hairColor: 0xa88a55 },
-    { hair: 'buzz', beard: false, scale: 0.62, hairColor: 0x4a382c }, { female: true, hair: 'buns', scale: 0.58, light: true, hairColor: 0x5a4030 },
+    { child: 'boy', hair: 'buzz', scale: 0.8, hairColor: 0x4a382c }, { child: 'girl', hair: 'buns', scale: 0.76, hairColor: 0x5a4030 },   // CHILD: children's bodies and tunics
   ];
   for (let i = 0; i < 3; i++) spawn('cow', home.x + 9 + i * 3, home.z + 7 - i * 2, { tame: true, home });
   for (let i = 0; i < 2; i++) { try { spawn('donkey', home.x + 8 + i * 3, home.z + 12 - i * 2, { tame: true, home, hp: 40 }); } catch { break; } }   // WP6 (the donkey model comes with WP4)
@@ -7929,7 +7939,7 @@ const EPI_YEARS = 7;
 function ensureLio() {                                // a migrated or skipped save reaching the epilogue without its daughter
   if (!S.kids.length) { S.kids.push({ name: 'Lio', female: true, born: S.day - (S.village ? EPI_YEARS * 365 : 0) }); if (!cnt('born')) bump('born'); }
   for (const k of S.kids) spawnKid(k);                // no-op for kids already in the world
-  for (const c of kids) c.h.root.scale.setScalar(kidScale(c.k));   // the grown size, if she was spawned as a baby
+  for (const c of kids) kidLook(c);                  // CHILD: the girl's body, if she was spawned as a baby
 }
 // STORY: after the seven-winters jump the HUD reads "Year 8 · Day 3" instead of "Day 2565" (S.day itself keeps counting for ages).
 function dayLabel() {
@@ -8812,22 +8822,61 @@ function survGive(k, n) { if (SURV.SPOIL[k] && n > 0) { const L = (S.age[k] ||= 
 // ---------- WP6 family: Lio the child, the birth in sleep(), epilogue extras, free-play goals ----------
 const kids = [];                                     // live child humans, one per S.kids entry
 const liveTameHorse = () => animals.find((o) => o.horse && o.tame && o.state === 'live') || null;   // WP4's horse (null until it lands)
-const kidScale = (k) => (S.village ? 0.62 : 0.3 + 0.2 * clamp((S.day - k.born) / 30, 0, 1));   // STORY: a newborn fits her cradle (0.3 ≈ 0.5 m); the epilogue girl is 0.62
+// CHILD / GUARDRAIL: Lio is never an adult body scaled down. Before the epilogue she is a newborn: a swaddled bundle
+// (makeSwaddle) in her cradle or in Sena's arms. In the epilogue she is a girl of about seven: people.js makeHuman's
+// child body (male base mesh, child proportions, a knee-length tunic and foot wraps), about 1.2 m tall.
+const KID_ROOT = 0.745;                              // root scale of the child body: about 1.2 m tall (people.js CHILD.girl is 1.61 m at scale 1)
+const kidBaby = () => !S.village;
+const kidScale = () => (kidBaby() ? 1 : KID_ROOT);  // the child human's root scale (the bundle is life-size at 1)
+// A newborn swaddled in hide: built upright (bottom at the origin, head up +Y, face toward +Z, back on z = 0), so the
+// lying rotation in settle() lays it on its back like the sleepers. About 0.53 m long.
+function makeSwaddle() {
+  const g = new THREE.Group(); g.name = 'swaddle';
+  const wrapM = new THREE.MeshStandardMaterial({ color: 0xcdb48e, roughness: 1 }), bandM = new THREE.MeshStandardMaterial({ color: 0x8a6847, roughness: 1 });
+  const skinM = new THREE.MeshStandardMaterial({ color: 0xe9b99a, roughness: 0.9 }), eyeM = new THREE.MeshStandardMaterial({ color: 0x4a3226, roughness: 1 });
+  const add = (geo, m, x, y, z, sx = 1, sy = 1, sz = 1) => { const o = new THREE.Mesh(geo, m); o.position.set(x, y, z); o.scale.set(sx, sy, sz); o.castShadow = true; o.receiveShadow = true; g.add(o); return o; };
+  add(new THREE.CapsuleGeometry(0.085, 0.27, 6, 14), wrapM, 0, 0.215, 0.085, 1.18, 1, 0.92);           // the wrapped body
+  for (const [y, t] of [[0.1, 0.18], [0.21, -0.22], [0.31, 0.15]]) { const b = add(new THREE.CylinderGeometry(0.089, 0.089, 0.032, 20, 1, true), bandM, 0, y, 0.085, 1.2, 1, 0.95); b.rotation.x = t; b.material.side = THREE.DoubleSide; }   // the broad hide binding strips
+  add(new THREE.SphereGeometry(0.083, 16, 12), wrapM, 0, 0.43, 0.07, 1.08, 1.05, 1);                    // the hood around the head
+  add(new THREE.SphereGeometry(0.06, 18, 14), skinM, 0, 0.428, 0.112, 1, 1.06, 0.85);                  // the little face
+  for (const sx of [-1, 1]) add(new THREE.CapsuleGeometry(0.0045, 0.014, 2, 6), eyeM, sx * 0.021, 0.44, 0.161).rotation.z = Math.PI / 2;   // closed, sleeping eyes
+  add(new THREE.SphereGeometry(0.009, 8, 6), skinM, 0, 0.424, 0.164);                                   // nose
+  for (const sx of [-1, 1]) add(new THREE.SphereGeometry(0.014, 8, 6), new THREE.MeshStandardMaterial({ color: 0xeea08a, roughness: 0.9 }), sx * 0.032, 0.418, 0.148, 1, 0.8, 0.5);   // round cheeks
+  add(new THREE.CapsuleGeometry(0.003, 0.01, 2, 6), new THREE.MeshStandardMaterial({ color: 0xb0645a, roughness: 1 }), 0, 0.404, 0.158).rotation.z = Math.PI / 2;   // a tiny mouth
+  const hem = add(new THREE.TorusGeometry(0.066, 0.014, 6, 18), wrapM, 0, 0.428, 0.118, 1, 1.12, 1);   // the hood's rim framing the face
+  hem.rotation.x = -0.12;
+  return g;
+}
 function spawnKid(k) {
   if (kids.some((c) => c.k === k)) return null;
-  const c = { k, h: makeHuman({ female: true, hair: 'buns', light: true, beard: false, hairColor: 0x4a382c, scale: kidScale(k) }),
-    pos: new THREE.Vector3(N.pos.x - 1.2, 0, N.pos.z - 1.2), face: N.face || 0, speed: 0, wait: 3, play: 0, rest: 0, seat: null };
-  scene.add(c.h.root); kids.push(c);
+  const h = makeHuman({ child: 'girl', hair: 'buns', hairColor: 0x4a382c }), model = h.root.children[0], bundle = makeSwaddle();
+  h.root.add(bundle);
+  const c = { k, h, model, bundle, baby: null, pos: new THREE.Vector3(N.pos.x - 1.2, 0, N.pos.z - 1.2), face: N.face || 0, speed: 0, wait: 3, play: 0, rest: 0, seat: null };
+  scene.add(h.root); kids.push(c); kidLook(c);
   return c;
 }
-// Where the child sleeps (local to the hut/house, feet point; heads toward -Z like the parents)
-// STORY: the cradle is for a baby only; a grown girl (kidScale 0.55+) sleeps between her parents under the blanket (rstKids)
-const inCradle = (s, i) => s.kind === 'house' && S.home.cradle && i === 0 && kidScale(kids[i]?.k || S.kids[i] || { born: S.day }) < 0.55;
-// A grown girl with a nursery has her own bedroll there (house-local -4.8, 0; feet point, head toward -Z)
-const inNursery = (s, i) => s.kind === 'house' && S.home.nursery && i === 0 && !inCradle(s, i);
-const kidBed = (s, i) => s.kind === 'house'
-  ? (inCradle(s, i) ? [1.8, 0.6, 1.5] : inNursery(s, i) ? [-4.8, 0.235, 0.5] : S.home.bed ? [-0.9, 0.66, -0.5] : [-0.9, 0.26, -0.55])
-  : [0, 0.16, 0.55];
+// The child's look for the story stage: the bundle (a newborn) or the girl's body (the epilogue). On horseback her skinned
+// skirt stays on: it opens with her thighs over the horse's back.
+function kidLook(c) {
+  const baby = kidBaby();
+  c.baby = baby; c.model.visible = !baby; c.bundle.visible = baby && !c.away;
+  c.h.root.scale.setScalar(kidScale());
+  c.h.kidLie = !baby && c.rest > 0;                              // asleep on her own bed: lying straight (people.js childHip)
+  if (c.h.kid) c.h.kid.skirt.visible = !c.h.kidLie;              // the flared skirt off in bed (the tunic covers her to the knee; her own cover over that)
+}
+// Where the child sleeps (local to the shelter, feet point; heads toward -Z like the parents). Always her own bed:
+// the baby's cradle; the girl's nursery bedroll; or, without those, her own small mat beside the parents' bed.
+const inCradle = (s, i) => s.kind === 'house' && S.home.cradle && i === 0 && kidBaby();
+// (the annex floor is not levelled: on a slope the ground can rise through it; then she has her own mat in the main room)
+const nurseryOk = (s) => { const a = toWorld(s, [-4.8, 0, -0.3]), b = toWorld(s, [-4.8, 0, 0.5]); return Math.max(getHeight(a.x, a.z), getHeight(b.x, b.z)) < s.group.position.y + 0.2; };
+const inNursery = (s, i) => s.kind === 'house' && S.home.nursery && i === 0 && !kidBaby() && nurseryOk(s);
+const KID_MAT = { house: [0.45, 0.45], houseFloor: [0.45, 0.45], hut: [1.0, -0.35], cave: [1.05, 0.25] };   // feet point of her own mat: beside the bed, clear of it and well back from the hearth
+const kidBed = (s, i) => {
+  if (inCradle(s, i)) return [1.8, 0.6, 1.5];
+  if (inNursery(s, i)) return [-4.8, 0.235, 0.5];
+  const kind = rstKind(s), m = KID_MAT[kind] || KID_MAT.hut;
+  return [m[0] + i * 0.75, (RST_LAY[kind]?.floor ?? 0.04) + 0.045, m[1]];
+};
 function kidsToBed(s) {
   kids.forEach((c, i) => {
     c.rest = 1; c.restPos = toWorld(s, kidBed(s, i)); c.face = s.rot || 0;
@@ -8859,10 +8908,10 @@ function maybeBirth() {
 }
 // Seat point on the horse's back for a small rider (WP4 gives animals a bone() helper; else a fixed back height).
 const _kv = new THREE.Vector3();
-function horseSeat(o, out, scale) {
+function horseSeat(o, out, scale, legK = 1) {
   const b = o.a?.bone?.('Torso2') || o.bone?.('Torso2');
   if (b) { b.getWorldPosition(out); out.y += 0.31; } else out.set(o.root.position.x, o.root.position.y + 1.62, o.root.position.z);
-  out.y -= 0.56 * scale;                             // pelvis height of the sit pose above the root
+  out.y -= 0.56 * scale * legK;                      // pelvis height of the sit pose above the root (CHILD: her shorter legs)
   return out;
 }
 let kidTick = 0;
@@ -8872,21 +8921,24 @@ function updateKids(dt) {
   if (!kids.length) return;
   const horse = S.village ? liveTameHorse() : null, home = structs.find((s) => s.kind === 'house');
   kids.forEach((c, i) => {
-    const sc = kidScale(c.k); c.h.root.scale.setScalar(sc);
-    if (!S.village && sc < 0.42 && i === 0 && home && home.rise >= 1 && S.home.cradle && !(P.rest > 0)) {   // STORY: a newborn sleeps in her cradle at home, she does not walk after Sena
-      c.rest = 1; c.restPos = toWorld(home, kidBed(home, 0)); c.face = home.rot || 0; c.seat = null; c.h.straddle = false;
-      settle(c, dt, false); return;
-    }
+    const sc = kidScale(); kidLook(c);
+    if (c.baby) { kidBabyTick(c, i, home, dt); return; }
+    kidHold(null);
     if (c.rest > 0) {
       if (P.rest > 0) { settle(c, dt, false); return; }
       c.rest = 0; c.h.root.rotation.x = 0; c.pos.set(N.pos.x - 1, 0, N.pos.z - 1);   // wake with them at the door
     }
+    if (kidEpiHold(c, dt)) return;
     // Epilogue: Lio rides the old horse at a walk around the house (unless Aro has taken the reins).
     if (i === 0 && horse && P.ride !== horse && !busy && S.time > 8 && S.time < 11.5) {   // final test: mornings only, else Lio follows Sena
-      c.seat = horseSeat(horse, c.seat || new THREE.Vector3(), sc);
+      c.seat = horseSeat(horse, c.seat || new THREE.Vector3(), sc, c.h.kid?.legK);
       c.face = horse.root.rotation.y; c.h.pose = 'sit'; c.h.straddle = true; c.play = 0;
       c.pos.set(horse.root.position.x, 0, horse.root.position.z);
-      settle(c, dt, false); return;
+      settle(c, dt, false);
+      // CHILD: seat her by her own pelvis (the child body's sit pose is not the adult's): hips on the horse's back
+      const b = horse.a?.bone?.('Torso2') || horse.bone?.('Torso2');
+      if (b) { b.getWorldPosition(_kv); const want = _kv.y + 0.31 + 0.04, hip = c.h.bones.pelvis.getWorldPosition(_kv).y; c.h.root.position.y += want - hip; c.seat.y += want - hip; }
+      return;
     }
     if (c.seat) {
       c.seat = null; c.h.straddle = false; c.h.pose = null;
@@ -8915,6 +8967,47 @@ function updateKids(dt) {
     settle(c, dt, false);
   });
 }
+// The newborn: in her cradle at home (asleep; the birth morning opens on her there), on her own mat while her parents
+// sleep without a cradle, and otherwise in Sena's arms. GUARDRAIL: with anything hostile near, she is indoors (hidden),
+// like Pell, so a baby is never on screen in danger.
+function kidBabyTick(c, i, home, dt) {
+  c.seat = null; c.h.straddle = false; c.h.pose = null; c.play = 0;
+  const cradle = i === 0 && home && home.rise >= 1 && S.home.cradle;
+  if (cradle && !(P.rest > 0)) { c.rest = 1; c.restPos = toWorld(home, kidBed(home, 0)); c.face = home.rot || 0; }
+  if (c.rest > 0 && (cradle || P.rest > 0)) {
+    c.away = false; kidLook(c); kidHold(null);
+    c.pos.set(c.restPos.x, 0, c.restPos.z); settle(c, dt, false); return;
+  }
+  c.rest = 0;
+  c.away = i > 0 || hostileNear(45, N.pos) || !N.h.root.visible || !c.h.root.visible; kidLook(c);
+  kidHold(c.away ? null : c);
+  c.pos.set(N.pos.x, 0, N.pos.z);
+  if (c.away) c.h.root.position.copy(N.pos);
+}
+// Sena holds the baby: the bundle across her chest, head in the crook of her left arm, both hands under it (arm IK).
+let kidHeld = null;
+const _kb = { C: new THREE.Vector3(), A: new THREE.Vector3(), F: new THREE.Vector3(), Y: new THREE.Vector3(), Z: new THREE.Vector3(), X: new THREE.Vector3(), t: new THREE.Vector3(), p: new THREE.Vector3(), m: new THREE.Matrix4() };
+function kidHold(c) {
+  if (kidHeld === c) return;
+  kidHeld = c;
+  if (!c) { N.h.removeOverride('holdBaby'); return; }
+  N.h.addOverride('holdBaby', 35, (h) => {
+    const k = kidHeld; if (!k) return;
+    const { C, A, F, Y, Z, X, t, p, m } = _kb, f = N.face || 0, up = _V_UP;
+    F.set(Math.sin(f), 0, Math.cos(f)); A.set(Math.cos(f), 0, -Math.sin(f));        // her forward and her left
+    h.bones.spine_03.getWorldPosition(C).addScaledVector(F, 0.21); C.y -= 0.06;
+    Y.copy(A).multiplyScalar(0.86).addScaledVector(up, 0.5).normalize();             // head in the crook of her left arm, raised
+    Z.copy(up).addScaledVector(F, 0.35); Z.addScaledVector(Y, -Z.dot(Y)).normalize();  // face up and a little out
+    X.crossVectors(Y, Z);
+    m.makeBasis(X, Y, Z); k.h.root.quaternion.setFromRotationMatrix(m);
+    k.h.root.position.copy(C).addScaledVector(Y, -0.265).addScaledVector(Z, -0.085);
+    k.h.root.updateMatrixWorld(true);
+    t.copy(C).addScaledVector(Y, 0.1).addScaledVector(Z, -0.1); p.copy(C).addScaledVector(A, 0.4).addScaledVector(up, -0.3);
+    ik2(h, 'l', t, p, 1);
+    t.copy(C).addScaledVector(Y, -0.13).addScaledVector(Z, -0.09); p.copy(C).addScaledVector(A, -0.4).addScaledVector(up, -0.3);
+    ik2(h, 'r', t, p, 1);
+  });
+}
 function epilogueExtras(home) {
   if (P.rest > 0) endRest();
   arcEpilogueProps(home);                            // ARC: the variant props (sling on the Great Tree, the palisade, ash and ochre hands)
@@ -8926,7 +9019,7 @@ function epilogueExtras(home) {
     const a = at(0, 9.4), b = at(1.25, 9.9); P.pos.set(a.x, 0, a.z); N.pos.set(b.x, 0, b.z);
     P.face = N.face = (home.rot || 0); camYaw = (home.rot || 0) + Math.PI; camPitch = 0.16; N.node = null; N.act = 0; N.wait = 40;   // she stays beside him for the lines
   }
-  for (const c of kids) { c.rest = 0; c.h.root.rotation.x = 0; const v = at(-1.3, 10.3); c.pos.set(v.x, 0, v.z); }
+  for (const c of kids) { c.rest = 0; c.h.root.rotation.x = 0; const v = at(-1.3, 10.3); c.pos.set(v.x, 0, v.z); c.epiHold = isHouse && !P.ride ? { v, face: home.rot || 0 } : null; }
   const h = liveTameHorse();
   if (h && P.ride !== h) { const v = at(-3.4, 11.2); h.root.position.set(v.x, getHeight(v.x, v.z), v.z); }
   const t = S.found.tree && POIS.find((p) => p.id === 'tree');
@@ -8940,9 +9033,24 @@ function epilogueExtras(home) {
   // then a held shot of the three of them with the house behind, while the epilogue card and lines play (no prompts);
   // any movement key hands the camera back early
   if (isHouse && !P.ride) {
-    const c = at(2.5, 13.6), l = at(0.1, 9.9); c.y = getHeight(c.x, c.z) + 1.6; l.y = getHeight(l.x, l.z) + 1.15;
-    camShot.next = { pos: c, look: l, t: 6, untilSubs: true, family: true };
-  }
+    // round 3: straight on and closer, so Lio (-1.3), Aro (0) and Sena (1.25) all stand in frame with the house behind;
+    // the long grass is trodden down where they stand (it hid the little one to the waist)
+    const c = at(0.15, 13.4), l = at(0, 9.9); c.y = getHeight(c.x, c.z) + 1.35; l.y = getHeight(l.x, l.z) + 0.95;
+    const yard = at(0, 10.6); world.clear(yard.x, yard.z, 3.2);
+    camShot.next = famShot = { pos: c, look: l, t: 6, untilSubs: true, family: true };
+  } else famShot = null;
+}
+// round 3: the family shot shows all three. Lio stands beside her parents at (-1.3, 10.3) for the flyover and the held
+// family shot (the morning rides and following Sena used to take her out of frame before the camera got there).
+let famShot = null;
+function kidEpiHold(c, dt) {
+  const h = c.epiHold;
+  if (!h) return false;
+  if (!famShot || !(camShot === famShot || camShot?.next === famShot)) { c.epiHold = null; return false; }
+  if (c.seat) { c.seat = null; c.h.straddle = false; }
+  c.pos.set(h.v.x, 0, h.v.z); c.face = h.face; c.speed = 0; c.play = 0; c.h.pose = null;
+  settle(c, dt, false);
+  return true;
 }
 function sideGoals() {
   const lvl = S.horse ? 1 + Math.min(3, ((S.horse.bond || 0) / 100) | 0) : 0, d = POIS.filter((p) => S.found[p.id]).length;
@@ -9604,17 +9712,29 @@ function updateVillagers(dt) {
       }
       return;
     }
-    if (v.indoor) { v.indoor = false; v.h.root.visible = true; v.wait = 0; if (vhouse) { const door = toWorld(vhouse, [0, 0, 3.6]); v.pos.set(door.x, 0, door.z); } }
+    if (v.indoor) { v.indoor = false; v.h.root.visible = true; v.wait = 0; if (vhouse) { const k = Math.floor(i / vh.length), door = toWorld(vhouse, [(k % 2 ? 1 : -1) * 0.9 * Math.ceil(k / 2), 0, 3.6 + 0.5 * k]); v.pos.set(door.x, 0, door.z); } }   // two sharing a house step out side by side, never inside each other
     v.wait -= dt;
     if (v.wait <= 0) {
       v.wait = 5 + rand() * 9;
       for (let k = 0; k < 6; k++) { const a = rand() * 6.283, r = 5 + rand() * 22; v.tx = v.home.x + Math.cos(a) * r; v.tz = v.home.z + Math.sin(a) * r; if (!inAnyHouse(v.tx, v.tz)) break; }
     }
     if (getHeight(v.tx, v.tz) < 0.8 || inAnyHouse(v.tx, v.tz)) v.wait = 0;
-    if (R.on && home && Math.hypot(v.pos.x - home.x, v.pos.z - home.z) < home.radius + 12) { v.speed = 0; villagerOut(v, null); settle(v, dt, false); return; }   // round 2: nobody wanders past the bed while the family rests
+    if (R.on && home && Math.hypot(v.pos.x - home.x, v.pos.z - home.z) < home.radius + 12) { v.speed = 0; villagerOut(v, null); villagerApart(v, i); settle(v, dt, false); return; }   // round 2: nobody wanders past the bed while the family rests
     villagerWalk(v, v.tx, v.tz, 1.9, dt, 0.6);
+    villagerApart(v, i);
     settle(v, dt, false);
   });
+}
+// Villagers keep a step apart: two whose ways meet (at a house corner, a shared door) never stand inside each other,
+// so a village child is never drawn inside an adult's body.
+function villagerApart(v, i) {
+  for (const o of villagers) {
+    if (o === v || o.indoor) continue;
+    let dx = v.pos.x - o.pos.x, dz = v.pos.z - o.pos.z, d = Math.hypot(dx, dz);
+    if (d >= 0.65) continue;
+    if (d < 1e-3) { dx = Math.cos(i * 2.4); dz = Math.sin(i * 2.4); d = 1; }
+    v.pos.x = o.pos.x + (dx / d) * 0.65; v.pos.z = o.pos.z + (dz / d) * 0.65;
+  }
 }
 // STORY round 2: villagers walk AROUND every hut and house (walkTo alone went in a straight line through the walls,
 // and the home's collider is off while the family is inside). The next waypoint is the point beside the nearest
