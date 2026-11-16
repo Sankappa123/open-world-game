@@ -59,13 +59,13 @@ export function makeAnimal(kind, scale = SCALE[kind]) {
   const a = {
     root, kind, model, bone: (n) => model.getObjectByName(n),
     // once: true plays a single time and returns to nothing; 'hold' freezes on the last frame (death).
-    play(name, once = false, speed = 1) {
+    play(name, once = false, speed = 1, at = 0) {       // GORE: at > 0 resumes the clip from that time with no blend (a bedded animal dies where it lies)
       if (name === curName && !once && cur.isRunning()) { cur.timeScale = speed; return; }   // a finished one-shot restarts as a loop
       const next = mixer.clipAction(find(name));
       next.reset(); next.timeScale = speed;
       next.setLoop(once ? THREE.LoopOnce : THREE.LoopRepeat, Infinity);
       next.clampWhenFinished = once === 'hold';
-      next.fadeIn(0.2).play();
+      if (at > 0) { next.time = at; next.setEffectiveWeight(1).play(); } else next.fadeIn(0.2).play();
       if (cur && cur !== next) cur.fadeOut(0.2);
       cur = next; curName = name;
     },

@@ -19,7 +19,7 @@ const CAP = 2   // agents at once: Pro plan usage + fanless M4 Air
 const must = (r, label) => { if (r === null || r === undefined) throw new Error(`STOPPED: agent "${label}" returned nothing (usage limit or crash). Resume this run after the limit resets.`); return r }
 const MODEL = 'fable'   // the user asked for Fable on 2026-11-16
 const run = (prompt, opts) => agent(prompt, { ...opts, model: MODEL }).then(r => must(r, opts.label))
-const limited = async (thunks) => { const out = []; for (let i = 0; i < thunks.length; i += CAP) out.push(...await parallel(thunks.slice(i, i + CAP).map(t => () => t()))); return out.map((r, i) => r) }
+const limited = async (thunks) => { const out = []; for (let i = 0; i < thunks.length; i += CAP) { const part = await parallel(thunks.slice(i, i + CAP).map(t => () => t())); if (part.some(r => r === null || r === undefined)) throw new Error('STOPPED: an agent in this batch returned nothing (usage limit or crash). Resume this run after the limit resets.'); out.push(...part) } return out }
 
 const rules = (vp, cp) => `
 PROJECT: ${ROOT}. Hearthborn is a browser 3D survival story game (Three.js r187, Vite, plain JS), on branch main. The user wants a professional, complete, polished result.

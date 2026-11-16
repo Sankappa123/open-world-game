@@ -64,15 +64,17 @@ export function heartbeat(hp) {
 }
 // Segment ids for dismemberment, by rig. Bones under a sever root (and IK helpers by name) belong to it.
 export const SEG = {
-  quad: { roots: { 1: 'Neck2', 2: 'FrontUpperLeg.L', 3: 'FrontUpperLeg.R', 4: 'BackUpperLeg.L', 5: 'BackUpperLeg.R', 6: 'Tail2' },
-    extra: [[/^(IKFrontLeg|FF|PoleTarget)\.L$/, 2], [/^(IKFrontLeg|FF|PoleTarget)\.R$/, 3], [/^(IKBackLeg|FFB|PoleTargetBack)\.L$/, 4], [/^(IKBackLeg|FFB|PoleTargetBack)\.R$/, 5]] },
+  // (GLTFLoader strips the dots from node names: the rig's "FrontUpperLeg.L" arrives as "FrontUpperLegL"; both spellings match)
+  quad: { roots: { 1: 'Neck2', 2: 'FrontUpperLegL', 3: 'FrontUpperLegR', 4: 'BackUpperLegL', 5: 'BackUpperLegR', 6: 'Tail2' },
+    extra: [[/^(IKFrontLeg|FF|PoleTarget)L$/, 2], [/^(IKFrontLeg|FF|PoleTarget)R$/, 3], [/^(IKBackLeg|FFB|PoleTargetBack)L$/, 4], [/^(IKBackLeg|FFB|PoleTargetBack)R$/, 5]] },
   human: { roots: { 1: 'neck_01', 2: 'lowerarm_l', 3: 'lowerarm_r', 4: 'calf_l', 5: 'calf_r' }, extra: [] },
 };
 export const SEG_NAME = { quad: { 1: 'head', 2: 'front leg', 3: 'front leg', 4: 'hind leg', 5: 'hind leg', 6: 'tail' }, human: { 1: 'head', 2: 'arm', 3: 'arm', 4: 'leg', 5: 'leg' } };
 export function segOfBone(bone, rig) {
   const R = SEG[rig]; if (!R) return 0;
-  for (let b = bone; b && b.isBone; b = b.parent) for (const s in R.roots) if (b.name === R.roots[s]) return +s;
-  for (const [re, s] of R.extra) if (re.test(bone.name)) return s;
+  for (let b = bone; b && b.isBone; b = b.parent) { const n = b.name.replace(/\./g, ''); for (const s in R.roots) if (n === R.roots[s]) return +s; }
+  const bn = bone.name.replace(/\./g, '');
+  for (const [re, s] of R.extra) if (re.test(bn)) return s;
   return 0;
 }
 
@@ -102,7 +104,7 @@ function splatAtlas() {
       for (let i = 0; i < 5 + t; i++) blob(cx + (rnd() - 0.5) * 70, cy + (rnd() - 0.5) * 40, 4 + rnd() * 9);
       blob(cx, cy, 14, 0.8);
     } else if (t === 6) {                                // pool: smooth, lobed, fully opaque in the middle
-      for (let i = 0; i < 9; i++) { const a = rnd() * 6.28, d = rnd() * 16; blob(cx + Math.cos(a) * d, cy + Math.sin(a) * d, 30 + rnd() * 16); }
+      for (let i = 0; i < 10; i++) { const a = rnd() * 6.28, d = rnd() * 17; blob(cx + Math.cos(a) * d, cy + Math.sin(a) * d, 26 + rnd() * 14); }   // (kept inside the tile: no cut edge)
     } else {                                             // scuff: dusty, broken, half transparent (Blood off)
       for (let i = 0; i < 40; i++) blob(cx + (rnd() - 0.5) * 80, cy + (rnd() - 0.5) * 50, 3 + rnd() * 10, 0.35);
     }
@@ -124,19 +126,34 @@ function decalTexture() {
   for (let i = 0; i < 5; i++) { const x = 44 + rnd() * 40, w = 2 + rnd() * 3, h = 20 + rnd() * 40; g.fillRect(x, 60, w, h); blob(x + w / 2, 60 + h, w * 1.2); }   // runs down the wall
   const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace; return t;
 }
-// Screen splatter sprites (dark arterial red, droplets, drips), 256 px each, drawn once.
+// Screen splatter sprites, 256 px each, drawn once: a flat, ragged splash thrown across the lens (a mask of core, spikes,
+// droplets and runs, then one dark arterial colour through it), not shaded beads.
 function screenSprites() {
   const out = [];
   for (let k = 0; k < 5; k++) {
     const c = document.createElement('canvas'); c.width = c.height = 256; const g = c.getContext('2d');
-    const blob = (x, y, r, a) => { const gr = g.createRadialGradient(x - r * 0.25, y - r * 0.25, 0, x, y, r); gr.addColorStop(0, `rgba(150,14,10,${a})`); gr.addColorStop(0.6, `rgba(105,6,4,${a})`); gr.addColorStop(0.92, `rgba(60,0,0,${a * 0.95})`); gr.addColorStop(1, 'rgba(40,0,0,0)'); g.fillStyle = gr; g.beginPath(); g.arc(x, y, r, 0, 6.2832); g.fill(); };
-    for (let i = 0; i < 6; i++) blob(128 + (rnd() - 0.5) * 50, 120 + (rnd() - 0.5) * 50, 18 + rnd() * 22, 0.85);
-    for (let i = 0; i < 40; i++) { const a = rnd() * 6.28, d = 40 + Math.pow(rnd(), 0.7) * 80; blob(128 + Math.cos(a) * d, 120 + Math.sin(a) * d, 1.5 + Math.pow(rnd(), 3) * 9, 0.8); }
-    for (let i = 0; i < 3 + k; i++) {                    // drips running down the lens
-      const x = 90 + rnd() * 76, w = 3 + rnd() * 5, h = 30 + rnd() * 90;
-      const gr = g.createLinearGradient(0, 120, 0, 120 + h); gr.addColorStop(0, 'rgba(110,6,4,0.85)'); gr.addColorStop(1, 'rgba(80,0,0,0.6)');
-      g.fillStyle = gr; g.fillRect(x - w / 2, 120, w, h); blob(x, 120 + h, w * 0.9, 0.85);
+    g.fillStyle = '#fff'; g.shadowColor = '#fff'; g.shadowBlur = 2.5;      // a soft rim
+    const dot = (x, y, r) => { g.beginPath(); g.arc(x, y, r, 0, 6.2832); g.fill(); };
+    const cx = 128 + (rnd() - 0.5) * 24, cy = 112 + (rnd() - 0.5) * 20, ph = rnd() * 6.28, N = 44;
+    g.beginPath();                                       // the ragged core
+    for (let i = 0; i <= N; i++) { const a = (i / N) * 6.2832, r = 22 + 8 * Math.sin(a * 3 + ph) + 6 * Math.sin(a * 7 + ph * 2) + rnd() * 8; g.lineTo(cx + Math.cos(a) * r, cy + Math.sin(a) * r * 0.9); }
+    g.fill();
+    for (let i = 0; i < 12 + k * 2; i++) {               // spikes thrown outward, a bead at each tip
+      const a = rnd() * 6.28, l = 38 + rnd() * 62, w = 0.06 + rnd() * 0.07, tx = cx + Math.cos(a) * l, ty = cy + Math.sin(a) * l;
+      g.beginPath(); g.moveTo(cx + Math.cos(a - w) * 20, cy + Math.sin(a - w) * 20); g.lineTo(tx, ty); g.lineTo(cx + Math.cos(a + w) * 20, cy + Math.sin(a + w) * 20); g.fill();
+      dot(tx, ty, 1 + rnd() * 2.6);
     }
+    for (let i = 0; i < 48; i++) { const a = rnd() * 6.28, d = 34 + Math.pow(rnd(), 0.7) * 86; dot(cx + Math.cos(a) * d, cy + Math.sin(a) * d, 0.7 + Math.pow(rnd(), 3.2) * 6.5); }
+    for (let i = 0; i < 2 + (k % 3); i++) {              // runs down the glass
+      const x = cx + (rnd() - 0.5) * 44, w = 1.8 + rnd() * 3.2, h = 30 + rnd() * 90;
+      g.fillRect(x - w / 2, cy, w, h); dot(x, cy + h, w * 0.9);
+    }
+    g.shadowBlur = 0; g.globalCompositeOperation = 'source-in';
+    const gr = g.createRadialGradient(cx, cy, 0, cx, cy, 128);
+    gr.addColorStop(0, 'rgba(66,3,3,0.93)'); gr.addColorStop(0.3, 'rgba(98,6,5,0.88)'); gr.addColorStop(1, 'rgba(122,10,8,0.74)');
+    g.fillStyle = gr; g.fillRect(0, 0, 256, 256);
+    g.globalCompositeOperation = 'source-atop'; g.fillStyle = 'rgba(30,0,0,0.13)';   // clotted, uneven
+    for (let i = 0; i < 26; i++) dot(cx + (rnd() - 0.5) * 90, cy + (rnd() - 0.5) * 90, 5 + rnd() * 14);
     out.push(c);
   }
   return out;
@@ -146,7 +163,7 @@ function screenSprites() {
 let DR = null, SP = null, MIST = null, decalMat = null;
 const decals = [], decalQ = [], pieces = [], emitters = [], carcasses = [];
 function makeDrops() {
-  const geo = new THREE.IcosahedronGeometry(1, 0);
+  const geo = new THREE.IcosahedronGeometry(1, 1);   // round beads (80 triangles each)
   const mat = new THREE.MeshStandardMaterial({ color: 0x6b0907, roughness: 0.22, metalness: 0, emissive: 0x160000 });
   const m = new THREE.InstancedMesh(geo, mat, POOL.drops);
   m.frustumCulled = false; m.castShadow = false; m.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
@@ -177,7 +194,7 @@ function makeSplats() {
   const aSp = new THREE.InstancedBufferAttribute(new Float32Array(n * 3), 3); aSp.setUsage(THREE.DynamicDrawUsage);
   m.geometry.setAttribute('aSp', aSp);
   m.visible = false; scene.add(m);
-  return { m, aSp, n, x: new Float32Array(n), y: new Float32Array(n), z: new Float32Array(n), size: new Float32Array(n), s0: new Float32Array(n), s1: new Float32Array(n),
+  return { m, aSp, n, x: new Float32Array(n), y: new Float32Array(n), h: new Float32Array(n), z: new Float32Array(n), size: new Float32Array(n), s0: new Float32Array(n), s1: new Float32Array(n),
     gt: new Float32Array(n), gd: new Float32Array(n), rot: new Float32Array(n), kind: new Uint8Array(n), born: new Float32Array(n), age: new Float32Array(n),
     alpha: new Float32Array(n), trail: new Int32Array(n), seq: new Int32Array(n), live: new Uint8Array(n), focus: new Uint8Array(n), i: 0, count: 0, seqN: 0, t: 0 };
 }
@@ -250,7 +267,7 @@ export function bloodBurst(pos, dir, n, { heavy = false, kill = false, spread = 
     _v.y += 0.25 + rnd() * 0.35;                         // blood arcs up before it falls
     const sp = (2 + rnd() * 3) * speed * (heavy ? 1.25 : 1) * (back ? 0.6 : 1);
     spawnDrop(pos.x + (rnd() - 0.5) * 0.06, pos.y + (rnd() - 0.5) * 0.06, pos.z + (rnd() - 0.5) * 0.06, _v.x * sp, _v.y * sp, _v.z * sp,
-      (0.008 + Math.pow(rnd(), 2.2) * 0.022) * sz * (kill ? 1.2 : 1), 0.35);
+      (0.0045 + Math.pow(rnd(), 2.6) * 0.012) * sz * (kill ? 1.15 : 1), 0.35);
   }
   if (mist) puffMist(pos, _v2, heavy || kill ? 2 : 1);
   return cnt;
@@ -268,11 +285,13 @@ function puffMist(pos, dir, n) {
 // ----- ground splats
 function killSplat(i) { SP.live[i] = 0; SP.count--; _m.makeScale(0, 0, 0); SP.m.setMatrixAt(i, _m); SP.m.instanceMatrix.needsUpdate = true; SP.aSp.setY(i, 0); SP.aSp.needsUpdate = true; }
 function splatMatrix(i) {
-  const x = SP.x[i], z = SP.z[i], e = 0.25;
-  _v.set(getH(x - e, z) - getH(x + e, z), 2 * e, getH(x, z - e) - getH(x, z + e)).normalize();
+  // the quad lies on the plane through the ground at its own rim (a wide pool on rolling ground must not cut into a rise)
+  const x = SP.x[i], z = SP.z[i], s = SP.size[i], e = Math.max(0.25, s * 0.36);
+  const a = getH(x - e, z), b = getH(x + e, z), c = getH(x, z - e), d = getH(x, z + e);
+  _v.set(a - b, 2 * e, c - d).normalize();
   _q.setFromUnitVectors(_UP, _v); _q2.setFromAxisAngle(_UP, SP.rot[i]); _q.multiply(_q2);
-  const s = SP.size[i];
-  _m.compose(_v3.set(x, SP.y[i], z), _q, _s.set(s, 1, s)); SP.m.setMatrixAt(i, _m);
+  const lift = s > 0.6 ? Math.max(0, (a + b + c + d) / 4 - SP.h[i]) : 0;
+  _m.compose(_v3.set(x, SP.y[i] + lift, z), _q, _s.set(s, 1, s)); SP.m.setMatrixAt(i, _m);
 }
 function splatColor(i) {
   const k = SP.kind[i], wet = Math.max(0, 1 - SP.age[i] / 120);
@@ -288,7 +307,7 @@ export function groundSplat(x, z, size, kind = 'blood', o = {}) {
   const i = SP.i % capSplats; SP.i = i + 1;
   if (!SP.live[i]) SP.count++;
   const k = KIND[kind] ?? 0;
-  SP.x[i] = x; SP.z[i] = z; SP.y[i] = y + 0.025 + (SP.seqN % 7) * 0.0015;   // tiny offsets stop overlapping splats from z-fighting
+  SP.x[i] = x; SP.z[i] = z; SP.h[i] = y; SP.y[i] = y + 0.025 + (SP.seqN % 7) * 0.0015;   // tiny offsets stop overlapping splats from z-fighting
   SP.rot[i] = rnd() * 6.2832; SP.kind[i] = k; SP.born[i] = now; SP.age[i] = 0; SP.alpha[i] = kind === 'scuff' ? 0.7 : 0.95;
   SP.trail[i] = o.trail || 0; SP.seq[i] = ++SP.seqN; SP.live[i] = 1; SP.focus[i] = 0;
   const sz = size * (kind === 'scuff' ? 1 : cfg.k.size);
@@ -306,18 +325,28 @@ export function trailCount(id) { if (!SP || !id) return 0; let n = 0; for (let i
 export function clearSplatsNear(x, z, r) { if (!SP) return; for (let i = 0; i < SP.n; i++) if (SP.live[i] && Math.hypot(SP.x[i] - x, SP.z[i] - z) < r) killSplat(i); }
 
 // ----- Hunter's Focus: trail splats near `center` glow (instanceColor ×4); returns info for the arrow and Sena's line.
-let focusOn = false;
+let focusOn = false, FPT = null, focusN = 0;
+// The scent of the trail: a soft ember over every lit splat, drawn through the grass (meadow grass hides the ground).
+function focusPoints() {
+  const geo = new THREE.BufferGeometry(); geo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(64 * 3), 3)); geo.setDrawRange(0, 0);
+  const p = new THREE.Points(geo, new THREE.PointsMaterial({ map: puffTexture(), color: 0xff3c1e, size: 0.8, sizeAttenuation: true, transparent: true, opacity: 0.6, depthTest: false, depthWrite: false, blending: THREE.AdditiveBlending, fog: false }));
+  p.frustumCulled = false; p.renderOrder = 4; p.visible = false; scene.add(p);
+  return p;
+}
 export function setFocus(on, center, r = 40) {
   focusOn = !!on;
   if (!SP) return null;
+  FPT ||= focusPoints();
+  const fa = FPT.geometry.attributes.position; let fn = 0;
   let best = -1, bd = 1e9, changed = false;
   for (let i = 0; i < SP.n; i++) {
     if (!SP.live[i]) continue;
     const trailish = SP.trail[i] > 0;
     const f = on && trailish && Math.hypot(SP.x[i] - center.x, SP.z[i] - center.z) < r ? 1 : 0;
     if (f !== SP.focus[i]) { SP.focus[i] = f; splatColor(i); changed = true; }
-    if (f) { const d = Math.hypot(SP.x[i] - center.x, SP.z[i] - center.z); if (d < bd) { bd = d; best = i; } }
+    if (f) { const d = Math.hypot(SP.x[i] - center.x, SP.z[i] - center.z); if (d < bd) { bd = d; best = i; } if (fn < 64) fa.setXYZ(fn++, SP.x[i], SP.y[i] + 0.32, SP.z[i]); }
   }
+  FPT.geometry.setDrawRange(0, fn); fa.needsUpdate = true; FPT.visible = fn > 0; FPT.material.color.set(cfg.blood ? 0xff4a2a : 0xe0b060); focusN = fn;
   if (changed && SP.m.instanceColor) SP.m.instanceColor.needsUpdate = true;
   if (best < 0) return null;
   // the trail's heading: from the nearest splat toward the next newer one of the same trail (the way the animal went)
@@ -365,7 +394,8 @@ bool goreBit(float mask, float seg) { return mod(floor(mask / exp2(seg)), 2.0) >
 function newUniforms() {
   return { uW: { value: Array.from({ length: 8 }, () => new THREE.Vector4()) }, uWet: { value: new Float32Array(8) }, uWN: { value: 0 },
     uGore: G.uGore, uBloodOn: G.uBloodOn, uHands: { value: 0 }, uBS: { value: 1 }, uCut: { value: 0 }, uKeep: { value: 0 },
-    uP: { value: Array.from({ length: 4 }, () => new THREE.Vector4()) }, uPN: { value: 0 }, uPC: { value: new THREE.Color(0x8c8a84) }, uFlesh: { value: 0 } };
+    uP: { value: Array.from({ length: 4 }, () => new THREE.Vector4()) }, uPN: { value: 0 }, uPC: { value: new THREE.Color(0x8c8a84) }, uFlesh: { value: 0 },
+    uDown: { value: new THREE.Vector3(0, -1, 0) } };   // bind-space 'down': blood runs from a wound
 }
 function woundCompile(u, wounds) {
   return (sh) => {
@@ -373,7 +403,7 @@ function woundCompile(u, wounds) {
     sh.vertexShader = 'attribute float aSeg;\nattribute float aHand;\nvarying vec3 vGoreBind;\nflat varying float vGoreSeg;\nvarying float vGoreHand;\n'
       + sh.vertexShader.replace('#include <begin_vertex>', '#include <begin_vertex>\n  vGoreBind = position; vGoreSeg = aSeg; vGoreHand = aHand;');
     let f = 'uniform float uCut, uKeep;\nflat varying float vGoreSeg;\nvarying vec3 vGoreBind;\nvarying float vGoreHand;\n'
-      + (wounds ? 'uniform vec4 uW[8];\nuniform float uWet[8];\nuniform int uWN;\nuniform float uGore, uBloodOn, uHands, uBS, uFlesh;\nuniform vec4 uP[4];\nuniform int uPN;\nuniform vec3 uPC;\n' : '')
+      + (wounds ? 'uniform vec4 uW[8];\nuniform float uWet[8];\nuniform int uWN;\nuniform float uGore, uBloodOn, uHands, uBS, uFlesh;\nuniform vec3 uDown;\nuniform vec4 uP[4];\nuniform int uPN;\nuniform vec3 uPC;\n' : '')
       + GLSL_NOISE + '\n' + sh.fragmentShader;
     f = f.replace('void main() {', `void main() {
   { float gs = floor(vGoreSeg + 0.5);
@@ -394,6 +424,10 @@ function woundCompile(u, wounds) {
       float n = goreN(q * 2.6 + float(i) * 7.13) * 0.6 + goreN(q * 6.5 + 1.7) * 0.3;
       float d = length(q) + (n - 0.45) * 0.75;
       float m = 1.0 - smoothstep(0.5, 1.0, d);
+      // the run: thin streaks of blood below the wound, broken by noise across the fall line
+      float dn = dot(q, uDown); vec3 ql = q - uDown * dn;
+      float run = (1.0 - smoothstep(0.12, 0.42, length(ql) + (goreN(ql * 9.0 + float(i) * 3.7) - 0.5) * 0.5)) * smoothstep(0.0, 0.3, dn) * (1.0 - smoothstep(1.3, 2.6 + 1.2 * goreN(ql * 5.0 + float(i)), dn));
+      m = max(m, run * 0.85 * uBloodOn);
       goreM = max(goreM, m); goreWet = max(goreWet, m * uWet[i]);
       core = max(core, 1.0 - smoothstep(0.08, 0.26, d));
     }
@@ -406,8 +440,8 @@ function woundCompile(u, wounds) {
     diffuseColor.rgb = mix(diffuseColor.rgb, uBloodOn > 0.5 ? vec3(0.26, 0.016, 0.012) : dust, hm);
     goreWet = max(goreWet, hm * (uBloodOn > 0.5 ? 0.8 : 0.0));
     // a butchered carcass: skinned, raw flesh with fat and darker muscle
-    if (uFlesh > 0.0) { float fn = goreN(vGoreBind * uBS * 9.0); vec3 flesh = mix(vec3(0.48, 0.09, 0.07), vec3(0.62, 0.42, 0.34), smoothstep(0.62, 0.8, fn));
-      flesh = mix(flesh, vec3(0.28, 0.03, 0.025), smoothstep(0.35, 0.15, fn)); diffuseColor.rgb = mix(diffuseColor.rgb, flesh, uFlesh); goreWet = max(goreWet, uFlesh * 0.7); }
+    if (uFlesh > 0.0) { float fn = goreN(vGoreBind * uBS * 9.0); vec3 flesh = mix(vec3(0.30, 0.035, 0.03), vec3(0.50, 0.33, 0.26), smoothstep(0.70, 0.82, fn) * (0.5 + 0.5 * goreN(vGoreBind * uBS * 31.0)));
+      flesh = mix(flesh, vec3(0.16, 0.012, 0.012), smoothstep(0.42, 0.18, fn)); diffuseColor.rgb = mix(diffuseColor.rgb, flesh, uFlesh); goreWet = max(goreWet, uFlesh * 0.7); }
   }`);
       f = f.replace('#include <roughnessmap_fragment>', '#include <roughnessmap_fragment>\n  roughnessFactor = mix(roughnessFactor, 0.22, goreWet * uGore);');
     }
@@ -481,7 +515,7 @@ export function prepModel(model, rig = 'quad', { clone = true, paint = null, pai
   }
   if (paint) setPaint(u, paint, paintColor);
   const rec = { rig, meshes, body, u, wounds: [], cut: 0, caps: [], bs: bindScale(body) };
-  u.uBS.value = rec.bs;
+  u.uBS.value = rec.bs; u.uDown.value.set(0, -1, 0).transformDirection(_m2.copy(_m).invert());   // (_m: bind → world, from bindScale)
   REC.set(model, rec);
   return rec;
 }
@@ -489,7 +523,7 @@ export const goreRec = (model) => REC.get(model) || null;
 // World units per bind unit (the Quaternius people carry a ×100 armature scale).
 function bindScale(body) {
   body.updateWorldMatrix(true, false);
-  if (!body.skeleton) return body.matrixWorld.getMaxScaleOnAxis() || 1;
+  if (!body.skeleton) { _m.copy(body.matrixWorld); return _m.getMaxScaleOnAxis() || 1; }
   const b = body.skeleton.bones[0], i = 0;
   b.updateWorldMatrix(true, false);
   _m.multiplyMatrices(body.matrixWorld, body.bindMatrixInverse).multiply(b.matrixWorld).multiply(body.skeleton.boneInverses[i]).multiply(body.bindMatrix);
@@ -537,6 +571,39 @@ function syncWounds(rec) {
   const u = rec.u; u.uWN.value = rec.wounds.length;
   rec.wounds.forEach((w, i) => { u.uW.value[i].set(w.p.x, w.p.y, w.p.z, w.r); u.uWet.value[i] = w.wet; });
 }
+// ----- arrows (BOW): where a flight line really enters a body, and the bone that carries the arrow afterwards
+const _ray = new THREE.Raycaster(), _hits = [];
+function recOf(model) { return REC.get(model) || null; }
+// First surface point of the model along a ray (skinned meshes are tested in their current pose). Returns a Vector3 or null.
+export function rayBody(model, origin, dir, far = 4, out = new THREE.Vector3()) {
+  const rec = recOf(model); if (!rec) return null;
+  _ray.set(origin, dir); _ray.near = 0; _ray.far = far; _hits.length = 0;
+  for (const m of rec.meshes) {
+    if (!m.visible) continue;
+    if (m.isSkinnedMesh) m.boundingSphere = null;       // recomputed for this pose (the cached sphere is from an old one)
+    m.raycast(_ray, _hits);
+  }
+  if (!_hits.length) return null;
+  let best = _hits[0]; for (const h of _hits) if (h.distance < best.distance) best = h;
+  _hits.length = 0;
+  return out.copy(best.point);
+}
+// The bone closest to a line (origin + dir·t, t in [t0, t1]); helper/IK bones are skipped. Returns {bone, d, t} or null.
+export function boneNearLine(model, origin, dir, t0 = 0, t1 = 4) {
+  const rec = recOf(model); if (!rec?.body.skeleton) return null;
+  let bb = null, bd = 1e9, bt = 0;
+  for (const b of rec.body.skeleton.bones) {
+    if (/^(IK|Pole|FF)/.test(b.name)) continue;
+    const e = b.matrixWorld.elements, x = e[12] - origin.x, y = e[13] - origin.y, z = e[14] - origin.z;
+    const t = Math.min(t1, Math.max(t0, x * dir.x + y * dir.y + z * dir.z));
+    const d = Math.hypot(x - dir.x * t, y - dir.y * t, z - dir.z * t);
+    if (d < bd) { bd = d; bb = b; bt = t; }
+  }
+  return bb ? { bone: bb, d: bd, t: bt } : null;
+}
+export function boneNear(model, p) { const rec = recOf(model); return !rec ? null : rec.body.skeleton ? rec.body.skeleton.bones[nearestBone(rec.body, p)] : rec.body; }   // (a morph mesh carries its own arrows)
+export const segRoot = (model, seg) => { const rec = recOf(model); return rec ? SEG[rec.rig]?.roots[seg] || null : null; };
+export const cutMask = (model) => recOf(model)?.cut || 0;
 export function woundCount(model) { return REC.get(model)?.wounds.length || 0; }
 export function clearWounds(model) {
   const rec = REC.get(model); if (!rec) return;
@@ -545,6 +612,7 @@ export function clearWounds(model) {
   if (rec.cut) { rec.cut = 0; rec.u.uCut.value = 0; }
   for (const c of rec.caps) { c.parent?.remove(c); }
   rec.caps.length = 0;
+  if (rec.hid) { for (const m of rec.hid) m.visible = true; rec.hid = null; }
   for (let i = emitters.length - 1; i >= 0; i--) if (emitters[i].rec === rec) emitters.splice(i, 1);
 }
 export function setHands(model, v) { const rec = REC.get(model); if (rec) rec.u.uHands.value = v; }
@@ -559,7 +627,7 @@ function capMats() {
 // Stump cap: wet flesh with a stub of pale bone, attached to the parent bone so it follows the body.
 function makeCap(bone, r, outward) {
   capMats();
-  const g = new THREE.Group();
+  const g = new THREE.Group(); g.userData.goreCap = 1;
   const f = new THREE.Mesh(capGeo, fleshMat); f.scale.set(r, r * 0.55, r); g.add(f);
   const b = new THREE.Mesh(stubGeo, boneMat); b.scale.set(r * 0.28, r * 0.9, r * 0.28); b.position.y = r * 0.35; g.add(b);
   bone.getWorldPosition(g.position);
@@ -577,30 +645,33 @@ export function sever(model, seg, { dir = null, sceneRoot = null } = {}) {
   const rec = REC.get(model); if (!rec || !ready || !cfg.blood || cfg.level !== 'high' || lowMode()) return null;
   const bit = 1 << seg; if (rec.cut & bit) return null;
   const rootName = SEG[rec.rig]?.roots[seg]; if (!rootName) return null;
-  const bone = rec.body.skeleton.bones.find((b) => b.name === rootName); if (!bone?.parent) return null;
+  const bone = rec.body.skeleton?.bones.find((b) => b.name.replace(/\./g, '') === rootName); if (!bone?.parent) return null;
   model.updateMatrixWorld(true);
   counters.severed++;
   rec.cut |= bit; rec.u.uCut.value = rec.cut;
   for (const m of rec.meshes) if (!m.customDepthMaterial) m.customDepthMaterial = depthMat(rec.u);
   const jp = bone.getWorldPosition(new THREE.Vector3()), tip = farthestChild(bone).getWorldPosition(new THREE.Vector3());
   const len = Math.max(0.12, jp.distanceTo(tip)), out = tip.clone().sub(jp).normalize();
-  const r = Math.min(0.11, Math.max(0.035, len * (seg === 1 ? 0.22 : 0.16)));
+  const r = seg === 6 && rec.rig === 'quad' ? Math.min(0.04, Math.max(0.016, len * 0.07)) : Math.min(0.11, Math.max(0.035, len * (seg === 1 ? 0.22 : 0.16)));   // (a tail is thin)
   // the stump on the body
   const cap = makeCap(bone, r, out); scene.add(cap); bone.parent.attach(cap); rec.caps.push(cap);
   emitters.push({ rec, obj: cap, t: 0, life: 2.4, rate: 46, pulse: true });
   // the severed piece: a posed, unanimated copy that shows only this segment
   const copy = SkeletonUtils.clone(model);
-  const u2 = newUniforms(); u2.uKeep.value = bit; u2.uBS.value = rec.bs;
+  const u2 = newUniforms(); u2.uKeep.value = bit; u2.uBS.value = rec.bs; u2.uDown.value.copy(rec.u.uDown.value);
   rec.wounds.forEach((w, i) => { if (i < 8) { u2.uW.value[i].set(w.p.x, w.p.y, w.p.z, w.r); u2.uWet.value[i] = w.wet; } }); u2.uWN.value = rec.wounds.length;
+  const pb = copy.getObjectByName(bone.name);
+  const under = (o, root) => { for (let p = o; p; p = p.parent) { if (p.userData.goreArrow || p.userData.goreCap) return false; if (p === root) return true; } return false; };
   copy.traverse((o) => {
     if (o.isSkinnedMesh) { const src = o.material; o.material = src.clone(); patchWoundMaterial(o.material, { u: u2, wounds: !SKIP_MAT.test(src.name || '') && (rec.rig !== 'human' || o.geometry === rec.body.geometry) }); o.customDepthMaterial = depthMat(u2); o.castShadow = true; o.frustumCulled = false; }
-    else if (o.isMesh || o.isSprite || o.isPoints || o.isLight) o.visible = false;   // weapons in sockets, old caps, glows
+    else if (o.isMesh || o.isSprite || o.isPoints || o.isLight || o.isLine) { if (!(o.isMesh && pb && under(o, pb))) o.visible = false; }   // weapons in sockets, arrows, old caps, glows; rigid parts of the piece itself (antlers on a head) stay
   });
+  // rigid parts that ride the severed bones (a stag's antlers) leave the body with the piece
+  bone.traverse((o) => { if (o.isMesh && !o.isSkinnedMesh && o.visible && !o.userData.goreCap && under(o, bone)) { o.visible = false; (rec.hid ||= []).push(o); } });
   const center = jp.clone().add(tip).multiplyScalar(0.5);
   const pivot = new THREE.Group(); pivot.position.copy(center); (sceneRoot || scene).add(pivot); pivot.updateMatrixWorld(true);
   _m.copy(pivot.matrixWorld).invert().multiply(model.matrixWorld); _m.decompose(copy.position, copy.quaternion, copy.scale);
   pivot.add(copy);
-  const pb = copy.getObjectByName(rootName);
   if (pb) { const c2 = makeCap(bone, r * 0.9, out.clone().negate()); pivot.add(c2); c2.position.copy(jp).sub(center); emitters.push({ obj: c2, t: 0, life: 1.1, rate: 30, pulse: false }); }
   const d = dir ? _v.copy(dir).setY(0).normalize() : _v.set(rnd() - 0.5, 0, rnd() - 0.5).normalize();
   const vel = new THREE.Vector3(d.x * (2.2 + rnd() * 1.8) + out.x * 1.2, 2.4 + rnd() * 1.6, d.z * (2.2 + rnd() * 1.8) + out.z * 1.2);
@@ -637,7 +708,7 @@ export function leaveCarcass(model, { flesh = true, scale = 0.9, life = 120 } = 
   model.updateMatrixWorld(true);
   const copy = SkeletonUtils.clone(model);
   const u = newUniforms(); u.uFlesh.value = flesh && cfg.blood ? 0.86 : 0;
-  if (rec) { u.uBS.value = rec.bs; u.uCut.value = rec.cut; rec.wounds.forEach((w, i) => { u.uW.value[i].set(w.p.x, w.p.y, w.p.z, w.r); u.uWet.value[i] = w.wet * 0.6; }); u.uWN.value = rec.wounds.length; }
+  if (rec) { u.uBS.value = rec.bs; u.uDown.value.copy(rec.u.uDown.value); u.uCut.value = rec.cut; rec.wounds.forEach((w, i) => { u.uW.value[i].set(w.p.x, w.p.y, w.p.z, w.r); u.uWet.value[i] = w.wet * 0.6; }); u.uWN.value = rec.wounds.length; }
   const mats = [];
   copy.traverse((o) => {
     if (o.isSkinnedMesh || (rec?.rig === 'mesh' && o.isMesh)) {
@@ -646,8 +717,9 @@ export function leaveCarcass(model, { flesh = true, scale = 0.9, life = 120 } = 
       if (flesh && cfg.blood && wounds) { o.material.roughness = 0.45; }
       patchWoundMaterial(o.material, { u, wounds }); if (u.uCut.value) o.customDepthMaterial = depthMat(u);
       o.castShadow = true; o.frustumCulled = false;
-    } else if (o.isMesh || o.isSprite || o.isPoints) o.visible = false;
+    } else if (o.isSprite || o.isPoints || o.isLight) o.visible = false;
   });
+  const arrows = []; copy.traverse((o) => { if (o.userData.goreArrow) arrows.push(o); }); for (const a of arrows) a.removeFromParent();   // the arrows went back to the quiver or fell beside it
   const g = new THREE.Group(); scene.add(g);
   _m.copy(model.matrixWorld); _m.decompose(copy.position, copy.quaternion, copy.scale);
   // scale ×0.9 about the ground point under the body, so it sinks a little rather than floating
@@ -680,7 +752,7 @@ export function screenSplat(angle, amt = 0.5) {
   for (let k = 0; k < n; k++) {
     const a = angle + (rnd() - 0.5) * 0.9, rx = 0.43 + rnd() * 0.06, ry = 0.40 + rnd() * 0.08;
     SC.list.push({ img: SC.sprites[(rnd() * SC.sprites.length) | 0], x: 0.5 + Math.sin(a) * rx, y: 0.5 - Math.cos(a) * ry, rot: rnd() * 6.28,
-      s: (0.18 + rnd() * 0.16) * (0.8 + Math.min(1.5, amt) * 0.5), t: 0, life: 2.4 + rnd() * 0.8, a: Math.min(1, 0.55 + amt * 0.45) * (cfg.reduceFlash ? 0.5 : 1) });
+      s: (0.2 + rnd() * 0.16) * (0.8 + Math.min(1.5, amt) * 0.45), t: 0, life: 2.4 + rnd() * 0.8, a: Math.min(1, 0.55 + amt * 0.45) * (cfg.reduceFlash ? 0.5 : 1) });
   }
   while (SC.list.length > 14) SC.list.shift();
   counters.screen += n;
@@ -745,7 +817,7 @@ export function updateGore(dt, env = {}) {
       }
       const sp = Math.hypot(vx, vy, vz), r = DR.r[i];
       if (sp > 1e-4) { _v.set(vx / sp, vy / sp, vz / sp); _q.setFromUnitVectors(_UP, _v); } else _q.identity();
-      _m.compose(_v3.set(x, y, z), _q, _s.set(r, r * (1 + Math.min(4, sp * 0.45)), r)); DR.m.setMatrixAt(i, _m);
+      _m.compose(_v3.set(x, y, z), _q, _s.set(r, r * (1 + Math.min(2.6, sp * 0.4)), r)); DR.m.setMatrixAt(i, _m);
       DR.dirty = true;
     }
   }
@@ -770,7 +842,7 @@ export function updateGore(dt, env = {}) {
       const n = e.acc | 0; e.acc -= n;
       for (let k = 0; k < n; k++) {
         const sp = (1.2 + rnd() * 1.6) * (0.5 + pulse * 0.7);
-        spawnDrop(_v2.x, _v2.y, _v2.z, (_v.x + (rnd() - 0.5) * 0.4) * sp, (_v.y + (rnd() - 0.5) * 0.4) * sp, (_v.z + (rnd() - 0.5) * 0.4) * sp, 0.01 + rnd() * 0.012, 0.5);
+        spawnDrop(_v2.x, _v2.y, _v2.z, (_v.x + (rnd() - 0.5) * 0.4) * sp, (_v.y + (rnd() - 0.5) * 0.4) * sp, (_v.z + (rnd() - 0.5) * 0.4) * sp, 0.006 + rnd() * 0.008, 0.5);
       }
     }
   }
@@ -818,6 +890,7 @@ export function updateGore(dt, env = {}) {
   }
   SP.m.visible = SP.count > 0;
   SPU.uPulse.value = focusOn ? 0.5 + 0.5 * Math.sin(now * 4) : 0;
+  if (FPT) { if (!focusOn) FPT.visible = false; else FPT.material.opacity = 0.5 + 0.35 * SPU.uPulse.value; }
   // static decals: one build per frame
   if (decalQ.length) buildDecal();
   // wounds dry: wet 1 → 0.15 over 90 s
@@ -842,5 +915,5 @@ export function updateGore(dt, env = {}) {
 export function stats() {
   return { drops: DR ? DR.count : 0, splats: SP ? SP.count : 0, decals: decals.length, queued: decalQ.length, wounds: [...HAS].reduce((n, r) => n + r.wounds.length, 0),
     screen: counters.screen, screenLive: SC ? SC.list.length : 0, bursts: counters.bursts, severed: counters.severed, pieces: pieces.length, carcasses: carcasses.length,
-    mist: MIST ? MIST.list.filter((f) => f.s.visible).length : 0, capDrops, capSplats, focus: focusOn, level: cfg.level, blood: cfg.blood };
+    mist: MIST ? MIST.list.filter((f) => f.s.visible).length : 0, capDrops, capSplats, focus: focusOn, focusPts: focusOn ? focusN : 0, level: cfg.level, blood: cfg.blood };
 }

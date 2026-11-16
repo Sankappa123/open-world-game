@@ -253,7 +253,8 @@ export function createTribe(ctx) {
   const _ep = new THREE.Vector3(), _ed = new THREE.Vector3();
   function hitEvent(f, dmg, info) {
     const fp = info.from?.pos || info.from?.root?.position || P.pos;
-    const e = { o: f, f, dmg, kind: info.kind || 'blunt', weapon: info.weapon || null, heavy: !!info.heavy, from: info.from || P, kill: false, cancel: false, zone: info.zone || null,
+    const e = { o: f, f, dmg, kind: info.kind || 'blunt', weapon: info.weapon || null, heavy: !!info.heavy, from: info.from || P, kill: false, cancel: false, zone: info.zone || null, arrow: !!info.arrow,   // GORE: arrow flag
+     
       point: info.point ? _ep.copy(info.point) : f.h.bones.spine_03.getWorldPosition(_ep),
       dir: info.dir ? _ed.copy(info.dir) : _ed.set(f.pos.x - fp.x, 0, f.pos.z - fp.z).normalize() };
     if (e.weapon === 'flintaxe') e.weapon = 'axe';

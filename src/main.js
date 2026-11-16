@@ -2163,11 +2163,13 @@ function bowLandGround(ar) {
   bowRecord();
 }
 function bowLandAnimal(ar, o) {
-  _bA.copy(ar.vel).normalize(); ar.m.position.copy(ar.tip).addScaledVector(_bA, 0.18); ar.m.lookAt(_bB.copy(ar.m.position).add(_bA));
-  o.root.attach(ar.m); ar.st = 'animal'; ar.o = o;
+  _bA.copy(ar.vel).normalize();
+  if (!goreArrowStick(ar, o, _bA)) { ar.m.position.copy(ar.tip).addScaledVector(_bA, 0.18); ar.m.lookAt(_bB.copy(ar.m.position).add(_bA)); o.root.attach(ar.m); }   // GORE: the arrow stands in the body where it went in, on the bone it struck
+  ar.st = 'animal'; ar.o = o;
   const dist = Math.hypot(o.root.position.x - ar.from.x, o.root.position.z - ar.from.z);
   const live = o.state === 'live';
-  wpnHitFx(o, ar.dmg, 'thrown', { kind: 'pierce', weapon: 'thrown', from: P, point: ar.tip.clone(), dir: _bA.clone(), vel: ar.vel.clone(), dist });
+  wpnHitFx(o, ar.dmg, 'thrown', { kind: 'pierce', weapon: 'thrown', arrow: true, from: P, point: (ar.hitPt || ar.tip).clone(), dir: _bA.clone(), vel: ar.vel.clone(), dist });   // GORE: the true entry point, arrow flag
+  goreArrowAfter(ar, o);                             // GORE: a raider's block turns the arrow aside
   wpnKnock(o, _bB.copy(o.root.position).addScaledVector(_bA, -1));
   A.hit(260, 0.1, 0.3);
   bump('arrow_hit'); if (dist >= 15) bump('arrow_far');
@@ -2182,7 +2184,8 @@ function bowTick(dt) {
         ar.acc -= SP_DT;
         const hit = spearStep(ar.pos, ar.vel, ar.tip);
         if (hit === 'ground') bowLandGround(ar);
-        else if (hit) bowLandAnimal(ar, hit);
+        else if (hit && ar.skip !== hit && goreArrowAim(ar, hit)) bowLandAnimal(ar, hit);   // GORE: only a line that really meets the body
+        else if (hit) { ar.skip = hit; if (ar.tip.y < getHeight(ar.tip.x, ar.tip.z) + 0.05) bowLandGround(ar); }   // GORE: a near miss flies on
         else if (++ar.steps > 600) bowRemove(ar);
       }
       if (ar.st === 'air') bowPoseArrow(ar);
@@ -4579,7 +4582,7 @@ function matHitPre(o, dmg, info) {
   const e = { o, dmg, kind: info.kind || 'blunt', weapon: info.weapon || null, from: info.from || null, heavy: !!info.heavy, dist: info.dist, vel: info.vel || null,
     point: info.point ? _mPt2.copy(info.point) : _mPt2.set(p.x, p.y + 0.9, p.z),
     dir: info.dir ? _mDir2.copy(info.dir) : _mDir2.set(p.x - P.pos.x, 0, p.z - P.pos.z).normalize(),
-    zone: info.zone || null, crit: false, kill: false, cancel: false };
+    zone: info.zone || null, crit: false, kill: false, cancel: false, arrow: !!info.arrow };   // GORE: arrow = a lodged arrow (puncture wound)
   return emit('animalHitPre', e);
 }
 function matHitPost(e, kill) { e.kill = kill; emit('animalHit', e); if (kill) emit('animalDie', e); }
@@ -5219,20 +5222,21 @@ on('animalHit', (e) => {
   const kid = goreKidNear(o.root.position), blood = goreBloodOn(), small = o.kind === 'fox' ? 0.6 : 1;
   if (e.kind !== 'bleed') {
     if (blood) {
-      const n = GR.burstCount(goreLevel(), e.kill, e.heavy) * small * (kid ? 0.3 : 1);
-      GR.bloodBurst(e.point, e.dir, n, { heavy: e.heavy, kill: e.kill, size: small });
+      const n = GR.burstCount(goreLevel(), e.kill, e.heavy) * small * (kid ? 0.3 : 1) * (e.arrow && !e.kill ? 0.6 : 1);   // an arrow punctures: less spray, a tighter cone
+      GR.bloodBurst(e.point, e.dir, n, { heavy: e.heavy, kill: e.kill, size: small * (e.arrow ? 0.85 : 1), spread: e.arrow ? 0.42 : 0.61 });
       if (e.heavy || e.kill) goreWallDecal(e.point, e.dir);
       goreSfx('spatter', 0.8, e.point);
     }
-    const r = (e.kind === 'blunt' ? 0.05 : e.weapon === 'axe' ? 0.085 : 0.06) * small * (e.kill ? 1.25 : 1);
+    const r = (e.arrow ? 0.045 : e.kind === 'blunt' ? 0.05 : e.weapon === 'axe' ? 0.085 : 0.06) * small * (e.kill ? 1.25 : 1);
     GR.addWound(o.a.model, e.point, r, { wet: e.kind === 'blunt' ? 0.5 : 1 });
-    goreSfx('flesh', e.kill ? 1 : 0.75, e.point); if (e.heavy || e.crit || e.weapon === 'thrown') goreSfx('crack', e.kill ? 0.9 : 0.6, e.point);
+    goreSfx('flesh', e.kill ? 1 : 0.75, e.point); if (e.heavy || e.crit || (e.weapon === 'thrown' && !e.arrow)) goreSfx('crack', e.kill ? 0.9 : 0.6, e.point);
   }
   const prey = PREY.has(o.kind) && !o.tame && !o.horse;
-  if (prey && e.kill) { if (GR.isClean(o.hits, e.zone, e.weapon, e.dist)) o.clean = true; }
+  if (prey && e.kill) { if (GR.isClean(o.hits, e.zone, e.arrow ? 'arrow' : e.weapon, e.dist)) o.clean = true; }   // an arrow is clean only through the head or the heart
   else if (prey && e.kind !== 'bleed') {
     const z = GR.ZONES[e.zone] || GR.ZONES.gut;
     if (z.bleed) o.bleed = Math.min(0.8, Math.max(o.bleed || 0, z.bleed) + (o.bleed ? 0.04 : 0));
+    if (e.arrow) o.bleed = Math.max(o.bleed || 0, 0.12);   // a lodged arrowhead keeps any wound open: there is always a trail to follow
     if (z.limp) o.limp = true;
     Object.assign(o, { wounded: true, fleeT: 7, trailD: 0, bed: null });
     if (o.bedded) goreBolt(o);
@@ -5241,7 +5245,8 @@ on('animalHit', (e) => {
 }, 50);
 // Severing on kills: finishers and heavy axe kills, Gore high, Blood on, no child near.
 function goreKill(o, e, kid) {
-  o.drip = 0; o.wounded = false; o.bleed = 0;
+  if (o.lying) o.a.play('Death', 'hold', 1, 0.35);   // it was lying with its head up: the clip runs on from there (no standing up to fall again)
+  o.drip = 0; o.wounded = false; o.bleed = 0; o.bedded = o.lying = o.frozen = false;
   if (!goreBloodOn() || goreLevel() !== 'high' || kid || o.horse || o.tame) return;
   const axe = e.weapon === 'axe';
   let seg = 0;
@@ -5253,10 +5258,10 @@ function goreKill(o, e, kid) {
     else if (rand() < 0.12) seg = 6;                  // the tail
   }
   if (!seg) return;
-  if (GR.sever(o.a.model, seg, { dir: e.dir })) { goreSfx('sever', 1, e.point); if (seg === 1 && PREY.has(o.kind)) o.clean = false; }
+  if (GR.sever(o.a.model, seg, { dir: e.dir })) { goreSfx('sever', 1, e.point); goreArrowsOff(o, o.a.model, seg); if (seg === 1 && PREY.has(o.kind)) o.clean = false; }
 }
 function goreNearestLeg(o, pt) {
-  const names = { 2: 'FrontUpperLeg.L', 3: 'FrontUpperLeg.R', 4: 'BackUpperLeg.L', 5: 'BackUpperLeg.R' };
+  const names = { 2: 'FrontUpperLegL', 3: 'FrontUpperLegR', 4: 'BackUpperLegL', 5: 'BackUpperLegR' };   // (GLTFLoader drops the dots of the rig's names)
   let best = 0, bd = 1e9;
   for (const s in names) { const b = o.a.bone?.(names[s]); if (!b) continue; const d = b.getWorldPosition(_gA).distanceTo(pt); if (d < bd) { bd = d; best = +s; } }
   return best;
@@ -5439,6 +5444,7 @@ function goreButcherDone(o) {
   if (g.grade === 'prime' && hide) toast('Prime hide: a clean kill');
   else if (g.grade === 'poor' && hide) toast('Poor hide: too many cuts in it');
   P.h.swing(); A.hit(600, 0.2, 0.4); goreSfx('squelch', 1);
+  goreArrowsBack(o);
   GR.leaveCarcass(o.a.model, { flesh: goreBloodOn() && !goreKidNear(o.root.position) });
   GR.clearWounds(o.a.model);
   if (goreBloodOn()) GS.hands.value = 1;
@@ -5539,14 +5545,52 @@ function goreFocus(dt) {
   if (!GS.said[f.trail] && Math.hypot(N.pos.x - P.pos.x, N.pos.z - P.pos.z) < 25) { GS.said[f.trail] = 1; say('Sena', 'It is bleeding. This way.'); }
 }
 
+// ----- arrows (BOW hooks): a shot counts only when its flight line really meets the body; the arrow then stands in the
+// entry wound, carried by the bone it struck (it follows the gallop, the fall and the corpse), and comes back on butchering.
+const goreModelOf = (o) => (o.foe ? o.h?.root : o.a?.model);
+function goreArrowAim(ar, o) {                       // bowTick: false = a near miss inside the wide hit cylinder (the arrow flies on)
+  goreInit();
+  const model = goreModelOf(o); if (!model) return true;
+  if (o.foe) gorePatchHuman(o.h); else if (!GR.goreRec(model)) GR.prepModel(model, o.a.bone?.('Head') ? 'quad' : 'mesh', { clone: false });
+  const d = _gN.copy(ar.vel).normalize(), org = _gA.copy(ar.tip).addScaledVector(d, -1.4);
+  let pt = GR.rayBody(model, org, d, 4.4, _gC);
+  if (!pt) {                                          // a little aim help: a line that passes close to a bone is pulled onto it
+    const nb = GR.boneNearLine(model, org, d, 0, 4.4), tol = o.foe ? 0.24 : o.kind === 'fox' ? 0.18 : 0.3;
+    if (nb && nb.d > tol) return false;
+    if (nb) { nb.bone.getWorldPosition(_gB); pt = GR.rayBody(model, org.copy(_gB).addScaledVector(d, -1.2), d, 2.4, _gC) || _gC.copy(_gB).addScaledVector(d, -0.08); }
+    else pt = _gC.copy(ar.tip);
+  }
+  ar.hitPt = pt.clone();
+  return true;
+}
+function goreArrowStick(ar, o, dir) {                // bowLandAnimal: the point sunk 10-16 cm past the entry, the shaft along the flight
+  const model = goreModelOf(o); if (!ar.hitPt || !model) return false;
+  const bone = GR.boneNear(model, ar.hitPt);
+  ar.m.position.copy(ar.hitPt).addScaledVector(dir, 0.1 + rand() * 0.06); ar.m.lookAt(_gB.copy(ar.m.position).add(dir));
+  (bone || o.root).attach(ar.m); ar.bone = bone; ar.hp0 = o.hp; ar.m.userData.goreArrow = 1;
+  return true;
+}
+function goreArrowAfter(ar, o) {                     // bowLandAnimal, after the hit: a blocked arrow glances off and falls
+  if (o.foe && o.state === 'live' && ar.hp0 != null && o.hp >= ar.hp0) ar.o = null;
+}
+function goreArrowsOff(o, model, seg) {              // arrows standing in a severed limb or head fall to the ground
+  const rn = GR.segRoot(model, seg); if (!rn) return;
+  for (const ar of BOW.arrows) if (ar.st === 'animal' && ar.o === o && ar.bone) for (let b = ar.bone; b && b.isBone; b = b.parent) if (b.name.replace(/\./g, '') === rn) { ar.o = null; break; }
+}
+function goreArrowsBack(o) {                         // butchering pulls the arrows out of the carcass (what does not fit drops beside it)
+  let n = 0;
+  for (const ar of BOW.arrows.slice()) if (ar.st === 'animal' && ar.o === o && (S.inv.arrow || 0) < bowCap()) { bowRemove(ar); S.inv.arrow = (S.inv.arrow || 0) + 1; n++; }
+  if (n) { bump('arrow_pick', n); toast(`+${n} arrow${n > 1 ? 's' : ''} pulled from the carcass`); drawInv(); drawQuest(); }
+}
+
 // ----- raiders (CMB): call goreFoeHit(f, e) or emit('foeHit', e) with e = {f, point, dir, kill, heavy, weapon, kind}
 function goreFoeHit(f, e = {}) {
   const h = f?.h || f?.human || (f?.root && f.bones ? f : null); if (!h?.root) return;
   goreInit(); gorePatchHuman(h);
   const pt = e.point || _gA.set(h.root.position.x, h.root.position.y + 1.2, h.root.position.z), dir = e.dir || _gB.set(0, 0, 1);
   const kid = goreKidNear(h.root.position);
-  if (goreBloodOn()) GR.bloodBurst(pt, dir, GR.burstCount(goreLevel(), e.kill, e.heavy) * (kid ? 0.3 : 1), { heavy: e.heavy, kill: e.kill });
-  GR.addWound(h.root, pt, e.weapon === 'axe' ? 0.085 : 0.065);
+  if (goreBloodOn()) GR.bloodBurst(pt, dir, GR.burstCount(goreLevel(), e.kill, e.heavy) * (kid ? 0.3 : 1) * (e.arrow && !e.kill ? 0.6 : 1), { heavy: e.heavy, kill: e.kill, spread: e.arrow ? 0.42 : 0.61 });
+  GR.addWound(h.root, pt, e.arrow ? 0.045 : e.weapon === 'axe' ? 0.085 : 0.065);
   goreSfx('flesh', 1, pt); if (e.heavy) goreSfx('crack', 0.7, pt);
   if (e.kill && goreBloodOn() && goreLevel() === 'high' && !kid && !f.goreQuick && (e.weapon === 'axe' || e.kind === 'finisher')) {   // a captive's death (the surrender choice) is quick, never a spectacle
     let seg = 0;
@@ -5555,29 +5599,35 @@ function goreFoeHit(f, e = {}) {
       if (pt.y > h.root.position.y + 1.45 && rand() < 0.5) seg = 1;
       else if (rand() < 0.35) { const names = { 2: 'lowerarm_l', 3: 'lowerarm_r', 4: 'calf_l', 5: 'calf_r' }; let bd = 1e9; for (const s in names) { const b = h.bones?.[names[s]]; if (b) { const d = b.getWorldPosition(_gC).distanceTo(pt); if (d < bd) { bd = d; seg = +s; } } } }
     }
-    if (seg && GR.sever(h.root, seg, { dir })) goreSfx('sever', 1, pt);
+    if (seg && GR.sever(h.root, seg, { dir })) { goreSfx('sever', 1, pt); goreArrowsOff(f, h.root, seg); }
   }
 }
 on('foeHit', (e) => goreFoeHit(e.f || e.foe || e.o, e), 50);
 on('surrender', (e) => { if (e.f && e.choice === 'kill') e.f.goreQuick = true; }, 40);   // §2.4/§12: no dismemberment of a surrendered man
+const goreM = (o) => o.h?.root || o.a?.model || o.root || o;   // the registered model of an animal, a person or a raider
 function goreHooks() {
   return {
     stats: () => ({ ...GR.stats(), puffs: GS.puffs, hands: GS.hands.value }),
     burst: (p, d, n = 14, o) => GR.bloodBurst(p, d || new THREE.Vector3(0, 0.3, 1), n, o),
     splat: (x, z, s = 0.4, k = 'blood', o) => GR.groundSplat(x, z, s, k, o),
-    wound: (o, p, r) => GR.addWound(o.a?.model || o.h?.root || o.root || o, p, r),
-    woundsOf: (o) => GR.woundCount(o.a?.model || o.h?.root || o.root || o),
-    clear: (o) => GR.clearWounds(o.a?.model || o.h?.root || o.root || o),
+    wound: (o, p, r) => GR.addWound(goreM(o), p, r),
+    woundsOf: (o) => GR.woundCount(goreM(o)),
+    clear: (o) => GR.clearWounds(goreM(o)),
     focus: () => GS.focus, trail: (o) => GR.trailCount(o.gid), trailBright: (o, near) => GR.splatBrightness(o.gid, near ? P.pos : null), kinds: (o) => GR.splatKinds(o?.gid),
     hands: () => GS.hands.value, setHands: (v) => { GS.hands.value = v; },
     zone: (o, p) => goreZoneOf(o, p), ext: (o) => goreExt(o),
     bed: (o) => { o.wounded = true; o.bleed ||= 0.08; goreBedDown(o); o.bedT = 2; o.lying = true; o.a.play('Death', 'hold', 1); },
     butcher: () => GS.butch && { kind: GS.butch.o.kind, t: GS.butch.o.butchT, need: GS.butch.need },
-    sever: (o, seg = 1) => GR.sever(o.a?.model || o.h?.root || o, seg, {}), carcasses: () => GR.carcassList(),
+    sever: (o, seg = 1, dir) => { const m = goreM(o), r = GR.sever(m, seg, { dir }); if (r && o.root) goreArrowsOff(o, m, seg); return r; }, cut: (o) => GR.cutMask(goreM(o)), carcasses: () => GR.carcassList(),
     screen: (a = 0, amt = 1) => GR.screenSplat(a, amt), foeHit: goreFoeHit, patchHuman: gorePatchHuman,
     paint: (h, list) => GR.bonePaint(h.root, list), cfg: () => GR.goreCfg(),
     autoButcher: (o) => { goreButcherStart(o); if (GS.butch) GS.butch.auto = true; return !!GS.butch; },   // tests: butcher without holding E
     wallHit: (p, d) => goreWallDecal(p, d),
+    cam: (p, l, t = 1e9) => { camShot = p ? { pos: new THREE.Vector3().copy(p), look: new THREE.Vector3().copy(l), t } : null; },   // tests: a fixed camera for screenshots
+    // tests: an arrow in flight from world point `from` toward `at` (no camera aim needed); arrowsIn(o): the arrows standing in a body
+    arrow: (from, at, speed = 45, dmg = 14) => { const ar = { m: makeArrow(), pos: new THREE.Vector3(), vel: new THREE.Vector3().copy(at).sub(from).normalize(), tip: new THREE.Vector3().copy(from), st: 'air', acc: 0, steps: 0, o: null, from: new THREE.Vector3().copy(from), dmg };
+      ar.pos.copy(from).addScaledVector(ar.vel, -SP_TIP); ar.vel.multiplyScalar(speed); scene.add(ar.m); BOW.arrows.push(ar); return ar; },
+    arrowsIn: (o) => BOW.arrows.filter((a) => a.st === 'animal' && a.o === o).map((a) => { const w = a.m.getWorldPosition(new THREE.Vector3()); return { bone: a.bone?.name || null, pos: [w.x, w.y, w.z].map((v) => +v.toFixed(2)), zone: goreZoneOf(o, w) }; }),
     set: (o = {}) => { Object.assign(settings, o); setGore(); return { ...GR.goreCfg() }; },   // tests: Content settings without the pause UI
   };
 }
@@ -8651,6 +8701,7 @@ function svSpits(dt) {
     }
     const show = (items?.length || boiling) && svNear(s, 14);
     fx.sprite.visible = !!show;
+    if (show) { fx.g.getWorldPosition(_svB); const w = clamp(camera.position.distanceTo(_svB) * 0.34, 1.5, 3.6); fx.sprite.scale.set(w, w / 4, 1); fx.sprite.position.y = 1.95 + (w - 1.5) * 0.22; }   // readable from the third-person camera
     if (show && (fx.drawT -= dt) <= 0) { fx.drawT = 0.15; svBarDraw(fx, s); }
   }
 }
@@ -8722,7 +8773,7 @@ function survFire(s, t) {
     if (I.mint > 0) acts.push(['Brew mint tea', () => svBoilStart(s, 'minttea')]);
     if (I.willow > 0) acts.push(['Brew willow-bark tea', () => svBoilStart(s, 'willowtea')]);
   }
-  if (sit) acts.push(['Sit with Sena', () => sitTogether(s)]);
+  if (sit && !acts.some(([l]) => /the spit/.test(l))) acts.push(['Sit with Sena', () => sitTogether(s)]);   // food to put on or take off comes first (as on Story): E does it at once, no menu
   if (I.grain >= 2) acts.push(['Bake flatbread (2 grain)', () => { I.grain -= 2; I.bread++; survGive('bread', 1); toast('+1 Flatbread'); A.hit(3000, 0.4, 0.2); drawInv(); }]);
   const status = items.length ? `Spit: ${items.length} ${svSpitWord(items)}` : SV.boil?.s === s ? `Boiling… ${Math.round(SV.boil.t / SV.boil.T * 100)}%` : '';
   if (!acts.length) return t(status || 'Campfire — bring raw meat or fish for the spit, or grain to bake');
@@ -9012,7 +9063,7 @@ function svBodyDraw() {
   const feel = S.warm > 70 ? 'warm' : S.warm > 40 ? 'cool' : S.warm > 20 ? 'cold' : 'freezing';
   const skin = S.tools.waterskin ? `Waterskin ${S.skin}/3${S.skin > 0 ? ` · ${S.skinQ === 'safe' ? 'clean' : `${SV_SRC[S.risk.skinSrc] || 'river'} water, unboiled`}` : ''}` : 'No waterskin';
   const food = D().spoil === 'off' ? [] : SURV.FOODS.filter((k) => S.inv[k] > 0).map((k) => { const L2 = S.age[k], h = L2?.length ? Math.max(0, SURV.spoilHours(k, D().spoil) - L2[0]) : SURV.spoilHours(k, D().spoil); return `${ITEMS[k]} ${S.inv[k]} <i>${h < 6 ? 'spoils soon' : `keeps ~${Math.round(h)} h`}</i>`; });
-  $('bd-info').innerHTML = `<div><b>Health</b> ${Math.round(S.hp)} · <b>Feels</b> ${feel} (${air}${SV.sheltered ? ', sheltered' : ''})${S.risk.hypo > 0.15 ? ` · <span class="warn">getting dangerously cold</span>` : ''}</div><div>${skin}</div>${food.length ? `<div class="food">${food.join(' · ')}</div>` : ''}`;
+  $('bd-info').innerHTML = `<div><b>Health</b> ${Math.round(S.hp)} · <b>Feels</b> ${feel} (${air}${SV.sheltered ? (E.cave > 0.5 ? ', sheltered' : ', by fire or shelter') : ''})${S.risk.hypo > 0.15 ? ` · <span class="warn">getting dangerously cold</span>` : ''}</div><div>${skin}</div>${food.length ? `<div class="food">${food.join(' · ')}</div>` : ''}`;
   for (const b of $('bd-acts').querySelectorAll('button')) {
     const n = svPlanFor(b.dataset.act, sel).length;
     b.disabled = !n || !!SV.hold; b.classList.toggle('has', n > 0);
