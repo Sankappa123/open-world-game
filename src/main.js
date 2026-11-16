@@ -336,7 +336,7 @@ function drawInv() {
   let h = '';
   if (hasSpear()) h += `<span class="tool">${S.tools.flintspear ? 'Flint spear' : 'Spear'}${W.spearOut && spearWhere() ? ' · ' + spearWhere() : ''}</span>`;   // FPP-world: flint tools are named too; WH: the thrown spear
   if (hasAxe()) h += `<span class="tool">${S.tools.flintaxe ? 'Flint axe' : 'Axe'}</span>`;
-  if (S.tools.bow) h += `<span class="tool">Bow${BOW.on ? ' (ready)' : ''} · ${S.inv.arrow || 0}/${bowCap()} arrows</span>`;   // BOW
+  if (S.tools.bow) h += `<span class="tool">Bow${BOW.on ? ' (ready)' : ''} · ${S.inv.arrow || 0}${(S.inv.arrow || 0) > bowCap() ? '' : '/' + bowCap()} arrows</span>`;   // BOW: a stock above the carry cap shows just the count
   if (S.tools.torch) h += `<span class="tool">Torch${torchOn ? ` · lit ${Math.ceil(S.fuel)}s` : ''}</span>`;
   if (S.tools.cloak) h += '<span class="tool">Fur cloak</span>';
   if (S.tools.waterskin) h += `<span class="tool">Waterskin<b>${S.skin}/3</b>${survSkinTag()}</span>`;   // SURV: where the water came from
