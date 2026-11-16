@@ -16,7 +16,7 @@ export function makeBow() {
   const pts = [];
   for (let i = 0; i <= 16; i++) { const t = i / 16 * 2 - 1; pts.push(new THREE.Vector3(0, t * BOW_HALF, BOW_TIPZ * t * t)); }
   const curve = new THREE.CatmullRomCurve3(pts);
-  const stave = new THREE.Mesh(new THREE.TubeGeometry(curve, 32, 0.016, 6, false), wood);
+  const stave = new THREE.Mesh(new THREE.TubeGeometry(curve, 32, 0.022, 8, false), wood);
   // the limbs taper toward the tips
   const pos = stave.geometry.attributes.position;
   for (let i = 0; i < pos.count; i++) {
@@ -26,7 +26,7 @@ export function makeBow() {
   }
   stave.geometry.computeVertexNormals();
   stave.castShadow = true; g.add(stave);
-  const grip = new THREE.Mesh(new THREE.CylinderGeometry(0.021, 0.021, 0.13, 8), hide); g.add(grip);
+  const grip = new THREE.Mesh(new THREE.CylinderGeometry(0.027, 0.027, 0.13, 10), hide); g.add(grip);
   const sg = new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(0, BOW_HALF, BOW_TIPZ), new THREE.Vector3(0, 0, BOW_TIPZ), new THREE.Vector3(0, -BOW_HALF, BOW_TIPZ)]);
   const str = new THREE.Line(sg, stringMat); str.frustumCulled = false; g.add(str);
   // setNock(v): the string's middle point in bow-local space (null = at rest)
@@ -50,17 +50,19 @@ export function makeArrow() {
   return g;
 }
 
-// The quiver: a hide tube with fletchings showing at the top (setCount shows up to 6).
+// The quiver: a hide tube (0.6 m) with the arrows point-down inside, only the fletchings showing above the rim
+// (setCount shows up to 6 of them).
 export function makeQuiver() {
   const g = new THREE.Group();
-  const tube = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.04, 0.5, 10, 1, true), hide); tube.material.side = THREE.DoubleSide; g.add(tube);
-  const base = new THREE.Mesh(new THREE.CircleGeometry(0.04, 10).rotateX(Math.PI / 2), hide); base.position.y = -0.25; g.add(base);
+  const tube = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.042, 0.6, 12, 1, true), hide.clone()); tube.material.side = THREE.DoubleSide; g.add(tube);
+  const base = new THREE.Mesh(new THREE.CircleGeometry(0.042, 12).rotateX(Math.PI / 2), hide); base.position.y = -0.3; g.add(base);
+  const rim = new THREE.Mesh(new THREE.TorusGeometry(0.05, 0.006, 4, 16).rotateX(Math.PI / 2), wood); rim.position.y = 0.3; g.add(rim);
   const shown = [];
   for (let i = 0; i < 6; i++) {
-    const a = makeArrow(); a.rotation.x = -Math.PI / 2;            // point down into the tube
-    a.position.set(Math.cos(i * 1.1) * 0.022, 0.25 + 0.12 + (i % 2) * 0.02, Math.sin(i * 1.1) * 0.022);
+    const a = makeArrow(); a.rotation.x = Math.PI / 2;               // local +Z (the point) straight down into the tube
+    a.position.set(Math.cos(i * 1.05) * 0.024, -0.27 + (i % 3) * 0.015, Math.sin(i * 1.05) * 0.024);   // nock ~0.2 m above the rim
     g.add(a); shown.push(a);
   }
-  g.userData.setCount = (n) => shown.forEach((a, i) => (a.visible = i < Math.ceil(n / 4)));
+  g.userData.setCount = (n) => shown.forEach((a, i) => (a.visible = i < Math.min(6, Math.ceil(n / 4))));
   return g;
 }

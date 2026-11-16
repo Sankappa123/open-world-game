@@ -49,8 +49,9 @@
   /* FHW-r4: first person (#hud.fpp). The pack stows when idle (main.js fppHud) and the E prompt and subtitles drop into
      its place, so the hands, the spear shaft and the horse's neck own the bottom of the view; the F1 chip and the fps
      readout move up under the weapon chip, out of the spear arm's corner. Third person is unchanged. */
-  #hud.fpp.stow { --invH: -12px; }
-  #hud.fpp.stow #inv { opacity: 0; }
+  #hud.fpp.stow, #hud.stow { --invH: -12px; }
+  #hud.fpp.stow #inv, #hud.stow #inv { opacity: 0; }   /* BOW-UI: third person stows the pack too; Tab or any change brings it back */
+  #hud #inv { transition: opacity 0.5s; }
   #hud #prompt { transition: opacity 0.6s, bottom 0.45s ease; }
   #hud #sub { transition: opacity 0.5s, bottom 0.45s ease; }
   #hud.fpp #help.min { top: 200px; bottom: auto; }

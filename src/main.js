@@ -336,7 +336,7 @@ function drawInv() {
   let h = '';
   if (hasSpear()) h += `<span class="tool">${S.tools.flintspear ? 'Flint spear' : 'Spear'}${W.spearOut && spearWhere() ? ' · ' + spearWhere() : ''}</span>`;   // FPP-world: flint tools are named too; WH: the thrown spear
   if (hasAxe()) h += `<span class="tool">${S.tools.flintaxe ? 'Flint axe' : 'Axe'}</span>`;
-  if (S.tools.bow) h += `<span class="tool">Bow${BOW.on ? ' (ready)' : ''} · ${S.inv.arrow || 0}${(S.inv.arrow || 0) > bowCap() ? '' : '/' + bowCap()} arrows</span>`;   // BOW: a stock above the carry cap shows just the count
+  if (S.tools.bow) h += `<span class="tool">Bow${BOW.on ? ' (ready)' : ''} <b>${S.inv.arrow || 0}${(S.inv.arrow || 0) > bowCap() ? '' : '/' + bowCap()}</b> arrows</span>`;   // BOW: a stock above the carry cap shows just the count
   if (S.tools.torch) h += `<span class="tool">Torch${torchOn ? ` · lit ${Math.ceil(S.fuel)}s` : ''}</span>`;
   if (S.tools.cloak) h += '<span class="tool">Fur cloak</span>';
   if (S.tools.waterskin) h += `<span class="tool">Waterskin<b>${S.skin}/3</b>${survSkinTag()}</span>`;   // SURV: where the water came from
@@ -356,7 +356,7 @@ const FPH = { sig: '', until: 0, on: false, stow: false };
 function fppHud() {
   const fp = view === 'fpp' && FP.act && playing && !camShot;
   if (fp !== FPH.on) { FPH.on = fp; $('hud').classList.toggle('fpp', fp); if (fp) FPH.until = Math.max(FPH.until, clock + 3); }
-  const stow = fp && clock > FPH.until && !menuOpen && !paused;
+  const stow = playing && !camShot && clock > FPH.until && !menuOpen && !paused;   // BOW-UI: the pack stows in third person too (it covered the bottom of the view)
   if (stow !== FPH.stow) { FPH.stow = stow; $('hud').classList.toggle('stow', stow); }
 }
 // FPP-world: --invH tracks the pack's height (it wraps to 2-3 rows with a full pack or a narrow window) so the
@@ -2247,10 +2247,14 @@ P.h.addOverride('bowProps', 99, (h) => {
   const f = P.face, fx = Math.sin(f), fz = Math.cos(f), rx = -fz, rz = fx;
   if (quiverMesh.visible) {
     wp(h.bones.pelvis, _bA);
-    quiverMesh.position.set(_bA.x + rx * 0.19 - fx * 0.06, _bA.y + 0.02, _bA.z + rz * 0.19 - fz * 0.06);
-    quiverMesh.rotation.set(0, f, 0); quiverMesh.rotateX(0.35); quiverMesh.rotateZ(-0.12);
+    quiverMesh.position.set(_bA.x + rx * 0.2 - fx * 0.12, _bA.y - 0.06, _bA.z + rz * 0.2 - fz * 0.12);   // behind the right hip
+    quiverMesh.rotation.set(0, f, 0); quiverMesh.rotateX(-0.5); quiverMesh.rotateZ(-0.15);   // tipped back: the fletchings ride behind the shoulder, not across the chest
     quiverMesh.userData.setCount(S.inv.arrow || 0);
   }
+  // the spear on the back stands right in the over-the-shoulder view while drawing: hide it until the bow comes down
+  const hideSp = BOW.on && W.aimW > 0.05 && !W.spearOut && h.slotOf(h.spear) === 'back';
+  if (hideSp && h.spear.visible) { h.spear.visible = false; BOW.hidSpear = true; }
+  else if (!hideSp && BOW.hidSpear) { BOW.hidSpear = false; if (!W.spearOut && !W.seatHid && !W.props) h.spear.visible = true; }
   if (!bowMesh.visible) return;
   const inHand = BOW.on && !P.ride && !P.swim && !(P.sit > 0) && !wBusy();
   const zx = _bD, up = _bB, xAx = _bC;
@@ -11098,4 +11102,4 @@ Object.assign(window.G, {
     voices: () => MUS.m?.voices() ?? 0, playing: () => MUS.m?.state ?? null, log: () => MUS.m?.M.log.slice() ?? [], snap: musicSnap, why: () => MUS.why,
   },
 });
-Object.assign(window.G, { bow: { toggle: bowToggle, aim: bowAimStart, loose: bowLoose, pickup: bowPickup, near: () => bowNear(P.pos).length, get on() { return BOW.on; }, get arrows() { return BOW.arrows.map((a) => a.st); }, quest: bowQuestHtml } });   // BOW test hooks
+Object.assign(window.G, { bow: { toggle: bowToggle, aim: bowAimStart, loose: bowLoose, pickup: bowPickup, near: () => bowNear(P.pos).length, get on() { return BOW.on; }, get arrows() { return BOW.arrows.map((a) => a.st); }, quest: bowQuestHtml, cam(v) { camDist = v; }, probe() { const v = (o) => { const w = new THREE.Vector3(); o.getWorldPosition(w); w.sub(P.pos); return [+w.x.toFixed(2), +w.y.toFixed(2), +w.z.toFixed(2)]; }; const d = new THREE.Vector3(); camera.getWorldDirection(d); return { face: +P.face.toFixed(2), aimW: +W.aimW.toFixed(2), aim: !!W.aim, hl: v(P.h.bones.hand_l), hr: v(P.h.bones.hand_r), head: v(P.h.bones.Head), bow: v(bowMesh), bowVis: bowMesh.visible, nock: nockArrow.visible && v(nockArrow), cam: v(camera), dir: [d.x, d.y, d.z].map((x) => +x.toFixed(2)) }; } } });   // BOW test hooks
