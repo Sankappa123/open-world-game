@@ -87,7 +87,13 @@ The user asked for a 21+ game.
 - The `bow` worktree at `/home/ashish/Desktop/hearthborn-bow` can be removed with `git worktree remove`.
 - After BOW, the 2 questions below still apply (A's machine; B items first or not).
 
-**When the user says "continue" (or "I'm back"), do NOT start anything. FIRST ask these 2 questions and wait for the answers:**
+**Workflow A is RUNNING (started 2026-11-16 ~20:15 on the M4 MacBook Air).** The user answered the 2 questions: run A on the Air, and go straight to A (B's open items wait).
+- Script: `docs/dev/workflows/A2-mature-finish-pro.js`. It finishes the 5 mature packages plus the bow's open items, then ARC phase C, QA, fixes, and a strict independent verification.
+- It runs 2 agents at a time on Fable (the user's plan is the $25 one, so usage limits are expected). The script stops cleanly when an agent dies on a limit.
+- **On "continue": if A did not finish, relaunch that script** (with `resumeFromRunId` if the same session still exists; otherwise a fresh run, since agents read the code on disk and continue). Set ROOT and SP at the top for the machine. The questions below are answered; do not ask them again.
+- Shared notes for the agents are in `../hb-scratch/progress.md` (outside /private/tmp, so a reboot keeps them).
+
+**(Answered on 2026-11-16; kept for history.)** When the user says "continue" (or "I'm back"), do NOT start anything. FIRST ask these 2 questions and wait for the answers:
 1. **Which machine runs workflow A?** The M4 MacBook Air, the Mac mini M1 (8 GB RAM, so 2 agents and a long run), or the Asus A15 (GTX 1650, 16 GB+, needs a setup test first).
 2. **Clear the open B items first** (`docs/dev/b-open-items.md`), **or go straight to A?**
 
