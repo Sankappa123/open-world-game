@@ -52,3 +52,11 @@ Independent verifiers checked every user report and retest issue with fresh scre
 - NEW (minor): In the 800x600 window (headless fullscreen), the 3-row pack bar covers the Health, Stamina and Hunger bars.
 - NEW (minor): Shader programs grow slowly during play (77 to 83 over the 5-minute soak, with wolves, night and torch), although the warm-up should cover these. There are no hitches in the fps log, but a few compiles still happen in play.
 - NEW (minor): The build I tested is HEAD a187155 plus uncommitted changes to src/main.js (+299/-47 lines: RIDE-r4, SIT-r4 and a SAVE-PERF wolf-corpse cap) and src/caves.js. Another fixer was editing these files during this run, so results apply to that snapshot.
+
+## Child model (content-limit fix, commit 67221c7)
+The child-safety and coverage judges PASS: no adult or revealing traits; modest tunic; swaddled newborn; own bed. Art polish is still open (the art judge failed it):
+- the procedurally sealed mouth on all child faces looks lumpy and pouty, with a scar-like crease at one corner;
+- the boys' hair texture reads like a receding adult hairline;
+- while riding, the skirt stretches back along the horse and opens above the knee; add short leggings under the tunic;
+- the skirt clips through the horse's belly from a low angle;
+- a tame cow or donkey clips into the house at night.

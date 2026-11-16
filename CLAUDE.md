@@ -66,30 +66,25 @@ The user asked for a 21+ game.
 - They tend to restart or close sessions. Commit WIP before long runs, and commit again at checkpoints.
 - Never start a new game or click "New story" without `/api/` interception. Never touch their real save except at their explicit request.
 
-## Status (updated 2026-11-15 ~21:00, Aman's Mac). RESUME HERE
-**Where we are:** workflow B (QA and fix for weapons, horses, sleep, home, first person, world, save, perf) is DONE through 2 fix rounds. An independent **verification** run (`docs/dev/workflows/D-B-verify.js`) was started to check every user report and retest issue with fresh screenshots, fix failures and re-verify. If this file still says "verification running", it did not finish; rerun it.
+## Status (updated 2026-11-16 ~06:00, Aman's Mac). RESUME HERE
+**Workflow B is DONE.** QA, 2 fix rounds, then an independent verification with 3 fix and re-verify rounds, then a content-limit fix. Everything is committed and pushed.
+- The verification passed most items. Save and regressions passed 11/11. What is still open is listed in **`docs/dev/b-open-items.md`**:
+  - riding: the far leg passes through the horse on mount and dismount, the riders float mid-dismount, and the axe crowds Sena's shin;
+  - first person: the spear covers the crosshair, the upper wrist looks broken, and back-lit specks show in torchlight;
+  - world: floating slabs in Echo Hollow;
+  - home: the blanket on the floor beds, and Sena's hearth seat clips the bed;
+  - child faces: art polish.
+- **Content-limit fix (commit 67221c7):** children (Lio, Pell, the village kids) now have a real child body on the base mesh, modest child clothing, a swaddled newborn and their own bed. They were the adult female rig scaled down, in adult clothing. The child-safety judge passed it.
 
-**Next steps, in order:**
-1. **Finish B verification:** run `D-B-verify.js` (replace SCRATCHPAD and PROJECT_ROOT, recreate the scratchpad as in step 3 of the old resume list, and copy `docs/dev/b-retest-issues.json` to `SCRATCHPAD/r2_issues.json` and `docs/dev/b-round2-fixer-reports.json` to `SCRATCHPAD/r2_reports.json`; the user reports are in `docs/dev/user-reports.md`). B is only done when all 4 areas pass.
-2. **Then ask the user which is next:**
-   - (a) the "perfect pass" workflow `docs/dev/workflows/C-B-perfect-pass.js`: per-area reference spec, fixer, 3 judges, loop until pass;
-   - (b) workflow **A** `docs/dev/workflows/A-mature-finish.js`: finish the 5 mature packages GORE, SURV, CMB, ARC phase C, ROM+MUS. Not started; their partial code is on disk.
-3. **Open design question for Deril:** the style of the brick ruins and brick house (deferred by the fixers).
+**NEXT: workflow A** (`docs/dev/workflows/A-mature-finish.js`): finish the 5 mature packages GORE, SURV, CMB, ARC phase C, and ROM+MUS. Their partial code is on disk.
+- **Ask the user which machine runs A before preparing anything.** The options are this M4 Air, a Mac mini M1 (8 GB, so 2 agents and a long run), or an Asus A15 (GTX 1650, needs a setup test).
+- Use the strict verify loop from B for A as well: independent judges with fresh screenshots, fix until pass. See `docs/dev/workflows/D-B-verify.js` and the child-fix pattern.
+- The user may also choose to clear `b-open-items.md` first.
 
-**B commits (2026-11-15):**
-- `4b00e8e`: round 1, about 72 of ~80 issues.
-- `fb631b2`: round 2, 46 retest issues; 3 deferred, about brick style.
-- Key fixes:
-  - riding: upright seat, legs down both sides, Sena two-up with her hands on Aro's waist, reins and bridle, 0.75 s mount and 0.65 s dismount;
-  - the horse E prompt no longer steals "Sit with Sena";
-  - the axe no longer clips the thigh;
-  - the help panel is replaced by an "F1 controls" hint;
-  - save-loss guard: a slow first save no longer hides Continue or deletes the save;
-  - the `makeStructure` unknown-kind crash;
-  - shader-swap perf, texture retry, cave lighting, and the stand-up loop.
+**Open design question for Deril:** the style of the brick ruins and brick house.
 
-**Machine notes (M4 MacBook Air, 16 GB):**
-- It shut down twice under 7-9 agents. Keep about 4-5 agents, with 1 headless Chrome each, and stay on the charger.
+**Machine notes:**
+- The M4 Air shut down twice under 7-9 agents. Use about 4 agents, 1 headless Chrome each, on the charger.
 - The scratchpad in /private/tmp is wiped on reboot. Keep anything important in `docs/dev/`.
 
 ### What is done (all committed on `main`; the old `expansion` branch was merged and deleted)
