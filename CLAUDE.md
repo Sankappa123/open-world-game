@@ -71,6 +71,11 @@ The user asked for a 21+ game.
 - Code: `src/bow.js` (models) and the `BOW` section of `main.js`. Key 5 readies the bow. It reuses the spear's aim (`W.aim` with `bow: true`).
 - Arrows: crafted 3 at a time; 8 can be carried, or 24 with a quiver. They stick in game and the ground, are picked up with E, and are saved in `S.arrowsAt`.
 - Side quest: one line under the chapter goals. Test hooks: `G.bow`.
+- Later fixes, at the user's request:
+  - The pack (`#inv`) no longer shows on screen. A bag icon sits bottom right; **hold B** opens the bag. Tab is crafting only now.
+  - The quiver arrows point down; the slung bow is upright and snug on the back.
+  - The back spear is hidden while the bow is drawn.
+  - The user's real save was given the bow, a quiver and 10,000 arrows at their request. Backup: `hearthborn-notes/save_backup_day21_before_bow.json`.
 - **Not done yet** (from `docs/dev/spec-bow.md`):
   - a first-person bow view model (the bow is hidden in first person);
   - a rock-break check (any ground hit has a 12% snap chance instead);
