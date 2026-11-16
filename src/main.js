@@ -344,7 +344,8 @@ function drawInv() {
   for (const k in ITEMS) if (S.inv[k] > 0) h += `<span>${ITEMS[k]}<b>${S.inv[k]}</b></span>`;
   $('inv').innerHTML = h || '<span>Nothing carried</span>';   // FPP-world: describes the pack, not the hands (fists may be raised)
   const sig = h.replace(/<b>[^<]*<\/b>/g, '').replace(/lit \d+s/, 'lit');   // FHW-r4: an entry appearing or running out shows the stowed first-person pack (counts already toast, e.g. Sena's gathering)
-  if (sig !== FPH.sig) { FPH.sig = sig; FPH.until = clock + 4; }
+  if (sig !== FPH.sig) { FPH.sig = sig; FPH.until = clock + 4; const bg = $('bag'); bg.classList.remove('pulse'); void bg.offsetWidth; bg.classList.add('pulse'); }   // BOW-UI: a new kind of thing in the bag pulses the icon
+  $('bag-ar').textContent = S.tools.bow ? `${S.inv.arrow || 0} arrows` : '';
   wpnHud();                                          // WPN chip (owned weapons may have changed)
   $('cross').style.display = 'block';
 }
@@ -353,10 +354,12 @@ function drawInv() {
 // (#hud.fpp) the pack stows (fades out, its space handed to the prompt and subtitles) 3 s after it last changed and
 // comes back for 4 s on any change and while a menu is open; the F1 chip and fps readout move up under the weapon chip.
 const FPH = { sig: '', until: 0, on: false, stow: false };
+const BAG = { open: false };                         // BOW-UI: hold B opens the bag (the pack); otherwise only the bag icon shows
+function bagOpen(on) { if (BAG.open === on) return; BAG.open = on; $('hud').classList.toggle('bagopen', on); }
 function fppHud() {
   const fp = view === 'fpp' && FP.act && playing && !camShot;
   if (fp !== FPH.on) { FPH.on = fp; $('hud').classList.toggle('fpp', fp); if (fp) FPH.until = Math.max(FPH.until, clock + 3); }
-  const stow = playing && !camShot && clock > FPH.until && !menuOpen && !paused;   // BOW-UI: the pack stows in third person too (it covered the bottom of the view)
+  const stow = playing && !camShot && !menuOpen && !paused && !BAG.open;   // BOW-UI: the pack stays in the bag unless B is held or Tab is open
   if (stow !== FPH.stow) { FPH.stow = stow; $('hud').classList.toggle('stow', stow); }
 }
 // FPP-world: --invH tracks the pack's height (it wraps to 2-3 rows with a full pack or a narrow window) so the
@@ -2274,9 +2277,9 @@ P.h.addOverride('bowProps', 99, (h) => {
     } else bowMesh.userData.setNock(null);
   } else {                                            // slung across the back, right shoulder to left hip
     wp(h.bones.spine_03, _bA);
-    xAx.set(fx, 0, fz); up.set(-rx * 0.7, 0.75, -rz * 0.7).normalize(); zx.crossVectors(xAx, up).normalize(); up.crossVectors(zx, xAx).normalize();
+    xAx.set(fx, 0, fz); up.set(-rx * 0.42, 1, -rz * 0.42).normalize(); zx.crossVectors(xAx, up).normalize(); up.crossVectors(zx, xAx).normalize();   // ~23° off upright: crosses the spear in a narrow X
     _bM.makeBasis(xAx, up, zx); bowMesh.quaternion.setFromRotationMatrix(_bM);
-    bowMesh.position.set(_bA.x - fx * 0.2, _bA.y - 0.12, _bA.z - fz * 0.2); bowMesh.userData.setNock(null);
+    bowMesh.position.set(_bA.x - fx * 0.15 - rx * 0.03, _bA.y - 0.08, _bA.z - fz * 0.15 - rz * 0.03); bowMesh.userData.setNock(null);   // snug on the shoulder blades
   }
 });
 // Side quest "The Hunter's Bow": offered by Sena after the cave, shown under the chapter goals.
@@ -9591,7 +9594,8 @@ addEventListener('keydown', (e) => {
   if (e.code === 'KeyE') { tapE = true; if (!e.repeat) { eTap = true; eLatch = false; } }   // WP4 eTap: a fresh press (taming, mount, dismount)
   if (e.code === 'KeyM') { toggleMap(); return; }
   if (mapOpen) return;
-  if (e.code === 'Tab' || e.code === 'KeyB') { toggleMenu(); return; }
+  if (e.code === 'Tab') { toggleMenu(); return; }
+  if (e.code === 'KeyB') { bagOpen(true); return; }   // BOW-UI: hold B to look in the bag
   if (menuOpen || busy) return;
   if (/^(Key[WASD]|Space|ShiftLeft|ControlLeft)$/.test(e.code)) lock();      // moving always re-captures the mouse
   if (e.code === 'KeyF') eat();
@@ -9613,9 +9617,10 @@ addEventListener('keyup', (e) => {
   keys[e.code] = false;
   if (e.code === 'KeyE') eLatch = false;             // STORY
   if (e.code === 'KeyQ') wpnQUp();                   // WPN
+  if (e.code === 'KeyB') bagOpen(false);             // BOW-UI
   if ((e.code === 'ControlLeft' || e.code === 'ControlRight') && !keys.ControlLeft && !keys.ControlRight) P.sneak = false;
 });
-addEventListener('blur', () => { for (const k in keys) keys[k] = false; });
+addEventListener('blur', () => { for (const k in keys) keys[k] = false; bagOpen(false); });
 canvas.addEventListener('mousedown', (e) => {
   if (!playing || menuOpen || busy || paused || P.downed > 0) return;   // MAT: no attacks while downed
   if (!locked()) { lock(); if (!lockBroken) return; }   // the first click only captures the mouse

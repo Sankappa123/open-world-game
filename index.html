@@ -51,7 +51,18 @@
      readout move up under the weapon chip, out of the spear arm's corner. Third person is unchanged. */
   #hud.fpp.stow, #hud.stow { --invH: -12px; }
   #hud.fpp.stow #inv, #hud.stow #inv { opacity: 0; }   /* BOW-UI: third person stows the pack too; Tab or any change brings it back */
-  #hud #inv { transition: opacity 0.5s; }
+  #hud #inv { transition: opacity 0.25s; }
+  /* BOW-UI: the bag icon (bottom right, above the F1 chip); hold B opens the pack as the bag */
+  #bag { position: absolute; right: 18px; bottom: 50px; display: flex; align-items: center; gap: 7px; padding: 4px 9px; color: var(--gold); font-size: 12px; transition: opacity 0.3s; }
+  #bag #bag-ar:empty { display: none; }
+  #bag #bag-ar { color: var(--ink); }
+  #bag.pulse { animation: bagpulse 1.1s ease-out; }
+  @keyframes bagpulse { 0% { transform: scale(1.22); box-shadow: 0 0 0 3px rgba(226, 186, 108, 0.55); } 100% { transform: scale(1); box-shadow: 0 0 0 0 rgba(226, 186, 108, 0); } }
+  #hud.bagopen #bag { opacity: 0.45; }
+  #hud.bagopen #inv { bottom: 40%; max-width: min(620px, 80vw); padding: 12px; }
+  #hud.bagopen #inv::before { content: 'Bag'; flex-basis: 100%; text-align: center; color: var(--gold); font-size: 13px; letter-spacing: 3px; text-transform: uppercase; margin-bottom: 4px; }
+  #hud.cine #bag, #hud.cinew #bag { opacity: 0; }
+  #hud.fpp #bag { bottom: 18px; right: auto; left: 50%; transform: translateX(-50%); }
   #hud #prompt { transition: opacity 0.6s, bottom 0.45s ease; }
   #hud #sub { transition: opacity 0.5s, bottom 0.45s ease; }
   #hud.fpp #help.min { top: 200px; bottom: auto; }
@@ -336,12 +347,13 @@
     <div id="moodles"></div>
   </div>
   <div id="inv" class="panel"></div>
+  <div id="bag" class="panel" title="Bag: hold B"><svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path d="M9 6c0-1.8 1.3-3.2 3-3.2s3 1.4 3 3.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M5.2 8.4h13.6l-1.1 11.5c-.1 1.1-1 1.9-2.1 1.9H8.4c-1.1 0-2-.8-2.1-1.9L5.2 8.4z" fill="currentColor" opacity=".85"/><path d="M8.4 8.6c.3 1.9 1.8 3.2 3.6 3.2s3.3-1.3 3.6-3.2" fill="none" stroke="#2a1d12" stroke-width="1.3"/></svg><kbd>B</kbd><span id="bag-ar"></span></div>   <!-- BOW-UI: the pack lives in the bag: hold B -->
   <div id="wpn" class="panel" style="display:none"><div class="slots"><span data-k="fists"><kbd>1</kbd><i>Fists</i></span><span data-k="axe"><kbd>2</kbd><i>Axe</i></span><span data-k="spear"><kbd>3</kbd><i>Spear</i></span></div><small>hold <kbd>Q</kbd> draw / sheathe · tap <kbd>Q</kbd> swap</small></div>
   <div id="help" class="panel min">
     <div class="hh"><kbd>F1</kbd> controls</div><div class="hb"><span class="hx"><kbd>F1</kbd> close</span>
     <kbd>W A S D</kbd> move &nbsp;<kbd>Shift</kbd> sprint &nbsp;<kbd>Space</kbd> jump<br />
     <kbd>C</kbd> / hold <kbd>Ctrl</kbd> sneak &nbsp;<kbd>V</kbd> first / third person<br />
-    <kbd>E</kbd> use · sit with Sena &nbsp;<kbd>F</kbd> eat &nbsp;<kbd>Tab</kbd> craft &amp; build<br />
+    <kbd>E</kbd> use · sit with Sena &nbsp;<kbd>F</kbd> eat &nbsp;<kbd>Tab</kbd> craft &amp; build &nbsp;hold <kbd>B</kbd> bag<br />
     hold <kbd>E</kbd> at a site to build together · <kbd>E</kbd> at the hut, house or cave bed to rest or nap<br />
     <kbd>T</kbd> / <kbd>4</kbd> torch &nbsp;<kbd>R</kbd> waterskin &nbsp;<kbd>H</kbd> treat &nbsp;<kbd>I</kbd> body · hold <kbd>F</kbd> eat raw<br />
     <kbd>M</kbd> map &nbsp;<kbd>G</kbd> auto-walk to pin · hold <kbd>E</kbd> on Sena: talk, hands, embrace, gift<br /><!-- ROM -->
