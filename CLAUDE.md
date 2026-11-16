@@ -67,6 +67,10 @@ The user asked for a 21+ game.
 - Never start a new game or click "New story" without `/api/` interception. Never touch their real save except at their explicit request.
 
 ## Status (updated 2026-11-16 ~06:00, Aman's Mac). RESUME HERE
+**When the user says "continue" (or "I'm back"), do NOT start anything. FIRST ask these 2 questions and wait for the answers:**
+1. **Which machine runs workflow A?** The M4 MacBook Air, the Mac mini M1 (8 GB RAM, so 2 agents and a long run), or the Asus A15 (GTX 1650, 16 GB+, needs a setup test first).
+2. **Clear the open B items first** (`docs/dev/b-open-items.md`), **or go straight to A?**
+
 **Workflow B is DONE.** QA, 2 fix rounds, then an independent verification with 3 fix and re-verify rounds, then a content-limit fix. Everything is committed and pushed.
 - The verification passed most items. Save and regressions passed 11/11. What is still open is listed in **`docs/dev/b-open-items.md`**:
   - riding: the far leg passes through the horse on mount and dismount, the riders float mid-dismount, and the axe crowds Sena's shin;
