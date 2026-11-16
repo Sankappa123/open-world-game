@@ -66,7 +66,16 @@ The user asked for a 21+ game.
 - They tend to restart or close sessions. Commit WIP before long runs, and commit again at checkpoints.
 - Never start a new game or click "New story" without `/api/` interception. Never touch their real save except at their explicit request.
 
-## Status (updated 2026-11-16 ~06:00, Aman's Mac). RESUME HERE
+## Status (updated 2026-11-16 ~17:30, ThinkPad Linux). RESUME HERE
+**IN PROGRESS: BOW (bow and arrows), chosen by the user before workflow A.**
+- Spec: `docs/dev/spec-bow.md`. It's a side quest after the cave, "The Hunter's Bow"; arrows are crafted and recovered; key 5.
+- Work happens on branch **`bow`**, in the git worktree `/home/ashish/Desktop/hearthborn-bow`, so the user's game on 5173 isn't disturbed. The worktree's `node_modules` is a symlink.
+- Workflow script: `docs/dev/workflows/E-bow.js`. Stages: core builder, then first person and story in parallel, then 3 judges (tpp-feel, fpp-hud, story-save) with fix loops.
+- Ports: 5221–5233 and 9421–9433.
+- When it passes, merge `bow` into `main`, remove the worktree, and update this section.
+- If the session died mid-run, check `git -C /home/ashish/Desktop/hearthborn-bow log` and rerun the remaining stages.
+- After BOW, the 2 questions below still apply (A's machine; B items first or not).
+
 **When the user says "continue" (or "I'm back"), do NOT start anything. FIRST ask these 2 questions and wait for the answers:**
 1. **Which machine runs workflow A?** The M4 MacBook Air, the Mac mini M1 (8 GB RAM, so 2 agents and a long run), or the Asus A15 (GTX 1650, 16 GB+, needs a setup test first).
 2. **Clear the open B items first** (`docs/dev/b-open-items.md`), **or go straight to A?**
