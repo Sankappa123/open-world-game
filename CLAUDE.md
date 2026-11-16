@@ -67,13 +67,19 @@ The user asked for a 21+ game.
 - Never start a new game or click "New story" without `/api/` interception. Never touch their real save except at their explicit request.
 
 ## Status (updated 2026-11-16 ~17:30, ThinkPad Linux). RESUME HERE
-**IN PROGRESS: BOW (bow and arrows), chosen by the user before workflow A.**
-- Spec: `docs/dev/spec-bow.md`. It's a side quest after the cave, "The Hunter's Bow"; arrows are crafted and recovered; key 5.
-- Work happens on branch **`bow`**, in the git worktree `/home/ashish/Desktop/hearthborn-bow`, so the user's game on 5173 isn't disturbed. The worktree's `node_modules` is a symlink.
-- Workflow script: `docs/dev/workflows/E-bow.js`. Stages: core builder, then first person and story in parallel, then 3 judges (tpp-feel, fpp-hud, story-save) with fix loops.
-- Ports: 5221–5233 and 9421–9433.
-- When it passes, merge `bow` into `main`, remove the worktree, and update this section.
-- If the session died mid-run, check `git -C /home/ashish/Desktop/hearthborn-bow log` and rerun the remaining stages.
+**BOW basic version is merged (b32f513).** The user wanted it in about 15 minutes, so the agent workflow was stopped and Claude built it directly.
+- Code: `src/bow.js` (models) and the `BOW` section of `main.js`. Key 5 readies the bow. It reuses the spear's aim (`W.aim` with `bow: true`).
+- Arrows: crafted 3 at a time; 8 can be carried, or 24 with a quiver. They stick in game and the ground, are picked up with E, and are saved in `S.arrowsAt`.
+- Side quest: one line under the chapter goals. Test hooks: `G.bow`.
+- **Not done yet** (from `docs/dev/spec-bow.md`):
+  - a first-person bow view model (the bow is hidden in first person);
+  - a rock-break check (any ground hit has a 12% snap chance instead);
+  - verifying the draw pose from the side;
+  - a deer kill by arrow in a test;
+  - `tools/test/steps/bow.json`;
+  - a full `play.json` regression run.
+- **Testing tip on this ThinkPad:** use `GL="--use-angle=vulkan --enable-gpu --ignore-gpu-blocklist"`. It runs at about 26 fps, against roughly 1 fps with SwiftShader. Tests must also click `#gate-ok` (the 21+ notice), or the game stays paused.
+- The `bow` worktree at `/home/ashish/Desktop/hearthborn-bow` can be removed with `git worktree remove`.
 - After BOW, the 2 questions below still apply (A's machine; B items first or not).
 
 **When the user says "continue" (or "I'm back"), do NOT start anything. FIRST ask these 2 questions and wait for the answers:**
