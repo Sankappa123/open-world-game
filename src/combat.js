@@ -125,23 +125,29 @@ export function createGlints(scene, n = 10) {
     active() { return pool.filter((g) => g.s.visible).length; },
   };
 }
-// A small billboard bar (posture, detection) drawn on a 64×10 canvas; set(v 0..1, color) redraws only on change.
-export function makeBar(w = 0.7, h = 0.09) {
-  const c = document.createElement('canvas'); c.width = 64; c.height = 10;
+// A small billboard gauge. shape 'bar' (posture, Sena's health): a 64×10 strip. shape 'eye' (a raider's detection
+// meter): an almond eye on a 96×48 canvas whose iris fills as he becomes sure. set(v 0..1, color) redraws only on change.
+export function makeBar(w = 0.7, h = 0.09, shape = 'bar') {
+  const eye = shape === 'eye', c = document.createElement('canvas'); c.width = eye ? 96 : 64; c.height = eye ? 48 : 10;
   const tex = new THREE.CanvasTexture(c); tex.colorSpace = THREE.SRGBColorSpace;
   const s = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, transparent: true, depthWrite: false, depthTest: false, fog: false }));
   s.scale.set(w, h, 1); s.renderOrder = 998; s.visible = false;
   let last = '';
-  s.userData.set = (v, col, shape = 'bar') => {
-    const key = (v * 32 | 0) + col + shape; if (key === last) return; last = key;
-    const g = c.getContext('2d'); g.clearRect(0, 0, 64, 10);
-    if (shape === 'eye') {                           // detection: a filling eye-shaped lozenge
-      g.fillStyle = 'rgba(0,0,0,0.45)'; g.beginPath(); g.ellipse(32, 5, 30, 4.5, 0, 0, 6.283); g.fill();
-      g.save(); g.beginPath(); g.ellipse(32, 5, 29, 3.6, 0, 0, 6.283); g.clip();
-      g.fillStyle = col; g.fillRect(32 - 29 * v, 0, 58 * v, 10); g.restore();
+  s.userData.set = (v, col) => {
+    v = Math.max(0, Math.min(1, v));
+    const key = (v * 32 | 0) + col; if (key === last) return; last = key;
+    const g = c.getContext('2d'); g.clearRect(0, 0, c.width, c.height);
+    if (eye) {
+      const lids = () => { g.beginPath(); g.moveTo(6, 24); g.quadraticCurveTo(48, -8, 90, 24); g.quadraticCurveTo(48, 56, 6, 24); g.closePath(); };
+      lids(); g.fillStyle = 'rgba(12,10,8,0.62)'; g.fill();
+      g.save(); lids(); g.clip();
+      g.fillStyle = col; g.globalAlpha = 0.95; g.beginPath(); g.arc(48, 24, 5 + 36 * v, 0, 6.283); g.fill();   // the iris widens until it fills the eye
+      g.globalAlpha = 1; g.fillStyle = 'rgba(12,10,8,0.9)'; g.beginPath(); g.arc(48, 24, 5.5, 0, 6.283); g.fill();
+      g.restore();
+      lids(); g.lineWidth = 3; g.strokeStyle = v >= 1 ? col : 'rgba(244,240,230,0.9)'; g.stroke();
     } else {
       g.fillStyle = 'rgba(0,0,0,0.5)'; g.fillRect(0, 0, 64, 10);
-      g.fillStyle = col; g.fillRect(2, 2, 60 * Math.max(0, Math.min(1, v)), 6);
+      g.fillStyle = col; g.fillRect(2, 2, 60 * v, 6);
     }
     tex.needsUpdate = true;
   };

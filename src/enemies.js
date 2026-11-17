@@ -90,6 +90,19 @@ export function createPredators(ctx) {
   // ---------- aurochs herd ----------
   // Neutral grazers. Hit one, or come within 8 m of the calf, and the nearest bull paws, snorts and charges (red glint):
   // a straight dash at 11 m/s for up to 15 m that gores and knocks Aro down. A braced spear stops it.
+  // The Quaternius bull is near-black all over and read as a silhouette. Aurochs coats: the bulls black-brown with
+  // a pale muzzle ring and belly, the cow and the calf red-brown; long pale horns with dark tips left as modelled.
+  const COAT = { bull: [0x4a3528, 0x7a6450, 0xd9cdb4], cow: [0x7d5234, 0xa5825c, 0xe0d4ba], calf: [0x9a6a42, 0xb8946a, 0xe0d4ba] };
+  function coat(o, k) {
+    const [main, light, muzzle] = COAT[k];
+    o.a.model.traverse((m) => {
+      if (!m.isMesh) return;
+      for (const mt of Array.isArray(m.material) ? m.material : [m.material]) {
+        if (mt.name === 'Main') mt.color.setHex(main); else if (mt.name === 'Main_Light') mt.color.setHex(light);
+        else if (mt.name === 'Muzzle') mt.color.setHex(muzzle); else if (mt.name === 'Horns') mt.color.setHex(0xd8cfae);
+      }
+    });
+  }
   function spawnAurochs(cx = AUR_HOME[0], cz = AUR_HOME[1]) {
     if (R.aur) return R.aur;
     const [x, z] = ctx.landSpot(cx, cz, 0, 30);
@@ -98,6 +111,7 @@ export function createPredators(ctx) {
       const calf = i === 3, ox = (Math.random() - 0.5) * 14, oz = (Math.random() - 0.5) * 14;
       const o = ctx.spawn('aurochs', x + ox, z + oz, { aHerd: H, ox, oz, calf, scale: calf ? 0.25 : 0.44 * (0.95 + Math.random() * 0.1), brain: aurochsBrain, st: 'graze' });
       o.hp = o.maxHp = (calf ? 30 : FOE_HP.aurochs) * ctx.D().foeHpK; o.hostile = false;
+      coat(o, calf ? 'calf' : i === 1 ? 'cow' : 'bull');
       H.members.push(o);
     }
     R.aur = H; return H;
@@ -215,7 +229,6 @@ export function createPredators(ctx) {
       case 'warn': {                                 // stop, rear up, roar; he has a few seconds to leave
         o.t += dt; face(o, P.pos.x, P.pos.z); move(o, 0, dt, 5); a.play('Idle');
         a.rear = o.t < 2.2 ? 1 : 0;
-        if (o.t > 0.6 && o.t < 0.7) ctx.glint(jaw(o, 1.9, 0.9), false, 0.5);
         if (torchScare()) return true;
         if (d > 30 || (P.sneak && d > 20 && o.t > 1.5)) { bearSet(o, 'calm', 8); return true; }
         if (d < 15 || o.t > 6) { a.rear = 0; bearSet(o, attack(o)); ctx.sfx.roar(p, 1.2); }

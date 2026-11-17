@@ -17,8 +17,10 @@ const CAP = 2   // agents at once: Pro plan usage + fanless M4 Air
 
 // Stop the whole run if an agent died (usually the 5-hour usage limit), so it can be resumed with resumeFromRunId.
 const must = (r, label) => { if (r === null || r === undefined) throw new Error(`STOPPED: agent "${label}" returned nothing (usage limit or crash). Resume this run after the limit resets.`); return r }
-const MODEL = 'fable'   // the user asked for Fable on 2026-11-16
-const run = (prompt, opts) => agent(prompt, { ...opts, model: MODEL }).then(r => must(r, opts.label))
+// 2026-11-17: the weekly Fable limit ran out (resets Nov 23), so the user switched to Opus. Agents that already finished on Fable
+// keep model 'fable' only so their cached results replay on resume; every new agent uses the session model.
+const FABLE_DONE = new Set(['finish M2 GORE', 'finish M3 SURV'])
+const run = (prompt, opts) => agent(prompt, FABLE_DONE.has(opts.label) ? { ...opts, model: 'fable' } : opts).then(r => must(r, opts.label))
 const limited = async (thunks) => { const out = []; for (let i = 0; i < thunks.length; i += CAP) { const part = await parallel(thunks.slice(i, i + CAP).map(t => () => t())); if (part.some(r => r === null || r === undefined)) throw new Error('STOPPED: an agent in this batch returned nothing (usage limit or crash). Resume this run after the limit resets.'); out.push(...part) } return out }
 
 const rules = (vp, cp) => `

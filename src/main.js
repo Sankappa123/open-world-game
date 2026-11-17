@@ -6319,7 +6319,7 @@ function updateMusic(dt) {
 const C = { block: false, blockAt: null, blockW: 0, blockWpn: 'fists', rollAt: null, roll: null, counterUntil: 0, combo: -1, comboT: -9, buf: 0,
   lmbAt: null, heavyDone: false, heavyNext: false, swingHeavy: false, stamT: -9, stamAfter: 100, slow: 0, slowK: 1, knock: null, maul: null,
   brace: false, fin: null, revive: 0, revSite: null, nThrowT: 3, breathT: 0, init: false, tick: 0, lastHurtT: -9, finCam: null, hint: '' };
-const CMB_BLOCKPOSE = { pose: null };
+const CMB_TORCHPOSE = {}, CMB_READYPOSE = {};
 const cmbGlints = CB.createGlints(scene, 12);
 const _c1 = new THREE.Vector3(), _c2 = new THREE.Vector3(), _c3 = new THREE.Vector3();
 const cmbCtx = {
@@ -6332,9 +6332,12 @@ const cmbCtx = {
   torchLit: () => torchOn, kids: () => kids, senaSafe: () => N.rest > 0 || !!N.indoor, aroDown: () => !!C.knock,
   knockdown: (from) => cmbKnock(from), downed: () => !!C.knock || P.downed > 0, maul: (o) => cmbMaulStart(o), mauling: () => !!C.maul,
   braced: (o) => cmbBraced(o), onBrace: (o) => cmbOnBrace(o), lie: (f) => { f.matFallT = 0; f.matStill = true; matLieStart(f, false); },
-  blockPose: (f, w) => cmbBlockPose(f.h, w), onBlocked: (f) => { trauma = Math.min(1, trauma + 0.12); W.recoil = 0.14; hitStop = 0.05; hsWho = null; },
+  blockPose: (f, w) => cmbBlockPose(f.h, w, f.wpn === 'axe' ? 'axe' : f.wpn === 'torch' ? 'torch' : f.wpn === 'spear' ? 'axe' : 'fists'), onBlocked: (f) => { trauma = Math.min(1, trauma + 0.12); W.recoil = 0.14; hitStop = 0.05; hsWho = null; },
   execute: (f) => cmbExecute(f), foeHitPre: (e) => cmbFoeHitPre(e),
-  paint: (h) => { if (typeof gorePatchHuman !== 'function') return false; try { gorePatchHuman(h, { paint: [{ bone: 'hand_l', r: 0.12 }, { bone: 'hand_r', r: 0.12 }, { bone: 'Head', r: 0.15 }, { bone: 'lowerarm_l', r: 0.07 }, { bone: 'lowerarm_r', r: 0.07 }] }); return true; } catch { return false; } },
+  // the Ash People: grey wood-ash rubbed over the face, the chest and both hands to the elbow (GORE's paint layer has 4 slots)
+  paint: (h, chief) => { if (typeof gorePatchHuman !== 'function') return false; try { gorePatchHuman(h, { paint: [{ bone: 'Head', r: chief ? 0.2 : 0.17 }, { bone: 'hand_l', r: 0.2 }, { bone: 'hand_r', r: 0.2 }, { bone: 'spine_03', r: chief ? 0.3 : 0.21 }] }); return true; } catch { return false; } },
+  torchPose: (h, w) => { if (w > 0) applyPose(h, CMB_TORCHPOSE[h.who] ||= samplePose(h, 'torchHold', 0, BONESETS.armL), w, BONESETS.armL); },   // a raider's torch held up, not at his thigh
+  readyPose: (h, w) => { if (w > 0) applyPose(h, CMB_READYPOSE[h.who] ||= samplePose(h, 'ready', 0), w, READY_BONES); },   // weapon up in a fight
   sfx: {},
 };
 const PRED = createPredators(cmbCtx);
@@ -6451,13 +6454,28 @@ function cmbBlock(on) {
   if (on && !C.block) { C.blockAt = clock; C.blockWpn = cmbBlockWpn(); if (W.st === 'sheathed' && W.held !== 'fists' && !torchOn) { W.sel = 'fists'; wpnDraw(true); } }
   C.block = !!on; return C.block;
 }
-// the guard pose: Sword_Block sampled mid-clip on the arms and chest (order 15), plus a fist grip
-function cmbBlockPose(h, w) {
+// The guard, built procedurally with the weapon IK (UAL2's Sword_Block is a wide outward parry: frozen mid-clip it
+// read as open arms). Root space: +z forward, -x his right. Axe: the haft held up and across in front of the face,
+// the left forearm braced behind it. Fists: both forearms up, chin behind them. Torch: the brand thrust out in the
+// left fist, the right fist by the jaw. The chest turns a little side-on and curls behind the guard.
+const GUARD = {
+  axe: { r: [-0.2, 1.2, 0.36], rd: [0.55, 0.8, 0.22], l: [0.0, 1.5, 0.4], ld: [-0.2, 0.95, 0.2], yaw: -0.16 },
+  fists: { r: [-0.17, 1.3, 0.3], rd: [0.12, 0.97, 0.2], l: [0.15, 1.36, 0.38], ld: [-0.12, 0.97, 0.2], yaw: 0.2 },
+  torch: { r: [-0.17, 1.3, 0.26], rd: [0.12, 0.97, 0.2], l: [0.12, 1.3, 0.5], ld: [0.0, 0.9, 0.42], yaw: 0.3 },
+};
+const _g1 = new THREE.Vector3(), _g2 = new THREE.Vector3(), _g3 = new THREE.Vector3();
+function cmbBlockPose(h, w, kind = 'axe') {
   if (!(w > 0)) return;
-  const key = h.who; CMB_BLOCKPOSE[key] ||= samplePose(h, 'block', (clipDuration(h, 'block') || 1.2) * 0.45, (b) => BONESETS.armR(b) || BONESETS.armL(b) || /^spine_0[23]$/.test(b));
-  applyPose(h, CMB_BLOCKPOSE[key], w);
+  const gp = GUARD[kind] || GUARD.fists, root = h.root;
+  yawBone(h.bones.spine_02, gp.yaw * w);
+  h.bones.spine_02.updateWorldMatrix(false, true);
+  root.localToWorld(_g1.set(gp.r[0], gp.r[1], gp.r[2])); _g2.set(gp.rd[0], gp.rd[1], gp.rd[2]).normalize().transformDirection(root.matrixWorld);
+  ikGrip(h, 'r', _g1, root.localToWorld(_g3.set(-0.7, 0.75, 0.0)), w, GRIP_R, AX_R, _g2);
+  root.localToWorld(_g1.set(gp.l[0], gp.l[1], gp.l[2])); _g2.set(gp.ld[0], gp.ld[1], gp.ld[2]).normalize().transformDirection(root.matrixWorld);
+  ikGrip(h, 'l', _g1, root.localToWorld(_g3.set(0.7, 0.75, 0.0)), w, GRIP_L, AX_L, _g2);
+  h.gripR = Math.max(h.gripR, w); h.gripL = Math.max(h.gripL, kind === 'axe' ? 0.35 * w : w);
 }
-P.h.addOverride('cmbBlock', 15, (h) => cmbBlockPose(h, C.blockW));
+P.h.addOverride('cmbBlock', 32, (h) => cmbBlockPose(h, C.blockW, C.blockWpn));   // after the weapon IK (30) and the bow (31)
 
 // ----- dodge roll (AltLeft)
 function cmbDodge() {
@@ -6480,7 +6498,7 @@ function cmbPlayerTick(dt) {
   if (C.fin) { cmbFinTick(dt); P.speed = 0; P.vx = P.vz = 0; settle(P, dt * hsK(P), false); P.cool = Math.max(0, P.cool - dt); if (hitT > 0 && (hitT -= dt) <= 0) landHit(); return true; }
   if (C.roll) {
     const r = C.roll; r.t += dt;
-    const k = clamp(r.t / CB.T.roll, 0, 1), v = (CB.T.rollDist / CB.T.roll) * 1.6 * (1 - k) * (1 - k * 0.3);
+    const k = clamp(r.t / CB.T.roll, 0, 1), v = (CB.T.rollDist / CB.T.roll) * 2.222 * (1 - k) * (1 - k * 0.3);   // the easing integrates to 0.45: 3.2 m in all
     const nx = P.pos.x + r.dx * v * dt, nz = P.pos.z + r.dz * v * dt;
     if (Math.abs(nx) < LIMIT && Math.abs(nz) < LIMIT) { P.pos.x = nx; P.pos.z = nz; }
     collide(P.pos, 0.35); P.vx = r.dx * v; P.vz = r.dz * v; P.speed = 0;
@@ -6630,16 +6648,36 @@ on('rescued', () => { C.knock = null; C.maul = null; P.stagger = 0; P.h.removeOv
 
 // ----- outgoing hits: heavy flag, counter bonus, posture (animalHitPre order 30) and raider hits
 function cmbHitPre(e) {
-  const o = e.o, mine = e.from === P;
-  if (mine && e.weapon && e.weapon !== 'thrown') e.heavy = e.heavy || C.swingHeavy;
+  const o = e.o, mine = e.from === P, melee = mine && e.weapon && e.weapon !== 'thrown';
+  const real = melee ? (e.kind === 'finisher' || C.swingHeavy || (e.heavy && e.weapon !== 'axe')) : !!e.heavy;   // MAT marks every axe blow heavy (for GORE); posture wants the held swing
+  if (melee) e.heavy = e.heavy || C.swingHeavy;
   if (!mine || e.kind === 'finisher' || e.kind === 'bleed') return;
+  if (e.arrow) cmbArrowPre(e);                       // BOW: thick hides, head shots
   if (o.kind === 'deer' || o.kind === 'stag' || o.kind === 'fox' || o.horse || o.tame) return;   // prey: no posture game
-  if (CB.postureAdd(o, CB.POSTURE.light * (e.heavy ? CB.POSTURE.heavyK : 1), clock)) { o.stagger = CB.POSTURE.stagger; if (!o.foe) { o.pending = 0; o.attacking = 0; } cmbSnd('clack', o.root?.position, 1.2); }
+  // posture: a light blow 16, a held heavy 32, a thrown spear 40, an arrow by its bite (8-40)
+  const add = e.arrow ? clamp(e.dmg * 1.6, 8, 40) : e.weapon === 'thrown' ? 40 : CB.POSTURE.light * (real ? CB.POSTURE.heavyK : 1);
+  if (e.arrow && e.zone === 'head' && o.kind === 'wolf') o.stagger = Math.max(o.stagger || 0, 0.9);   // an arrow in the face stops a wolf mid-lunge
+  if (e.arrow || e.weapon === 'thrown' || real) { if (o.pending > 0) o.pending = 0; }   // a hard hit breaks the lunge
+  if (CB.postureAdd(o, add, clock)) { o.stagger = CB.POSTURE.stagger; if (!o.foe) { o.pending = 0; o.attacking = 0; } cmbSnd('clack', o.root?.position, 1.2); }
+}
+// BOW against predators (spec_bow §4: a wolf takes two full-draw body shots, a bear takes many; head or neck doubles).
+// GORE (order 20) has already applied ×1.5 for a predator's head; this brings it to ×2 and applies the hide factor.
+const CMB_ARROW_K = { wolf: 0.75, bear: 0.6, aurochs: 0.7 };
+function cmbArrowPre(e) {
+  const o = e.o, k = CMB_ARROW_K[o.kind]; if (!k) return;
+  e.dmg *= k * (e.zone === 'head' ? 2 / 1.5 : 1);
 }
 on('animalHitPre', cmbHitPre, 30);
 function cmbFoeHitPre(e) {
   if (e.from === P && clock < C.counterUntil && e.kind !== 'finisher') { e.dmg *= 1.5; C.counterUntil = 0; }
-  if (e.from === P && e.weapon && e.weapon !== 'thrown') e.heavy = e.heavy || C.swingHeavy;
+  const melee = e.from === P && e.weapon && e.weapon !== 'thrown' && e.weapon !== 'stone';
+  if (melee) { e.real = e.kind === 'finisher' || e.kind === 'execution' || C.swingHeavy || (e.heavy && e.weapon !== 'axe'); e.heavy = e.heavy || C.swingHeavy; }   // e.real: a held heavy (MAT marks every axe blow heavy for GORE)
+  else e.real = !!e.heavy;
+  if (e.from === P && e.arrow) {                     // BOW: the head doubles; a man who has not seen you takes half again
+    const f = e.f; f.h.bones.Head.getWorldPosition(_c3);
+    e.head = e.point.y > _c3.y - 0.13; if (e.head) { e.dmg *= 2; e.zone = 'head'; }
+    e.unaware = f.mode !== 'combat' && f.mode !== 'downed' && f.mode !== 'flee'; if (e.unaware) e.dmg *= 1.5;
+  }
 }
 on('animalHit', (e) => { if (e.o?.kind === 'aurochs') PRED.aurochsHit(e); if (e.o?.kind === 'wolf' && !e.kill && e.o.pack?.alpha && e.o.pack.alpha.state === 'live') e.o.go = Math.max(e.o.go || 0, 2); }, 60);
 on('animalDie', (e) => { const o = e.o; if (o.kind === 'wolf') PRED.wolfDied(o); if (o.kind === 'bear') PRED.bearDied(o); if (o === C.fin?.o) C.fin.done = true; }, 60);
@@ -6897,7 +6935,7 @@ function cmbUpdate(dt) {
 }
 // spawn helper for tests and the story: kinds bear, aurochs, alpha (+ pack), wolf, raider, korr
 function cmbSpawn(kind, x, z, opts = {}) {
-  if (kind === 'bear') { if (PRED.R.bear?.state === 'live') remove(PRED.R.bear); PRED.R.bear = null; const L = PRED.bearDen(); if (L.state === 'dead') L.state = 'alive'; return PRED.spawnBear(x, z); }
+  if (kind === 'bear') { if (PRED.R.bear?.state === 'live') remove(PRED.R.bear); PRED.R.bear = null; const L = PRED.bearDen(); if (L.state === 'dead') L.state = 'alive'; if (!opts.keepHp) L.hp = null; return PRED.spawnBear(x, z); }
   if (kind === 'aurochs') { if (PRED.R.aur) { for (const o of PRED.R.aur.members) remove(o); PRED.R.aur = null; } return PRED.spawnAurochs(x, z).members[0]; }
   if (kind === 'alpha' || kind === 'pack') {
     const n = opts.n ?? 3, list = [];
@@ -7194,7 +7232,7 @@ function arcDead(e) { if (!e || e.mode === 'dead') return; e.mode = 'dead'; e.jy
 function arcNpcTick(dt) {
   for (let i = ARCS.npcs.length - 1; i >= 0; i--) {
     const e = ARCS.npcs[i];
-    if (e.child) e.hidden = ARCS.raidOn || hostileNear(45, e.pos) || (e.nightIn && world.env.night > 0.75);   // GUARDRAIL: Pell goes indoors
+    if (e.child) e.hidden = ARCS.raidOn || arcThreat(e.pos, 45) || (e.nightIn && world.env.night > 0.75);   // GUARDRAIL: Pell goes indoors
     const far = camera.position.distanceToSquared(e.pos) > 180 * 180;
     e.h.root.visible = !e.hidden && !far;
     if ((e.mode === 'leave' || e.dropFar) && (far || Math.hypot(e.pos.x - P.pos.x, e.pos.z - P.pos.z) > 70)) { arcDrop(e.id); continue; }
@@ -7206,6 +7244,11 @@ function arcNpcTick(dt) {
     e.h.pose = e.mode === 'sit' ? (e.talk ? 'sitTalk' : 'sit') : e.mode === 'talk' ? 'talk' : e.mode === 'work' ? 'work' : null;
     settle(e, dt, false);
   }
+}
+// GUARDRAIL: anything that could hurt a child counts, even a wolf that is already slinking off (hostileNear ignores those).
+function arcThreat(p, r) {
+  return animals.some((o) => (o.kind === 'wolf' || o.hostile) && o.state === 'live' && Math.hypot(o.root.position.x - p.x, o.root.position.z - p.z) < r)
+    || foes.some((f) => f.live && Math.hypot(f.pos.x - p.x, f.pos.z - p.z) < r);
 }
 // Everyone in a scene turns to listen (talk poses while the lines play).
 function arcTalkers(ids, on = true) { for (const id of ids) { const e = arcGet(id); if (e && e.mode !== 'dead' && e.mode !== 'sit') { e.mode = on ? 'talk' : 'stand'; e.look = 'P'; } } }
@@ -7318,6 +7361,13 @@ const ARC_PROPS = {
     arcRock(g, 0, 0.25, 0, 0.55, 0.45, 0.5);
     for (let i = 0; i < 7; i++) { const a = i * 0.9; arcRock(g, Math.cos(a) * 0.35, 0.5 + (i % 2) * 0.08, Math.sin(a) * 0.3, 0.22, 0.08, 0.2, ARCM.moss); }
     return {};
+  },
+  vowfire(g) {                                       // bond: Sena's small fire inside the ring, so the vows at dusk are seen
+    const [sx, sz] = LM.stones, x = sx + 4.4, z = sz + 3.4; g.position.set(x, getHeight(x, z), z);
+    const tick = arcFirePit(g, true);
+    const l = new THREE.PointLight(0xff9a50, 0, 20, 1.5); l.position.set(0, 1.1, 0); g.add(l);
+    let t = 0;
+    return { update: (dt) => { t += dt; tick(dt); l.intensity = (0.25 + world.env.night * 0.75) * (26 + Math.sin(t * 11) * 2.5 + Math.sin(t * 5.3) * 2); } };
   },
   sling(g) {                                         // epilogue: Wena's sling hung from a low bough of the Great Tree
     const [tx, tz] = LM.tree; g.position.set(tx + 2.1, getHeight(tx, tz) + 2.6, tz + 1.1);
@@ -7593,10 +7643,12 @@ function arcSync() {
   arcProp('trail', id === 'outcast' && !A.choices.outcast);
   arcProp('snowcamp', A.wena === 'lost' && S.day >= (A.slingDay ?? 1e9) && S.ch <= chIdx('reckoning'));
   arcProp('ashcamp', !!A.campPos && at('reckoning') && !S.village);
+  arcProp('vowfire', id === 'bond' || (id === 'newlife' && ARCS.scene === 'bond'));
   for (const k of ['willow', 'yarrow', 'moss']) arcProp('herb_' + k, id === 'fever' && !A.feverDone && A.senaWound !== 'scarred' && !A.rem?.[k] && !(S.inv[k] >= ARC_HERB[k].n));
   if (id === 'reckoning' && !A.choices.korr && A.campPos) arcKorrCamp();
   else if (!ARCS.scene) for (const e of [...ARCS.npcs]) if (/^(korr|hunter)/.test(e.id) && e.mode !== 'leave') arcDrop(e.id);
   arcScorch(!!A.home.burned);
+  if (A.thaw && A.choices.korr && !S.village) arcFoalSpawn();
   if (A.horseFate === 'taken') { const o = tameHorse(); if (o) { if (P.ride === o) dismount(); remove(o); } }
   if (S.village) arcEpilogueProps();
 }
@@ -7684,6 +7736,7 @@ async function arcFord() {
   let x = fx, i = 0; while (i++ < 40 && getHeight(x, fz) < 0.7) x += side; x += side * 3;   // the far bank
   const face = side > 0 ? -Math.PI / 2 : Math.PI / 2;
   arcAsh(3, x, fz, face, 1);
+  discoverPOI('nford');                              // first, so "Discovered" never covers the Ash People's banner
   banner(...L.fordBanner);
   await arcScene('ford', async () => {
     const k = arcGet('korr');
@@ -7735,10 +7788,16 @@ function arcHorseBack() {
   const x = P.pos.x + 2.5, z = P.pos.z + 1.5, o = spawn(S.horse.kind || 'horse', x, z, { tame: true, horse: true, home: horseHome(), trust: 3 });
   o.root.rotation.y = o.dir = P.face; S.horse.riding = false;
 }
+// The newborn (idempotent: also after a load, for as long as the story runs): a second, smaller foal with the wild herd.
+function arcFoalSpawn() {
+  const [mx, mz] = LM.meadow, [x, z] = arcLand(mx - 6, mz + 4, 10);
+  if (!horseHerd) spawnWildHerd();
+  if (horseHerd && !animals.some((o) => o.arcFoal && o.state === 'live')) spawn('horse', x, z, { herd: horseHerd, ox: x - horseHerd.x, oz: z - horseHerd.z, horse: true, wild: true, trust: 0, foal: true, arcFoal: true, scale: 0.26 });
+  return [x, z];
+}
 function arcFoal() {                                 // the thaw: a foal on Horse Meadow (WP4's wild herd), and a long look at it
   try {
-    const [mx, mz] = LM.meadow, [x, z] = arcLand(mx - 6, mz + 4, 10);
-    if (horseHerd) spawn('horse', x, z, { herd: horseHerd, ox: x - horseHerd.x, oz: z - horseHerd.z, horse: true, wild: true, trust: 0, foal: true, scale: 0.26 });
+    const [x, z] = arcFoalSpawn();
     const gy = getHeight(x, z);
     camShot = ARCS.shot = { pos: new THREE.Vector3(x + 7, gy + 2.6, z + 7), look: new THREE.Vector3(x, gy + 0.7, z), t: 6 };
     if (P.pos.distanceTo(new THREE.Vector3(x, P.pos.y, z)) > 150) { const h = arcHome(); if (h) { P.pos.set(h.x + 3, 0, h.z + 4); N.pos.set(h.x + 4, 0, h.z + 3); } }
@@ -7860,6 +7919,12 @@ function arcBed() {
   const f = structs.find((q) => q.kind === 'fire'); if (f) { const v = toWorld(f, [0, 0, -2.2]); return { x: v.x, z: v.z, y: getHeight(v.x, v.z) + 0.05, face: f.rot || 0, s: null }; }
   return null;
 }
+// A short look at Sena on the bed from the room's own rest camera (the follow camera only sees the roof from outside).
+function arcBedShot(t = 3.6) {
+  const s = arcBed()?.s;
+  if (!s?.camPt || view === 'fpp' || camShot) return;
+  camShot = ARCS.shot = { pos: toWorld(s, s.camPt), look: toWorld(s, s.lookPt), t };
+}
 function arcHours(h) {
   const A = S.arc;
   if (CH[S.ch]?.id !== 'fever' || A.feverDone || ARCS.vigil || !(A.senaWound === 'bleeding' || A.senaWound === 'fever')) return;
@@ -7888,7 +7953,7 @@ function arcRemedy(k, item) {
   S.inv[item] -= k === 'bled' ? 1 : ARC_HERB[k].n; A.rem[k] = true;
   A.fever = Math.max(F.floor, (A.fever || 0) - (k === 'bled' ? F.bleed : F.remedy));
   if (k === 'bled') { A.senaWound = 'fever'; arcSay(L.bled); } else arcSay([L.remedy[['willow', 'yarrow', 'moss'].indexOf(k)]]);
-  P.h.swing(); arcSfx(500, 0.3, 0.25);
+  P.h.swing(); arcSfx(500, 0.3, 0.25); arcBedShot();
   drawInv(); drawQuest(); save();
 }
 function arcBedTarget() {
@@ -7909,7 +7974,7 @@ function arcVigil() {
   arcScene('vigil', async () => {
     ARCS.vigil = true;
     const lines = ARCD.L.fever.rising.slice(0, 2).map((x) => x[1]);
-    arcSay(lines);
+    arcBedShot(30); arcSay(lines); await arcSubsDone();
     await arcFade(ARCD.L.fever.vigilFade, () => { const hrs = ((6.5 - S.time) % 24 + 24) % 24; if (S.time + hrs >= 24) S.day++; skipHours(hrs); bump('vigil'); }, 4200);
     ARCS.vigil = false;
     arcFeverCure();
@@ -7970,6 +8035,7 @@ function arcBeats(id) {
       const [cx, cz] = arcSpot('camp0');
       if (!A.coldCamp && arcDist(p, cx, cz) < 15) {
         A.coldCamp = true; A.ashHands = true; arcSmear('ash');
+        discoverPOI('ruins');                        // the ruin's own banner first: the cold camp's replaces it
         banner(...ARCD.L.smoke.campBanner); arcSenaSays(ARCD.L.smoke.camp); drawQuest(); save();
       }
       const hp = arcHandPanel();
@@ -8008,7 +8074,7 @@ function arcBeats(id) {
         });
         break;
       }
-      if (!A.raid.done && (S.day > A.raidDay || (S.day === A.raidDay && S.time >= 20))) arcRaid();
+      if (!A.raid.done && (A.raid.wave > 0 || S.day > A.raidDay || (S.day === A.raidDay && S.time >= 20))) arcRaid();   // wave > 0: a raid already under way when the game was saved
       break;
     }
     case 'reckoning': {
@@ -8023,6 +8089,8 @@ function arcBeats(id) {
     case 'bond': {
       const [x, z] = arcSpot('stones'), dusk = S.time >= 17 && S.time < 22;
       if (A.bonded || arcDist(p, x, z) > 13) { ARCS.stonesHint = false; break; }
+      if (discoverPOI('stones')) ARCS.stonesWait = clock + 8;   // a first visit: let the place's own banner pass before the scene
+      if (clock < (ARCS.stonesWait || 0)) break;
       if (!dusk) { if (!ARCS.stonesHint) { ARCS.stonesHint = true; toast('Come back at dusk, with Sena'); } break; }
       if (Math.hypot(N.pos.x - p.x, N.pos.z - p.z) > 14) { if (!ARCS.stonesHint) { ARCS.stonesHint = true; toast('Bring Sena to the stones'); } break; }
       if (!(S.inv.cord > 0) || S.close < 75) { if (!ARCS.stonesHint) { ARCS.stonesHint = true; say(...ARCD.L.bond.notReady); if (S.close < 75) toast('Closeness 75 needed'); } break; }

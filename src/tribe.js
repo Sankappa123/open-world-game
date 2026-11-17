@@ -36,7 +36,7 @@ export function createTribe(ctx) {
     return g;
   }
   function makeTribesman({ chief = false, female = false, name = '' } = {}) {
-    const h = ctx.makeHuman({ female, hair: female ? 'long' : 'buzz', beard: !female, hairColor: chief ? 0x1c1612 : 0x2a221c, tint: chief ? 0xa8a29c : 0xb6b0aa, scale: chief ? 1.06 : 0.98 + Math.random() * 0.05 });
+    const h = ctx.makeHuman({ female, hair: female ? 'long' : 'buzz', beard: !female && (chief || Math.random() < 0.7), hairColor: chief ? 0x1c1612 : [0x2a221c, 0x3a2c22, 0x1e1a18][Math.random() * 3 | 0], tint: chief ? 0xd6d2cc : 0xe6e2dc, scale: chief ? 1.06 : 0.97 + Math.random() * 0.06 });
     // ash: GORE's paint layer when present, else the skin is greyed
     if (!ctx.paint?.(h, chief)) h.root.traverse((o) => { if (o.isSkinnedMesh && !/hair/i.test(o.material.name)) o.material.color.multiplyScalar(0.8); });
     necklace(h);
@@ -65,7 +65,15 @@ export function createTribe(ctx) {
     // weapons by role
     const wpn = role === 'thrower' ? 'spear' : role === 'torchbearer' ? 'torch' : role === 'leader' ? 'axe' : Math.random() < 0.5 ? 'axe' : 'spear';
     giveWeapon(f, wpn, opts.flint);
-    f.meter = makeBar(0.55, 0.1); scene.add(f.meter);
+    // stance: the torch is carried high; in a fight the weapon comes up (eased, order 15 like Aro's stance)
+    f.readyW = 0; f.armT = 0;
+    { const sw = h.swing; h.swing = (k, ts) => { f.armT = 0.85; return sw(k, ts); }; }   // any arm clip (a swing, a throw, a flinch) owns the arms for its length
+    h.addOverride('cmbStance', 15, (hh) => {
+      if (f.state !== 'live') return;
+      if (f.wpn !== 'none' && f.wpn !== 'torch' && f.readyW > 0.01 && f.mode !== 'downed') ctx.readyPose?.(hh, f.readyW);
+      if (f.wpn === 'torch') ctx.torchPose?.(hh, 1);
+    });
+    f.meter = makeBar(0.34, 0.17, 'eye'); scene.add(f.meter);
     f.pbar = makeBar(0.7, 0.07); scene.add(f.pbar);
     h.root.position.set(x, ctx.getHeight(x, z), z); h.root.rotation.y = f.face;
     scene.add(h.root);
@@ -226,25 +234,31 @@ export function createTribe(ctx) {
   function hurtFoe(f, dmg, info = {}) {
     if (f.state !== 'live' || !f.live) return;
     const e = hitEvent(f, dmg, info); if (e.cancel || !(e.dmg > 0)) return;
-    const kind = (info.weapon || 'fists') + (info.heavy ? 'H' : '');
-    // a raider in the fight may block a blow he saw coming (not a finisher, not from behind, not while winding a heavy)
-    if (info.kind !== 'finisher' && info.kind !== 'execution' && f.mode === 'combat' && !(f.stagger > 0) && !(f.atk && f.atk.heavy) && f.mode !== 'downed'
-      && inFront(f.face, P.pos.x - f.pos.x, P.pos.z - f.pos.z, 120) && Math.random() < raiderBlockChance(hist, kind) * (info.heavy ? 0.5 : 1)) {
-      hist.push(kind); if (hist.length > 6) hist.shift();
+    const hv = e.real ?? !!info.heavy;              // a held heavy swing (e.heavy is also set for every axe blow: GORE's)
+    const kind = (e.arrow ? 'arrow' : info.weapon || 'fists') + (hv ? 'H' : '');
+    // a raider in the fight may block a blow he saw coming (not a finisher, not from behind, not while winding a heavy);
+    // an arrow is far harder to turn aside than an axe: a flat 12%, and it never teaches him the rhythm
+    const canBlock = info.kind !== 'finisher' && info.kind !== 'execution' && f.mode === 'combat' && !(f.stagger > 0) && !(f.atk && f.atk.heavy)
+      && inFront(f.face, P.pos.x - f.pos.x, P.pos.z - f.pos.z, 120);
+    if (canBlock && Math.random() < (e.arrow ? 0.12 : raiderBlockChance(hist, kind) * (hv ? 0.5 : 1))) {
+      if (!e.arrow) { hist.push(kind); if (hist.length > 6) hist.shift(); }
       f.blockT = 0.45; ctx.sfx.clack(f.pos); ctx.onBlocked(f, info);
-      if (postureAdd(f, POSTURE.blocked * (info.heavy ? 2 : 1), ctx.clock())) breakPosture(f);
+      if (postureAdd(f, e.arrow ? 6 : POSTURE.blocked * (hv ? 2 : 1), ctx.clock())) breakPosture(f);
       return;
     }
-    hist.push(kind); if (hist.length > 6) hist.shift();
+    if (!e.arrow) { hist.push(kind); if (hist.length > 6) hist.shift(); }
     f.hp -= e.dmg; f.hits++;
-    f.kb = { x: e.dir.x * (info.heavy ? 3.2 : 1.8), z: e.dir.z * (info.heavy ? 3.2 : 1.8), t: 0.25 };
-    if (f.mode !== 'combat' && f.mode !== 'downed' && f.hp > 0) enterCombat(f);
+    f.kb = { x: e.dir.x * (hv ? 3.2 : 1.8), z: e.dir.z * (hv ? 3.2 : 1.8), t: 0.25 };
+    if (f.mode !== 'combat' && f.mode !== 'downed' && f.hp > 0) { f.last.copy(P.pos); enterCombat(f); }
     if (f.hp <= 0) {
       if (f.surrender && f.mode !== 'downed' && info.kind !== 'finisher' && info.kind !== 'execution') { downFoe(f); ctx.emit('foeHit', e); return; }
       killFoe(f, e, info); return;
     }
-    if (!(f.atk && f.atk.heavy)) { f.atk = null; f.h.swing(Math.random() < 0.5 ? 'hitChest' : 'hitHead', 1.3); f.stun = info.heavy ? 0.6 : 0.3; }
-    if (postureAdd(f, POSTURE.light * (info.heavy ? POSTURE.heavyK : 1), ctx.clock())) breakPosture(f);
+    if (!(f.atk && f.atk.heavy) || e.head) { f.atk = null; f.h.swing(e.head || Math.random() < 0.5 ? 'hitHead' : 'hitChest', 1.3); f.stun = hv ? 0.6 : 0.3; }
+    // posture: light 16, heavy 32, a thrown spear 40, an arrow by its bite; an arrow to the head makes him reel
+    const add = e.arrow ? Math.max(8, Math.min(40, e.dmg * 1.6)) : info.weapon === 'thrown' ? 40 : POSTURE.light * (hv ? POSTURE.heavyK : 1);
+    if (postureAdd(f, add, ctx.clock())) breakPosture(f);
+    else if (e.arrow && e.head) { f.stagger = Math.max(f.stagger, 1.2); f.atk = null; f.h.swing('stagger', 1.2); }
     ctx.sfx.pain(f.pos, f.chief);
     ctx.emit('foeHit', e);
     if (!f.surrender && f.mode === 'combat' && shouldFlee(f.hp, f.maxHp, false, 0, f.noFlee)) { f.stun = Math.min(f.stun || 0, 0.25); flee(f); }   // the blow that breaks him: he runs at once
@@ -311,8 +325,10 @@ export function createTribe(ctx) {
       // knockback slide
       if (f.kb) { const k = f.kb.t / 0.25; f.pos.x += f.kb.x * k * dt * 1.6; f.pos.z += f.kb.z * k * dt * 1.6; ctx.collide(f.pos, 0.3, false, true); if ((f.kb.t -= dt) <= 0) f.kb = null; }
       ctx.settle(f, dt * ctx.hsK(f), false);
+      f.armT = Math.max(0, f.armT - dt);
+      f.readyW += ((f.mode === 'combat' && !f.atk && !(f.armT > 0) && !(f.stagger > 0) ? 1 : 0) - f.readyW) * Math.min(1, dt * (f.armT > 0 || f.atk ? 14 : 6));
       if (f.blockT > 0) { f.blockT -= dt; ctx.blockPose(f, Math.min(1, f.blockT / 0.15)); }
-      bars(f);
+      bars(f, dt);
     }
   }
   function deadTick(f, dt, i) {
@@ -415,12 +431,13 @@ export function createTribe(ctx) {
   // game-time timers on a foe (they stop if he dies; no setTimeout drift at low frame rates)
   function setTimeoutLike(f, t, fn) { (f.timers ||= []).push({ t, fn }); }
   function timers(dt) { for (const f of foes) if (f.timers?.length) for (let i = f.timers.length - 1; i >= 0; i--) { const q = f.timers[i]; if ((q.t -= dt) <= 0) { f.timers.splice(i, 1); if (f.state === 'live') q.fn(); } } }
-  function bars(f) {
+  function bars(f, dt = 0.016) {
+    if (f.mode === 'combat') f.redT = (f.redT ?? 1.1) - dt;   // the eye flashes red for a second as he commits
     const head = f.h.bones.Head; head.getWorldPosition(_v); _v.y += 0.42;
     // the detection meter: white while curious, orange when suspicious, red the moment he commits
     const show = f.mode !== 'combat' && f.mode !== 'downed' && f.mode !== 'flee' && f.alert > 0.02;
-    f.meter.visible = show || (f.mode === 'combat' && (f.redT = (f.redT ?? 1.2) - 0.016) > 0);
-    if (f.meter.visible) { f.meter.position.copy(_v); f.meter.userData.set(Math.min(1, f.alert), f.mode === 'combat' ? '#e0281c' : f.alert >= 0.35 ? '#f08a24' : '#f4f0e6', 'eye'); }
+    f.meter.visible = show || (f.mode === 'combat' && f.redT > 0);
+    if (f.meter.visible) { f.meter.position.copy(_v); f.meter.userData.set(Math.min(1, f.alert), f.mode === 'combat' ? '#e0281c' : f.alert >= 0.35 ? '#f08a24' : '#f4f0e6'); }
     f.pbar.visible = f.posture > 1 && f.mode === 'combat';
     if (f.pbar.visible) { f.pbar.position.copy(_v).y -= 0.13; f.pbar.userData.set(f.posture / 100, f.posture > 75 ? '#ffcf4a' : '#e8e2d2'); }
   }
