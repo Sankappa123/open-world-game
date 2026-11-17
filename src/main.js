@@ -314,12 +314,17 @@ const A = {
 };
 
 // ---------- HUD ----------
-function toast(text) {
-  const d = document.createElement('div');
-  d.textContent = text; $('toasts').append(d);
-  setTimeout(() => d.remove(), 3300);
-  while ($('toasts').children.length > 5) $('toasts').firstChild.remove();
+let toastMute = false;                               // MAT-SV: set by permadeath (no toasts over the death beat and the memorial)
+function toast(text, key = text) {
+  if (toastMute) return;
+  const box = $('toasts');
+  let d = [...box.children].find((c) => c.dataset.k === key);   // MAT-SV: the same message (or key) again: refresh it, never stack it
+  if (d) { clearTimeout(d._t); d.textContent = text; d.style.animation = 'none'; void d.offsetWidth; d.style.animation = ''; box.append(d); }
+  else { d = document.createElement('div'); d.dataset.k = key; d.textContent = text; box.append(d); }
+  d._t = setTimeout(() => d.remove(), 3300);
+  while (box.children.length > 4) box.firstChild.remove();
 }
+function clearToasts() { $('toasts').replaceChildren(); }   // MAT-SV
 const subs = []; let subT = 0;
 const say = (who, text) => subs.push([who, text]);
 function updateSubs(dt) {
@@ -373,6 +378,7 @@ function drawQuest() {
   $('goals').innerHTML = gl.length
     ? gl.map(([t, f]) => `<div class="${f() ? 'done' : ''}">${t}</div>`).join('') + bowQuestHtml()   // BOW side quest
     : sideGoals() + bowQuestHtml();                    // WP6 free play after the epilogue
+  bowQuestFit();                                     // BOW-Q: fold or hide the side line so it never reaches the minimap
 }
 function give(item, n, who) {
   S.inv[item] += n; bump(item, n);
@@ -407,6 +413,8 @@ function fadeTo(text, mid, hold = 2600) {
 let saveFlash = 0;
 function save(opts = {}) {
   if (!playing || MAT.dead) return;                  // MAT: never write a save after a permadeath (pagehide/beforeunload too)
+  if (!opts.force && matHoldSave()) { MAT.saveHeld = true; return; }   // MAT-SV: Hardcore keeps the last calm save while a fight is on (pagehide, pause, autosave, quit)
+  MAT.saveHeld = false;
   S.chId = CH[S.ch]?.id || S.chId;                   // MAT: story v3 saves the chapter id
   S.structs = structs.map((s) => ({ k: s.kind, x: s.x, z: s.z, r: s.rot, g: s.grow, p: s.timed && s.rise < 1 ? +s.rise.toFixed(3) : undefined, h: s.hang?.length ? s.hang.map(([k, t]) => [k, +t.toFixed(1)]) : undefined }));   // WP2 p: site progress, h: rack
   S.px = P.pos.x; S.pz = P.pos.z; S.nx = N.pos.x; S.nz = N.pos.z;
@@ -1321,6 +1329,7 @@ function updateAnimal(o, dt) {
     }
     return;
   }
+  if ((o.kind === 'wolf' || o.hostile) && !o.tame && !o.horse && predKidGuard(o, dt)) return;   // GORE-FIX GUARDRAIL: predators never close on a child
   if (o.brain) { o.brain(o, dt); return; }           // CMB predators (bear, aurochs) own their movement and clips
   if (o.stun > 0) { o.stun -= dt; return; }
   o.avoid = Math.max(0, o.avoid - dt);
@@ -1484,6 +1493,7 @@ function updateEvents(dt) {
   EV.next -= dt;
   EV.next -= dt * survScent();                       // SURV: blood on the wind at night, the wolves find you twice as fast
   if (EV.next > 0 || busy) return;
+  if (arcCalm()) { EV.next = 15 + rand() * 20; return; }   // ARC-FIX: no pack, herd or storm banner over a story or romance scene (nor just after)
   if (clock - R.wokeAt < 45) { EV.next = 45 - (clock - R.wokeAt) + rand() * 20; return; }   // SIT-r4: no storm or pack in the first moments after waking (the night's clock ran out behind the rest)
   EV.next = 160 + rand() * 130;
   if (!reached('fire')) return;
@@ -1500,8 +1510,9 @@ function landHit() {
   let best = null, bd = hitReach;                    // WPN: reach and cone come from the weapon
   for (const o of animals) {
     if (o.state !== 'live' || o.horse) continue;     // WP4: no punching horses
-    const dx = o.root.position.x - P.pos.x, dz = o.root.position.z - P.pos.z, d = Math.hypot(dx, dz);
-    if (d < bd && (dx * fx + dz * fz) / (d || 1) > hitCone) { bd = d; best = o; }
+    if (Math.hypot(o.root.position.x - P.pos.x, o.root.position.z - P.pos.z) > 7) continue;
+    const d = goreMeleeD(o, fx, fz, hitCone);        // GORE-FIX: reach to the body's near surface (an aurochs' flank, not its centre)
+    if (d < bd) { bd = d; best = o; }
   }
   best = cmbFoeInReach(best, bd, fx, fz);           // CMB raiders in reach
   if (best) wpnHitFx(best, hitDmg, hitKind);
@@ -2405,18 +2416,48 @@ function bowBench(s) {
 const BOWQ = () => [
   ['Craft a bow', () => !!S.tools.bow], ['Craft a quiver', () => !!S.tools.quiver], ['Make 6 flint arrows', () => cnt('arrow_made') >= 6],
   ['Hit an animal from 15 m', () => cnt('arrow_far') >= 1], ['Bring down a deer with an arrow', () => cnt('arrow_deer') >= 1], ['Pick up 3 arrows', () => cnt('arrow_pick') >= 3]];
+// BOW-Q: the side line shows only once Sena has offered the quest. drawQuest() calls bowQuestFit() after it renders:
+// in a long chapter (5+ goals), or when the panel would reach down to the minimap, the line folds to a short
+// "Side · Hunter's Bow 2/6"; if even that does not fit, it hides (the toasts still mark each step).
 function bowQuestHtml() {
-  if (!bowUnlocked() || S.c.bowQDone) return '';
-  const q = BOWQ(), n = q.filter(([, f]) => f()).length, next = q.find(([, f]) => !f());   // one line: the minimap sits just below the panel
-  return `<div style="margin-top:4px;opacity:.85;font-style:italic">Side · The Hunter's Bow ${n}/${q.length}: ${next ? next[0] : 'done'}</div>`;
+  if (!bowUnlocked() || S.c.bowQDone || !S.c.bowOffer) return '';
+  const q = BOWQ(), n = q.filter(([, f]) => f()).length, next = q.find(([, f]) => !f());
+  return `<div class="bowq" data-short="Side · Hunter's Bow ${n}/${q.length}" style="margin-top:4px;opacity:.85;font-style:italic">Side · The Hunter's Bow ${n}/${q.length}: ${next ? next[0] : 'done'}</div>`;
+}
+function bowQuestFit() {
+  const el = $('goals').querySelector('.bowq');
+  if (!el) return;
+  const goals = $('goals').children.length - 1;
+  if (goals >= 5) el.textContent = el.dataset.short;
+  const over = () => { const b = $('bars').getBoundingClientRect(); return b.height > 0 && $('quest').getBoundingClientRect().bottom + 6 > b.top; };
+  if (over() && el.textContent !== el.dataset.short) el.textContent = el.dataset.short;
+  if (over()) el.style.display = 'none';
+}
+addEventListener('resize', () => { if (S?.c) drawQuest(); });
+// BOW-Q: Sena makes the offer only in a quiet stretch: 6 s with no lines playing or queued for her, no banner,
+// chapter card, choice or ARC scene, out of the caves, and well away from the story spots and from places not yet
+// found (their discovery banner and the chapter's beat would land on top of her words).
+const BOWQ_SPOTS = { smoke: ['camp0', 'ford'], outcast: ['trail', 'tree', 'grave'], sling: ['sling'], winter: ['sling'], clay: ['lake'], house: ['lake'], bond: ['stones'] };   // each chapter's own story spots
+function bowQuiet() {
+  if (subT > 0 || subs.length || arcHold() || MAT.choice || camShot || S.arc?.pending?.length) return false;
+  if ($('event').classList.contains('on') || $('card').classList.contains('on') || world.env.cave > 0.05) return false;
+  if (CH[S.ch].id === 'fever' && !S.arc.feverDone) return false;   // ARC: never while Sena lies in fever
+  const p = P.pos;
+  for (const q of POIS) if (!S.found[q.id] && q.x != null && Math.hypot(q.x - p.x, q.z - p.z) < q.r + 25) return false;
+  for (const id of BOWQ_SPOTS[CH[S.ch].id] || []) { const v = arcSpot(id); if (v && Math.hypot(v[0] - p.x, v[1] - p.z) < 70) return false; }
+  const w = arcWhere(CH[S.ch].id), h = arcHome();
+  if (w && !(h && Math.hypot(w[0] - h.x, w[1] - h.z) < 12) && Math.hypot(w[0] - p.x, w[1] - p.z) < 70) return false;
+  return Math.hypot(N.pos.x - p.x, N.pos.z - p.z) < 14;               // she says it beside him
 }
 function bowSideQuest() {
   if (!playing || busy || !bowUnlocked() || S.c.bowQDone) return;
-  if (!S.c.bowOffer && subT <= 0 && !arcHold() && !MAT.choice && !(CH[S.ch].id === 'fever' && !S.arc.feverDone)) {   // ARC: never over a story scene or a choice, nor while Sena lies in fever
+  if (!S.c.bowOffer) {
+    if (!bowQuiet()) { BOW.quietT = clock; return; }
+    if (clock - (BOW.quietT ?? clock) < 6) return;
     S.c.bowOffer = 1;
     say('Sena', 'The flint we chipped in the hollow... bind a point to a straight shaft and you could take a deer from twice a spear\'s throw. Let me show you how to string a bow.');
     toast('New side quest: The Hunter\'s Bow'); drawQuest();
-  } else if (S.c.bowOffer && BOWQ().every(([, f]) => f())) {
+  } else if (BOWQ().every(([, f]) => f())) {
     S.c.bowQDone = 1; addClose(3, 'learned the bow together');
     say('Sena', 'Look at you. The herds will have to learn to fear us from further off now.');
     toast('Side quest complete: The Hunter\'s Bow'); drawQuest();
@@ -2763,6 +2804,7 @@ function placeStruct(kind, x, z, rot, instant, grow, p) {
   Object.assign(st, { x, z, rot, rise: instant ? 1 : 0 });
   if (grow != null) st.grow = grow;
   st.group.position.set(x, getHeight(x, z), z);
+  if (kind === 'house') { const c = Math.cos(rot || 0), n = Math.sin(rot || 0), y0 = st.group.position.y; let m = y0; for (const [a, b] of [[3.1, 2.5], [-3.1, 2.5], [3.1, -2.5], [-3.1, -2.5], [0, 2.5], [0, -2.5], [3.1, 0], [-3.1, 0]]) m = Math.max(m, getHeight(x + a * c + b * n, z - a * n + b * c) - 0.13); st.group.position.y = Math.min(m, y0 + 0.9); }   // ARC-FIX: the floor sits above the ground at every corner (uphill ground showed through the floor in the vigil shot)
   st.group.rotation.y = rot;
   scene.add(st.group);
   poolFireLight(st);                                   // SAVE-PERF: the campfire's light joins the fixed pool (no recompile)
@@ -2984,12 +3026,13 @@ function findOtherTarget(p) {
   const ct = cmbTarget(p); if (ct) return ct;          // CMB revive Sena, decide a surrender, finish
   let best = null, bd = 1e9;
   const gt = goreTarget(p); if (gt) return gt;        // GORE: mercy kill (bedded prey), hold-E butchering (keeps MAT's respawn and loot)
+  const arcT = arcTarget(p); if (arcT?.key) return arcT;   // ARC: story beats (Tamu, the bed, cairns, herbs, the scorched walls, give your share); ARC-FIX: before the meal (it masked 'Tend Tamu')
   // Share a meal with Sena, once a day.
   if (S.c.mealDay !== S.day && !N.sit && Math.hypot(N.pos.x - p.x, N.pos.z - p.z) < 2.2) {
     const k = ['cooked', 'grilled', 'bread'].find((k) => S.inv[k] > 0);
     if (k) return { label: 'Share a meal with Sena', key: true, act() { shareMeal(k); } };
   }
-  { const at = arcTarget(p); if (at) return at; }   // ARC: story beats (Tamu, the bed, cairns, herbs, the scorched walls, give your share)
+  if (arcT) return arcT;                              // ARC-FIX: a story hint (no action) still beats the rest
   { const sv = survTarget(p); if (sv) return sv; }   // SURV: bandage Sena, ask her to tend your wounds, lean on her (when ROM's menu is absent)
   { const rt = romTarget(p); if (rt) return rt; }   // ROM: Sena (hold E) menu, after the shared meal and SURV
   for (const f of world.fields) for (const n of f.nodes) {
@@ -4764,14 +4807,35 @@ function die(why) {
   rstAbort();                                        // RST: drop any rest sequence, no outcome
   why = matCause(why);
   if (canBeDowned()) { downed(why); return; }
+  if (P.swim && canBeDowned(true)) {                 // MAT-SV: cut down in the water: he drifts to the nearest bank, then the downed phase
+    const b = matBankSpot(P.pos.x, P.pos.z);
+    if (b) { downed(why); P.matBank = b; $('downed-note').textContent = 'You drift into the shallows · ' + $('downed-note').textContent; return; }
+    why = (why ? why + ' ' : '') + 'In the deep water, Sena could not reach you in time.';
+  }
   matDeath(why);
 }
+// MAT-SV: a fight is on: Aro or Sena down, a hostile within 30 m, or raiders in combat. Hardcore (saves 'auto') writes no save
+// then, so closing the tab, reloading or quitting mid-fight returns to the last calm save instead of dropping the fight.
+function matInFight() { return P.downed > 0 || N.downed > 0 || MAT.rescuing || hostileNear(30) || foes.some((f) => f.live && !f.fled && f.mode === 'combat'); }
+function matHoldSave() { return playing && D().saves === 'auto' && matInFight(); }
+function matQuitUi() {                               // MAT-SV: the pause menu's quit button during a Hardcore fight
+  const b = $('btn-quit'), f = matHoldSave(); b.disabled = f;
+  b.textContent = f ? 'Save & quit: not during a fight' : 'Save & quit to title';
+  b.title = f ? 'Hardcore saves only when no enemy is near. Closing the game now returns you to your last calm save.' : '';
+}
 function matDressing() { return ['bandage', 'hidebandage', 'ypoultice', 'poultice'].find((k) => S.inv[k] > 0) || null; }
-function canBeDowned() {
-  if (P.swim || P.ride || N.downed > 0 || N.ride && P.ride) return false;
+function canBeDowned(inWater = false) {
+  if ((P.swim && !inWater) || P.ride || N.downed > 0 || N.ride && P.ride) return false;
   if (Math.hypot(N.pos.x - P.pos.x, N.pos.z - P.pos.z) > 40) return false;
   if (D().revive === 'daily') return S.downedDay !== S.day && !!matDressing();
   return true;
+}
+function matBankSpot(x, z) {                       // MAT-SV: nearest dry shore within 16 m
+  for (let rr = 1; rr <= 16; rr += 1) for (let i = 0; i < 24; i++) {
+    const a = (i / 24) * Math.PI * 2, bx = x + Math.sin(a) * rr, bz = z + Math.cos(a) * rr;
+    if (getHeight(bx, bz) > 0.02) return { x: bx, z: bz };   // the water line: he lies on the shore, not under the surface
+  }
+  return null;
 }
 function matDeath(why) {
   const mode = D().death;
@@ -4790,12 +4854,12 @@ function downed(why) {
   if (N.ride) { N.ride = false; N.seat = null; N.h.pose = null; N.h.straddle = false; }
   $('downed').classList.toggle('nb', settings.blood === 'off'); $('downed').classList.add('on');
   $('downed-note').textContent = D().revive === 'daily' ? `Sena is coming · she has ${ITEMS[matDressing()].toLowerCase()}` : 'Sena is coming';
-  subs.length = 0; subT = 0; say('Sena', matPick(DOWN_LINES));
+  subs.length = 0; subT = 0; clearToasts(); say('Sena', matPick(DOWN_LINES));   // MAT-SV: toasts cleared too
   A.hit(90, 0.6, 0.6); A.tone(65, 1.4, 0.12);
   emit('downed', { who: 'P', cause: why });
 }
 function matDownEnd() {
-  P.downed = 0; $('downed').classList.remove('on');
+  P.downed = 0; P.matBank = null; $('downed').classList.remove('on');
   if (camShot === MAT.cam) camShot = null;
 }
 function matRevive() {
@@ -4881,6 +4945,10 @@ function matDownedTick(dt) {
   if (!(P.downed > 0) && !MAT.rescuing) return false;
   P.matFallT += dt; P.speed = 0; P.vx = P.vz = 0;
   target = null; $('prompt').style.display = 'none';
+  if (P.matBank) {                                   // MAT-SV: drifting to the bank, slowly, face up
+    const dx = P.matBank.x - P.pos.x, dz = P.matBank.z - P.pos.z, d = Math.hypot(dx, dz), st = Math.min(d, 2.2 * dt);
+    if (d < 0.1 || !(P.downed > 0)) P.matBank = null; else { P.pos.x += (dx / d) * st; P.pos.z += (dz / d) * st; }
+  }
   settle(P, dt, false);
   if (MAT.rescuing) return true;
   P.downed -= dt;
@@ -4930,6 +4998,7 @@ function permadeath(why, who = 'P') {
   if (who === 'N' && settings.matureStory === false) return false;   // Mature story off: Sena cannot die
   MAT.dead = true; S.dead = true; busy = true; MAT.endT = 0.001;
   matDownEnd(); MAT.rescuing = false;
+  subs.length = 0; subT = 0; $('sub').classList.remove('on'); clearToasts(); toastMute = true;   // MAT-SV: no combat lines or toasts over the death fade
   if (P.ride) dismount(); rstAbort();
   if (W.aim) wpnCancelAim();
   const fallen = who === 'N' ? N : P, mourner = who === 'N' ? P : N;
@@ -5091,7 +5160,7 @@ function matLoad(data) {                             // start(): deep merges, ol
   S.chId = CH[S.ch].id;
 }
 function matStart() {                                // after a new game or a load: clocks, UI, scarcity
-  MAT.dead = false; MAT.endT = 0; MAT.lastT = S.time; MAT.chip = null; P.downed = 0;
+  MAT.dead = false; MAT.endT = 0; MAT.lastT = S.time; MAT.chip = null; P.downed = 0; toastMute = false;   // MAT-SV
   const d = D();
   if (d.herdK < 1) for (const h of herds) {          // Hardcore: thinner herds
     const deer = animals.filter((o) => o.herd === h), keep = Math.ceil(deer.length * d.herdK);
@@ -5246,13 +5315,13 @@ function matStones(show) {
 // Guardrails: see the block at the top of gore.js. No dismemberment, carcass flesh or heavy bursts within 20 m of a child.
 const GS = { init: false, puffs: 0, focus: false, focusSneak: false, said: {}, butch: null, mercy: null, ids: 0, ext: {}, hands: { value: 0 }, q: '', arrow: null, ray: null, el: {} };
 const PREY = new Set(['deer', 'stag', 'fox']);
-const _gA = new THREE.Vector3(), _gB = new THREE.Vector3(), _gC = new THREE.Vector3(), _gN = new THREE.Vector3(), _gQ = new THREE.Quaternion(), _gQ2 = new THREE.Quaternion();
+const _gA = new THREE.Vector3(), _gB = new THREE.Vector3(), _gC = new THREE.Vector3(), _gN = new THREE.Vector3(), _gQ = new THREE.Quaternion(), _gQ2 = new THREE.Quaternion(), _gH = new THREE.Vector3();
 function setGore(o = {}) {                           // MAT's Content rows call this; also on 'settings' and quality changes
   return GR.setGore({ blood: settings.blood, gore: settings.gore, screenBlood: settings.screenBlood, ...o, reduceFlash: settings.reduceFlash, quality: quality() });
 }
 const goreBloodOn = () => settings.blood !== 'off';
 const goreLevel = () => settings.gore || 'high';
-const goreKidNear = (p, r = 20) => typeof kids !== 'undefined' && kids.some((c) => c.pos && Math.hypot(c.pos.x - p.x, c.pos.z - p.z) < r);
+const goreKidNear = (p, r = 20) => goreKids().some((c) => Math.hypot(c.x - p.x, c.z - p.z) < r);   // GORE-FIX: every visible child (Lio, Pell, village children)
 function gorePatchHuman(h, { hands = false, paint = null } = {}) {   // also used by CMB for raiders (tribe paint via G.gore.paint)
   if (!h?.root || !GR.goreRec(h.root)) GR.prepModel(h.root, 'human', { clone: false, hands: hands ? GS.hands : null });
   if (paint) GR.bonePaint(h.root, paint);
@@ -5319,12 +5388,14 @@ function goreZoneOf(o, pt) {
 }
 on('animalHitPre', (e) => {                          // order 20: the zone and its damage multiplier
   const o = e.o; if (!o?.root || !o.a || e.kind === 'bleed') return;
-  const X = goreExt(o), fp = matPos(e.from) || P.pos;
+  const X = o.a.bone?.('Head') ? goreExt(o) : goreBody(o), fp = matPos(e.from) || P.pos;   // GORE-FIX: the boneless cave bear uses its mesh extents
   if (e.weapon && e.weapon !== 'thrown' && e.weapon !== 'mercy' && !e.zone) {   // melee: the body surface facing the attacker, at torso height
     o.root.updateMatrixWorld(true);
     const ap = o.root.worldToLocal(_gA.copy(fp)); let dx = ap.x, dz = ap.z - X.mid; const dl = Math.hypot(dx, dz) || 1; dx /= dl; dz /= dl;
     _gB.set(dx * X.w, X.cy * (0.82 + rand() * 0.4), X.mid + dz * X.half * 0.8 + (rand() - 0.5) * X.half * 0.5);
     e.point.copy(o.root.localToWorld(_gB));
+    goreInit(); if (!GR.goreRec(o.a.model)) GR.prepModel(o.a.model, o.a.bone?.('Head') ? 'quad' : 'mesh', { clone: false });
+    goreSurfacePt(o.a.model, _gA.set(fp.x, e.point.y, fp.z), e.point);   // GORE-FIX: onto the real skin (the placed point could sit inside the body)
   }
   const z = e.zone === 'neck' || e.zone === 'head' ? 'head' : e.zone && GR.ZONES[e.zone] ? e.zone : goreZoneOf(o, e.point);
   e.zone = z;
@@ -5342,12 +5413,12 @@ on('animalHit', (e) => {
   const kid = goreKidNear(o.root.position), blood = goreBloodOn(), small = o.kind === 'fox' ? 0.6 : 1;
   if (e.kind !== 'bleed') {
     if (blood) {
-      const n = GR.burstCount(goreLevel(), e.kill, e.heavy) * small * (kid ? 0.3 : 1) * (e.arrow && !e.kill ? 0.6 : 1);   // an arrow punctures: less spray, a tighter cone
-      GR.bloodBurst(e.point, e.dir, n, { heavy: e.heavy, kill: e.kill, size: small * (e.arrow ? 0.85 : 1), spread: e.arrow ? 0.42 : 0.61 });
-      if (e.heavy || e.kill) goreWallDecal(e.point, e.dir);
+      const n = GR.burstCount(goreLevel(), e.kill, e.heavy) * small * (kid ? 0 : 1) * (e.arrow && !e.kill ? 0.6 : 1);   // an arrow punctures: less spray, a tighter cone · GORE-FIX: none near a child
+      if (n > 0) GR.bloodBurst(e.point, e.dir, n, { heavy: e.heavy, kill: e.kill, size: small * (e.arrow ? 0.85 : 1), spread: e.arrow ? 0.42 : 0.61 });
+      if ((e.heavy || e.kill) && !kid) goreWallDecal(e.point, e.dir);
       goreSfx('spatter', 0.8, e.point);
     }
-    const r = (e.arrow ? 0.045 : e.kind === 'blunt' ? 0.05 : e.weapon === 'axe' ? 0.085 : 0.06) * small * (e.kill ? 1.25 : 1);
+    const r = (e.arrow ? 0.045 : e.kind === 'blunt' ? 0.05 : e.weapon === 'axe' ? 0.085 : 0.06) * small * (e.kill ? 1.25 : 1) * (o.kind === 'bear' || o.kind === 'aurochs' ? 1.5 : 1);   // GORE-FIX: a big body takes a big wound (read at 5 m on dark fur)
     GR.addWound(o.a.model, e.point, r, { wet: e.kind === 'blunt' ? 0.5 : 1 });
     goreSfx('flesh', e.kill ? 1 : 0.75, e.point); if (e.heavy || e.crit || (e.weapon === 'thrown' && !e.arrow)) goreSfx('crack', e.kill ? 0.9 : 0.6, e.point);
   }
@@ -5405,14 +5476,16 @@ on('playerHit', (e) => {
   const H = { bite: [0.45, 1.15], claw: [0.9, 1.45], gore: [0.7, 1.2], cut: [0.9, 1.5], pierce: [0.9, 1.4], blunt: [1.0, 1.55], kick: [0.8, 1.3], fall: [0.15, 0.5] }[e.kind] || [0.8, 1.4];
   const bx = fp ? fp.x - who.pos.x : -(e.dir?.x || 0), bz = fp ? fp.z - who.pos.z : -(e.dir?.z || 0), bl = Math.hypot(bx, bz) || 1;
   _gA.set(who.pos.x + (bx / bl) * 0.16 + (rand() - 0.5) * 0.1, who.pos.y + H[0] + rand() * (H[1] - H[0]), who.pos.z + (bz / bl) * 0.16 + (rand() - 0.5) * 0.1);
-  const r = e.kind === 'blunt' || e.kind === 'fall' ? 0.05 : e.kind === 'claw' || e.kind === 'gore' ? 0.1 : 0.065;
-  if (e.kind !== 'fall' || e.dmg >= 8) GR.addWound(who.h.root, _gA, r, { wet: e.kind === 'blunt' ? 0.45 : 1 });
-  if (goreBloodOn() && e.kind !== 'blunt' && e.kind !== 'fall') {
+  const r = e.kind === 'blunt' || e.kind === 'fall' ? 0.05 : e.kind === 'claw' || e.kind === 'gore' ? 0.09 : 0.06;
+  goreHumanPt(who.h, fp || who.pos, _gA, false);     // GORE-FIX: a bite at the hips marks the flank above
+  const kidN = goreKidNear(who.pos);                 // GORE-FIX: no spray and no screen blood with a child near
+  if (e.kind !== 'fall' || e.dmg >= 8) GR.addWound(who.h.root, _gA, r, { wet: e.kind === 'blunt' ? 0.45 : 1, maxR: 0.12 });
+  if (goreBloodOn() && e.kind !== 'blunt' && e.kind !== 'fall' && !kidN) {
     _gB.set(-bx / bl, 0.2, -bz / bl);
     GR.bloodBurst(_gA, _gB, GR.burstCount(goreLevel(), false, e.dmg >= 14) * 0.45, { heavy: e.dmg >= 14, mist: true });
   }
   goreSfx('flesh', Math.min(1, 0.4 + e.dmg / 20), who.pos);
-  if (who === P && !e.downed) GR.screenSplat(camFace() - Math.atan2(bx, bz), e.dmg / 12);
+  if (who === P && !e.downed && !kidN) GR.screenSplat(camFace() - Math.atan2(bx, bz), e.dmg / 12);
 }, 70);
 on('downed', () => GR.clearScreen?.(), 50);
 on('revived', () => GR.clearScreen?.(), 50);
@@ -5598,9 +5671,9 @@ function goreCorpseHit(fx, fz) {
   if (!GS.init) return;
   let best = null, bd = hitReach;
   for (const o of animals) {
-    if (o.state !== 'dead' || o.looted || !o.root.visible) continue;
-    const dx = o.root.position.x - P.pos.x, dz = o.root.position.z - P.pos.z, d = Math.hypot(dx, dz);
-    if (d < bd && (dx * fx + dz * fz) / (d || 1) > hitCone) { bd = d; best = o; }
+    if (o.state !== 'dead' || o.looted || !o.root.visible || Math.hypot(o.root.position.x - P.pos.x, o.root.position.z - P.pos.z) > 7) continue;
+    const d = goreMeleeD(o, fx, fz, hitCone);        // GORE-FIX: to the body, not the root
+    if (d < bd) { bd = d; best = o; }
   }
   if (!best) return;
   const p = best.root.position; _gA.set(p.x, p.y + 0.3, p.z);
@@ -5619,7 +5692,9 @@ function goreFrame(dt) {
     goreButcherTick(dt); goreMercyTick(dt); goreFocus(dt);
     // bloody hands wash off in water (5 s) or slowly wear off (4 min)
     if (GS.hands.value > 0) GS.hands.value = Math.max(0, GS.hands.value - dt * (P.pos.y < 0 || P.swim ? 0.2 : 1 / 240));
+    goreKidSweep(dt);                                // GORE-FIX GUARDRAIL: no wounds or blood beside a child
   }
+  if (RAIDTORCH.length) raidTorchTick(dt);           // GORE-FIX: the raid's torches
   for (const o of animals) {
     if (o.drip > 0 && o.state === 'live') {          // a wounded predator drips as it moves
       o.drip -= dt; o.dripD = (o.dripD || 0) + o.speed * dt;
@@ -5645,6 +5720,184 @@ function goreConform(o, dt) {
     o.cfl = Math.max(0, o.cfl - dt);
     _gQ2.setFromAxisAngle(_gN.set(1, 0, 0), Math.sin((o.cfl / 0.3) * Math.PI * 2) * 0.06 * (o.cfl / 0.3));
     m.quaternion.copy(o.conf ? o.conf.q : _gQ.identity()).multiply(_gQ2);
+  }
+}
+// ----- GORE-FIX (gore-cmb fixer, 2026-11-17): body extents, melee reach to the body, hit points on the surface, children
+// Body extents of an animal from its posed vertices (root-local, cached per kind and scale): the reach test, the wound
+// point and Sena's personal space use these, not the root (an aurochs is 3.5 m long; a blow at its flank must land).
+const GBODY = {};
+function goreBody(o) {
+  const key = o.kind + ':' + (o.a.model?.scale?.x || 1).toFixed(4) + ':' + o.root.scale.x.toFixed(3);
+  if (GBODY[key]) return GBODY[key];
+  const mn = [1e9, 1e9, 1e9], mx = [-1e9, -1e9, -1e9], v = new THREE.Vector3(), ry = o.root.rotation.y;
+  o.root.rotation.y = 0; o.root.updateMatrixWorld(true);
+  o.a.model.traverse((m) => {
+    if (!m.isMesh || !m.geometry?.attributes.position) return;
+    const pos = m.geometry.attributes.position, st = Math.max(1, Math.floor(pos.count / 500));
+    for (let i = 0; i < pos.count; i += st) {
+      v.fromBufferAttribute(pos, i); if (m.isSkinnedMesh) m.applyBoneTransform(i, v); v.applyMatrix4(m.matrixWorld); o.root.worldToLocal(v);
+      mn[0] = Math.min(mn[0], v.x); mn[1] = Math.min(mn[1], v.y); mn[2] = Math.min(mn[2], v.z); mx[0] = Math.max(mx[0], v.x); mx[1] = Math.max(mx[1], v.y); mx[2] = Math.max(mx[2], v.z);
+    }
+  });
+  o.root.rotation.y = ry; o.root.updateMatrixWorld(true);
+  if (mn[0] > mx[0]) return { mid: 0, half: 0.6, w: 0.3, top: 1, cy: 0.6 };   // (no mesh yet: not cached)
+  const w = Math.max(0.12, (mx[0] - mn[0]) / 2), half = Math.max(w, (mx[2] - mn[2]) / 2) * (o.kind === 'wolf' || o.kind === 'fox' ? 0.82 : 0.92);   // (the tail and the nose tip are thin)
+  return (GBODY[key] = { mid: (mn[2] + mx[2]) / 2, half, w, top: mx[1], cy: mx[1] * 0.58 });
+}
+// The nearest point of the body capsule (the spine line, rounded by its half-width) to (x, z): {d: gap to the surface, x, z}
+const _gbp = { d: 0, x: 0, z: 0 };
+function goreBodyGap(o, x, z) {
+  if (o.foe) { const dx = o.pos.x - x, dz = o.pos.z - z; _gbp.x = o.pos.x; _gbp.z = o.pos.z; _gbp.d = Math.hypot(dx, dz) - 0.3; return _gbp; }
+  const B = goreBody(o), p = o.root.position, yaw = o.root.rotation.y, s = o.root.scale.x, fx = Math.sin(yaw), fz = Math.cos(yaw);
+  const seg = Math.max(0, B.half - B.w) * s, cx = p.x + fx * B.mid * s, cz = p.z + fz * B.mid * s;
+  const t = clamp((x - cx) * fx + (z - cz) * fz, -seg, seg);
+  _gbp.x = cx + fx * t; _gbp.z = cz + fz * t; _gbp.d = Math.hypot(x - _gbp.x, z - _gbp.z) - B.w * s;
+  return _gbp;
+}
+// Melee: an effective distance for landHit (the body's near surface + 0.2, so a wolf-sized body keeps its old feel),
+// or Infinity when the nearest part of the body is outside the swing's cone.
+function goreMeleeD(o, fx, fz, cone) {
+  const g = goreBodyGap(o, P.pos.x, P.pos.z), dx = g.x - P.pos.x, dz = g.z - P.pos.z, d = Math.hypot(dx, dz);
+  if (g.d > 0.05 && (dx * fx + dz * fz) / (d || 1) <= cone) return Infinity;
+  return Math.max(0, g.d) + 0.2;
+}
+// A melee hit point on the body's real surface: the line from the attacker's chest to the placed point, first skin it meets.
+function goreSurfacePt(model, from, pt) {
+  if (!GR.goreRec(model)) return false;
+  _gC.copy(pt).sub(from); const L = _gC.length(); if (L < 0.05) return false; _gC.divideScalar(L);
+  const hit = GR.rayBody(model, from, _gC, L + 1.6, _gN);
+  if (!hit) return false;
+  pt.copy(hit).addScaledVector(_gC, 0.015); return true;   // a little under the skin, so the wound sphere meets the surface
+}
+// People: a melee blow lands on the chest, belly, flank or arm that faced the attacker, never the groin or seat
+// (matHitInfo gives the body's centre at 0.9 m: a wound there spread round the pelvis like painted shorts).
+function goreHumanPt(h, from, pt, melee) {
+  const root = h.root.position, sc = h.root.scale.y || 1, rel = (pt.y - root.y) / sc;
+  if (melee) {
+    const dx = from.x - root.x, dz = from.z - root.z, l = Math.hypot(dx, dz) || 1, side = (rand() - 0.5) * 0.24 * sc;
+    pt.set(root.x + (dx / l) * 0.12 * sc + (-dz / l) * side, root.y + (1.12 + rand() * 0.36) * sc, root.z + (dz / l) * 0.12 * sc + (dx / l) * side);
+    goreSurfacePt(h.root, _gA.set(from.x, pt.y, from.z), pt);
+  } else if (rel > 0.66 && rel < 1.08) pt.y = root.y + (1.12 + rand() * 0.2) * sc;   // a bite or a claw at the hips: the flank above
+  return pt;
+}
+// ----- children (GUARDRAIL): every child that can be seen (Lio, Pell, the village children)
+const GKIDS = [];
+function goreKids() {
+  GKIDS.length = 0;
+  for (const c of kids) if (c.h.root.visible !== false && !c.hid) GKIDS.push(c.pos);
+  for (const e of ARCS.npcs) if (e.child && !e.hidden) GKIDS.push(e.pos);
+  for (const v of villagers) if (v.h.kid && v.h.root.visible !== false) GKIDS.push(v.pos);
+  return GKIDS;
+}
+// Predators never close on a child: within 16 m of one, or hunting Aro while he stands within 15 m of one, a wolf or a
+// bear (or a provoked aurochs) breaks off and backs away to 24 m from the child, circles there, and gives up after 25 s.
+function predKidGuard(o, dt) {
+  const ks = goreKids(); if (!ks.length) { o.kidT = 0; return false; }
+  const p = o.root.position; let k = null, kd = 1e9;
+  for (const c of ks) { const d = Math.hypot(c.x - p.x, c.z - p.z); if (d < kd) { kd = d; k = c; } }
+  const aroNear = ks.some((c) => Math.hypot(c.x - P.pos.x, c.z - P.pos.z) < 15) && kd < 30;
+  if (kd > 16 && !aroNear) { if (o.kidT > 0) o.kidT = Math.max(0, o.kidT - dt * 4); return false; }
+  o.kidT = (o.kidT || 0) + dt; o.pending = 0; o.attacking = 0; o.go = 0;
+  if (o.kidT > 25 && o.kind === 'wolf') o.leave = true;   // wolfBrain: back to the pines
+  const ax = (p.x - k.x) / (kd || 1), az = (p.z - k.z) / (kd || 1);
+  o.kidA = (o.kidA ?? Math.atan2(ax, az)) + dt * 0.12 * (o.kidS ||= rand() < 0.5 ? -1 : 1);
+  const tx = k.x + Math.sin(o.kidA) * 24, tz = k.z + Math.cos(o.kidA) * 24, td = Math.hypot(tx - p.x, tz - p.z);
+  const want = kd < 14 ? 7.5 : td > 2 ? 3 : 0;
+  if (!o.avoid || kd < 14) o.dir = kd < 14 ? Math.atan2(ax, az) : Math.atan2(tx - p.x, tz - p.z);
+  o.avoid = Math.max(0, (o.avoid || 0) - dt);
+  o.speed += (want - (o.speed || 0)) * Math.min(1, dt * 5);
+  if (o.speed > 0.08) step(o, o.speed, dt);
+  o.root.rotation.y = turn(o.root.rotation.y, o.dir, Math.min(1, dt * 6));
+  o.a.play(o.speed > 3.5 ? 'Gallop' : o.speed > 0.25 ? 'Walk' : 'Idle', false, o.speed > 3.5 ? o.speed / 8 : 1);
+  return true;
+}
+// The child hides: a predator or a raider within 25 m sends Lio running into the house (or behind Sena when there is
+// none); she stays in until nothing hostile is within 40 m of the house for 4 s, then comes out at the door.
+function kidHide(c, dt) {
+  const home = homeHouse(), door = home && home.rise >= 1 ? toWorld(home, [0, 0, 3.6]) : null;
+  if (c.hid) {
+    if (!door) { c.hid = false; c.h.root.visible = !ARCS.raidOn; return false; }
+    c.hidClear = arcThreat(door, 40) ? 0 : (c.hidClear || 0) + dt;
+    c.pos.set(door.x, 0, door.z); c.speed = 0;
+    if (c.hidClear > 4) { c.hid = false; c.hidClear = 0; if (!ARCS.raidOn) c.h.root.visible = true; return false; }
+    return true;
+  }
+  if (!(c.hideT > 0) && !arcThreat(c.pos, 25)) return false;
+  c.hideT = arcThreat(c.pos, 32) ? 2 : (c.hideT || 0) - dt;
+  c.seat = null; c.play = 0; c.h.pose = null;
+  if (door && Math.hypot(door.x - c.pos.x, door.z - c.pos.z) < 70) {
+    if (villagerWalk(c, door.x, door.z, 4.6, dt, 0.7, home)) { c.hid = true; c.hidClear = 0; c.h.root.visible = false; c.hideT = 0; }   // round the walls to the front door
+  } else {                                           // no house: behind Sena, away from the danger
+    let tx = 0, tz = 0; for (const o of animals) if ((o.kind === 'wolf' || o.hostile) && o.state === 'live') { tx = o.root.position.x; tz = o.root.position.z; break; }
+    for (const f of foes) if (f.live && !f.fled) { tx = f.pos.x; tz = f.pos.z; break; }
+    const ax = N.pos.x - tx, az = N.pos.z - tz, l = Math.hypot(ax, az) || 1;
+    walkTo(c, N.pos.x + (ax / l) * 1.3, N.pos.z + (az / l) * 1.3, 4.6, dt, 0.3);
+  }
+  settle(c, dt, false);
+  return true;
+}
+// No gore where a child can see it: Aro's and Sena's wounds are washed, blood and severed pieces near the child go
+// (twice a second, while a child is within 20 m of them).
+let gkT = 0;
+function goreKidSweep(dt) {
+  if ((gkT += dt) < 0.5) return; gkT = 0;
+  const ks = goreKids(); if (!ks.length) return;
+  for (const c of ks) {
+    if (Math.hypot(c.x - P.pos.x, c.z - P.pos.z) < 20 && GR.woundCount(P.h.root)) { GR.clearWounds(P.h.root); GS.hands.value = 0; }
+    if (Math.hypot(c.x - N.pos.x, c.z - N.pos.z) < 20 && GR.woundCount(N.h.root)) GR.clearWounds(N.h.root);
+    if (GR.splatsNear(c.x, c.z, 20)) GR.clearSplatsNear(c.x, c.z, 20);
+    if (GR.piecesNear(c.x, c.z, 25)) GR.clearPiecesNear(c.x, c.z, 25);
+  }
+}
+// Years or weeks pass (the epilogue, the birth): every wound, splat, piece and carcass is gone.
+function goreTimeSkip() {
+  if (!GS.init) return;
+  GR.clearAll(); GR.clearWounds(P.h.root); GR.clearWounds(N.h.root); GS.hands.value = 0;
+  for (const o of animals) if (GR.goreRec(o.a.model)) GR.clearWounds(o.a.model);
+}
+// Gore Low with no finisher camera (or in first person): a quick dip to black at the finisher's impact.
+function goreLookAway() {
+  let el = GS.el.dip;
+  if (!el) { el = GS.el.dip = document.createElement('div'); el.id = 'goredip'; el.style.cssText = 'position:fixed;inset:0;background:#000;opacity:0;pointer-events:none;z-index:5;transition:opacity .25s'; document.body.appendChild(el); }
+  el.style.transition = 'none'; el.style.opacity = '1';
+  clearTimeout(GS.dipT); GS.dipT = setTimeout(() => { el.style.transition = 'opacity .3s'; el.style.opacity = '0'; }, 420);
+}
+// Sena never stands inside an animal, live or dead: pushed out of its body ellipse (plus 0.3 m).
+function senaBodyPush() {
+  if (N.rest > 0 || N.sit > 0 || N.ride || N.board || N.seat || N.downed > 0 || MAT.rescuing || N.swim) return;
+  for (const o of animals) {
+    if (o === P.ride || o.looted || !o.root.visible || Math.hypot(o.root.position.x - N.pos.x, o.root.position.z - N.pos.z) > 4) continue;
+    const g = goreBodyGap(o, N.pos.x, N.pos.z), m = 0.3 - g.d;
+    if (m > 0) {
+      const dx = N.pos.x - g.x, dz = N.pos.z - g.z, l = Math.hypot(dx, dz) || 1, nx = dx / l, nz = dz / l;
+      N.pos.x += nx * m; N.pos.z += nz * m;
+      // and round it, toward Aro's side (pushed straight back she stood stuck against the carcass)
+      const sd = Math.sign(-nz * (P.pos.x - N.pos.x) + nx * (P.pos.z - N.pos.z)) || 1, k = Math.min(0.06, (N.speed || 0) * 0.02 + m * 0.5);
+      if ((P.pos.x - N.pos.x) * nx + (P.pos.z - N.pos.z) * nz < 0) { N.pos.x += -nz * sd * k; N.pos.z += nx * sd * k; }
+    }
+  }
+}
+// The first raid wave carries lit torches down the hill (Sena: "Only the torches"). No new lights (CMB §5.9: a light
+// recompiles every material); the flame and a wide glow read from 40 m in the dark, the lead two carry a bigger glow.
+// A man drops his torch, still burning, when he closes to fight. They burn out on the ground.
+const RAIDTORCH = [];
+function raidTorch(f, light) {
+  if (!f || f.wpn === 'torch' || f.raidTorch) return;
+  const t = makeTorch(); t.lit = true; f.raidTorch = t;
+  t.light.intensity = 0; t.glow.scale.setScalar(light ? 2.2 : 1.6);
+  f.h.place(t.root, 'handL'); f.h.gripL = 1;
+  f.h.addOverride('raidTorch', 16, (hh) => { if (f.raidTorch && f.state === 'live') cmbCtx.torchPose?.(hh, 1); });
+  RAIDTORCH.push({ t, f, ground: 0, light });
+}
+function raidTorchTick(dt) {
+  for (let i = RAIDTORCH.length - 1; i >= 0; i--) {
+    const r = RAIDTORCH[i], f = r.f; r.t.update(dt); r.t.light.intensity = 0;
+    if (!r.ground && (f.state !== 'live' || !f.live || f.fled || Math.hypot(f.pos.x - P.pos.x, f.pos.z - P.pos.z) < 9 || Math.hypot(f.pos.x - N.pos.x, f.pos.z - N.pos.z) < 9)) {
+      scene.attach(r.t.root); const a = rand() * 6.283, x = f.pos.x + Math.sin(a) * 0.5, z = f.pos.z + Math.cos(a) * 0.5;
+      r.t.root.position.set(x, getHeight(x, z) + 0.05, z); r.t.root.rotation.set(-0.1, a, 0); r.ground = 0.001;
+      f.raidTorch = null; f.h.gripL = 0;
+    }
+    if (r.ground) { r.ground += dt; if (r.ground > 50 || !ARCS.raidFight && r.ground > 8) { r.t.lit = false; r.t.root.parent?.remove(r.t.root); RAIDTORCH.splice(i, 1); } else if (r.ground > 40) r.t.flame.scale.setScalar(Math.max(0.05, (50 - r.ground) / 10)); }
   }
 }
 // Hunter's Focus (hold Z): sneak speed, trail splats nearby glow, a chevron points the way, Sena reads the sign.
@@ -5707,10 +5960,12 @@ function goreArrowsBack(o) {                         // butchering pulls the arr
 function goreFoeHit(f, e = {}) {
   const h = f?.h || f?.human || (f?.root && f.bones ? f : null); if (!h?.root) return;
   goreInit(); gorePatchHuman(h);
-  const pt = e.point || _gA.set(h.root.position.x, h.root.position.y + 1.2, h.root.position.z), dir = e.dir || _gB.set(0, 0, 1);
+  const pt = _gH.copy(e.point || _gA.set(h.root.position.x, h.root.position.y + 1.2, h.root.position.z)), dir = e.dir || _gB.set(0, 0, 1);
+  const melee = !e.arrow && e.weapon !== 'thrown' && e.kind !== 'finisher' && e.kind !== 'execution' && e.kind !== 'bleed';
+  goreHumanPt(h, matPos(e.from) || P.pos, pt, melee);   // GORE-FIX: the chest, belly, flank or arm that faced the blow (never the groin)
   const kid = goreKidNear(h.root.position);
-  if (goreBloodOn()) GR.bloodBurst(pt, dir, GR.burstCount(goreLevel(), e.kill, e.heavy) * (kid ? 0.3 : 1) * (e.arrow && !e.kill ? 0.6 : 1), { heavy: e.heavy, kill: e.kill, spread: e.arrow ? 0.42 : 0.61 });
-  GR.addWound(h.root, pt, e.arrow ? 0.045 : e.weapon === 'axe' ? 0.085 : 0.065);
+  if (goreBloodOn() && !kid) GR.bloodBurst(pt, dir, GR.burstCount(goreLevel(), e.kill, e.heavy) * (e.arrow && !e.kill ? 0.6 : 1), { heavy: e.heavy, kill: e.kill, spread: e.arrow ? 0.42 : 0.61 });   // GORE-FIX: none near a child
+  GR.addWound(h.root, pt, e.arrow ? 0.045 : e.weapon === 'axe' ? 0.075 : 0.06, { maxR: 0.12 });   // GORE-FIX: a person's wound never spreads past 12 cm
   goreSfx('flesh', 1, pt); if (e.heavy) goreSfx('crack', 0.7, pt);
   if (e.kill && goreBloodOn() && goreLevel() === 'high' && !kid && !f.goreQuick && (e.weapon === 'axe' || e.kind === 'finisher')) {   // a captive's death (the surrender choice) is quick, never a spectacle
     let seg = 0;
@@ -5736,6 +5991,7 @@ function goreHooks() {
     focus: () => GS.focus, trail: (o) => GR.trailCount(o.gid), trailBright: (o, near) => GR.splatBrightness(o.gid, near ? P.pos : null), kinds: (o) => GR.splatKinds(o?.gid),
     hands: () => GS.hands.value, setHands: (v) => { GS.hands.value = v; },
     zone: (o, p) => goreZoneOf(o, p), ext: (o) => goreExt(o),
+    body: (o) => goreBody(o), gap: (o, x, z) => ({ ...goreBodyGap(o, x, z) }), pieces: () => GR.pieceInfo(), kids: () => goreKids().map((p) => [+p.x.toFixed(2), +p.z.toFixed(2)]), rec: (o) => GR.goreRec(goreM(o)), raidTorch: (f, l = true) => raidTorch(f, l),   // GORE-FIX test hooks
     bed: (o) => { o.wounded = true; o.bleed ||= 0.08; goreBedDown(o); o.bedT = 2; o.lying = true; o.a.play('Death', 'hold', 1); },
     butcher: () => GS.butch && { kind: GS.butch.o.kind, t: GS.butch.o.butchT, need: GS.butch.need },
     sever: (o, seg = 1, dir) => { const m = goreM(o), r = GR.sever(m, seg, { dir }); if (r && o.root) goreArrowsOff(o, m, seg); return r; }, cut: (o) => GR.cutMask(goreM(o)), carcasses: () => GR.carcassList(),
@@ -5936,6 +6192,7 @@ function romCam(sc, kind) {
 }
 function romSceneStart(kind, o = {}) {
   if (ROM.scene || !playing) return null;
+  if (kind !== 'peck') arcCalmClear();               // ARC-FIX: no event pack in the shot
   if (ROM.hand) romHandOff();
   if (ROM.talk) { ROM.talk = null; if (N.h.pose === 'talk') N.h.pose = null; }
   if (typeof wpnStowAll === 'function') wpnStowAll('rom', true);
@@ -5979,6 +6236,10 @@ function romSceneEnd(cut = false) {
   const sc = ROM.scene; if (!sc) return;
   ROM.scene = null; ROM.mode = null; ROM.w = ROM.kissK = ROM.browK = 0; ROM.peck = false; busy = false;
   for (const m of ROM.hidden.splice(0)) m.visible = true;
+  if (sc.kind !== 'peck') {                          // ARC-FIX: they let go: a half step apart (the embrace pose ended with them 0.2 m apart, clipped)
+    const ux = N.pos.x - P.pos.x, uz = N.pos.z - P.pos.z, ul = Math.hypot(ux, uz);
+    if (ul < 0.75) { const k = (0.8 - ul) / 2, nx = ul > 0.01 ? ux / ul : Math.sin(P.face), nz = ul > 0.01 ? uz / ul : Math.cos(P.face); N.pos.x += nx * k; N.pos.z += nz * k; P.pos.x -= nx * k; P.pos.z -= nz * k; collide(N.pos, 0.3); collide(P.pos, 0.3); }
+  }
   if (sc.fade) $('fade').classList.remove('on');
   if (sc.cine && !ROM.nightOn && !R.on) cine(false);
   if (sc.cam && !sc.o.keepCam && (camShot?.dolly || camShot?.release)) camShot = cut ? null : { release: true, from: camPos.clone(), lookFrom: (R.lastLook || sc.camLook || look).clone(), k: 0, dur: 1.1 };
@@ -6090,7 +6351,7 @@ function romCamHold(sec) {
 
 // ----- the first kiss: ARC calls it at the fever recovery; else the first fire sit at 60+ (fallback)
 function romFirstKissFallback() {
-  if (S.rom.firstKiss != null) return false;
+  if (S.rom.firstKiss != null || romSetting() === 'off') return false;   // ARC-FIX: never with Romance Off
   if (S.rom.kissOffer) return true;
   const fv = chIdx('fever');
   return fv < 0 || settings.matureStory === false || !!S.arc?.legacy || S.ch > fv;
@@ -6098,12 +6359,20 @@ function romFirstKissFallback() {
 async function romFirstKiss(ctx = 'fever') {
   if (S.rom.firstKiss != null || ROM.fk) return false;
   ROM.fk = true; ROM.music = true;
+  arcCalmClear();                                    // ARC-FIX
   try {
     if (romDist() > 6) N.pos.set(P.pos.x + Math.sin(P.face) * 1.1, 0, P.pos.z + Math.cos(P.face) * 1.1);
     const lead = ctx === 'fever' ? ROMD.L.firstFever : S.rom.kissOffer ? ROMD.L.firstAgain : ROMD.L.firstFire;
-    lead.forEach((l) => say(...l));
+    if (romSetting() !== 'off' || ctx === 'fever') lead.forEach((l) => say(...l));   // ARC-FIX: Romance Off: only the fever morning's (tender, not romantic) lines
     await romWaitSubs();
     while (busy && !MAT.choice) await romSleep(200);
+    if (romSetting() === 'off') {                     // ARC-FIX: Romance Off (spec 2.6): no kiss or hand choice; a quiet beat, the story carries on
+      S.rom.kissOffer = false; S.rom.fkQuiet = S.day || 1; romShared();   // (firstKiss stays unset: with romance back on, the fire offers it later)
+      addClose(5, 'a quiet morning together');
+      say('Sena', 'Stay a while. Just sit with me.'); say('Aro', 'As long as you want.');
+      emit('romance', { kind: 'firstKiss', off: true });
+      return false;
+    }
     const i = await choose('firstkiss', 'Sena', [{ label: 'Kiss her' }, { label: 'Hold her hand' }], { def: 1, note: 'She is waiting for you.' });
     if (i === 0) {
       S.rom.firstKiss = S.day || 1; S.rom.kissOffer = false; S.rom.kisses = (S.rom.kisses || 0) + 1; S.rom.dayCaps.kiss = S.day; romShared();
@@ -6351,6 +6620,7 @@ function romTick(dt) {
     // shared acts the game already counts (fire sits, shared meals)
     if (cnt('sat_fire') !== ROM.satN || cnt('meal_shared') !== ROM.mealN) { ROM.satN = cnt('sat_fire'); ROM.mealN = cnt('meal_shared'); romShared(); }
     // neglect: three days with nothing shared, then -1 a day and one line
+    if (CH[S.ch].id === 'fever' || (S.arc?.feverOn && !S.arc.feverDone) || arcCalmNow()) romShared();   // ARC-FIX: nursing her through the fever, or a story scene together, is shared time
     const nd = ROMD.neglectDays(S.gh, S.rom.lastShared || 0), dk = Math.floor(S.gh / 24);
     if (nd > 0 && S.close >= 20 && !busy && S.rom.dayCaps.neglect !== dk) {
       S.rom.dayCaps.neglect = dk; addClose(-1, 'feeling far apart');
@@ -6913,7 +7183,10 @@ function cmbFinTick(dt) {
     hitStop = 0.12; hsWho = o; trauma = Math.min(1, trauma + 0.8); W.recoil = 0.2;
     A.hit(170, 0.2, 0.6); A.hit(1300, 0.05, 0.25);
     // Gore Low: the camera looks away to the sky at the moment of impact
-    if (F.cam && camShot === F.cam && settings.gore === 'low') { F.cam.look.set(F.cam.pos.x - Math.sin(P.face) * 2, F.cam.pos.y + 9, F.cam.pos.z - Math.cos(P.face) * 2); F.cam.snap = undefined; }
+    if (settings.gore === 'low') {
+      if (F.cam && camShot === F.cam) { F.cam.look.set(F.cam.pos.x - Math.sin(P.face) * 2, F.cam.pos.y + 9, F.cam.pos.z - Math.cos(P.face) * 2); F.cam.snap = undefined; }
+      else goreLookAway();                           // GORE-FIX: no finisher camera / first person: a dip to black instead
+    }
     emit('finisher', { o, weapon });
   }
   if (F.t >= F.dur) {
@@ -7080,7 +7353,9 @@ function cmbUpdate(dt) {
   } else C.revive = 0;
   cmbPostureBars(dt);
   // Sena's health bar over her head when hurt
-  const showN = (S.nhp < 99.5 || N.downed > 0) && !(N.rest > 0) && D().senaFate !== 'never';
+  const cineNow = MAT.endT > 0 || MAT.dead || $('hud').classList.contains('cine');   // MAT-SV: no overhead bars over the death beat or a cinematic
+  if (cineNow) { for (const b of cmbPBars) b.visible = false; for (const f of foes) { if (f.meter) f.meter.visible = false; if (f.pbar) f.pbar.visible = false; } }
+  const showN = (S.nhp < 99.5 || N.downed > 0) && !(N.rest > 0) && D().senaFate !== 'never' && !cineNow;
   cmbSenaBar.visible = showN;
   if (showN) { N.h.bones.Head.getWorldPosition(_c1); cmbSenaBar.position.set(_c1.x, _c1.y + 0.42, _c1.z); cmbSenaBar.userData.set(N.downed > 0 ? clamp(N.downed / 60, 0, 1) : S.nhp / 100, N.downed > 0 ? '#e0281c' : '#e8d8b8'); }
   // loot extras after the butcher (pelt, horn, bear hide and claws); the bear never comes back
@@ -7221,6 +7496,7 @@ function arcSenaSays(lines) { if (Math.hypot(N.pos.x - P.pos.x, N.pos.z - P.pos.
 async function arcScene(id, fn) {
   if (ARCS.scene) return false;
   ARCS.scene = id;
+  if (id !== 'raid') arcCalmClear();                 // ARC-FIX: no event pack inside a story scene
   try { await fn(); } catch (err) { console.error('ARC scene', id, err); }
   finally {
     ARCS.scene = null; ARCS.focus = null; ARCS.holdUntil = clock + 1.5; ARCS.ch = -1;
@@ -7231,10 +7507,26 @@ async function arcScene(id, fn) {
   return true;
 }
 function arcHold() { return !!ARCS.scene || clock < ARCS.holdUntil; }
+// ARC-FIX: a story or romance moment is playing (an ARC scene, a ROM kiss/embrace/handfast, the first-kiss beat, a choice
+// panel, a rest), or ended less than a few seconds ago. Random world events and the chapter advance wait for it.
+function arcCalmNow() { return !!ARCS.scene || !!ROM.scene || !!ROM.fk || !!ROM.nightOn || !!MAT.choice || !!R.on; }
+function arcCalm() { return arcHold() || arcCalmNow() || clock < (ARCS.calmUntil || 0); }
+// ARC-FIX: a cinematic is starting: event wolves within 45 m are sent off (those in or near the shot are gone at once),
+// so no pack walks into a vow, a kiss or a story beat. Story NPCs and the raid's own fighters are never touched.
+function arcCalmClear(r = 45) {
+  for (const o of [...animals]) {
+    if (o.kind !== 'wolf' || o.state !== 'live' || o.tame) continue;
+    const d = Math.hypot(o.root.position.x - P.pos.x, o.root.position.z - P.pos.z);
+    if (d < 28) remove(o); else if (d < r) o.leave = true;
+  }
+  ARCS.calmUntil = Math.max(ARCS.calmUntil || 0, clock + 8);
+}
 // A conversation shot: over Aro's shoulder toward `at` (a Vector3 or an NPC).
 function arcShot(at, t = 40, side = 1) {
   const tp = at.pos || at, dx = tp.x - P.pos.x, dz = tp.z - P.pos.z, d = Math.hypot(dx, dz) || 1, fx = dx / d, fz = dz / d;
   const pos = new THREE.Vector3(P.pos.x - fx * 3.1 + fz * 1.3 * side, P.pos.y + 2.1, P.pos.z - fz * 3.1 - fx * 1.3 * side);
+  if (arcCamBlocked(tp.x, tp.z, pos.x, pos.z)) pos.set(P.pos.x - fx * 3.1 - fz * 1.3 * side, P.pos.y + 2.1, P.pos.z - fz * 3.1 + fx * 1.3 * side);   // ARC-FIX: the other shoulder
+  if (arcCamBlocked(tp.x, tp.z, pos.x, pos.z)) pos.set(P.pos.x - fx * 1.2, P.pos.y + 2.3, P.pos.z - fz * 1.2);   // ARC-FIX: tight behind him
   const lk = new THREE.Vector3(tp.x, (tp.y || getHeight(tp.x, tp.z)) + 1.35, tp.z);
   if (view === 'fpp') return;                        // first person: keep the player's own eyes
   camShot = ARCS.shot = { pos, look: lk, t };
@@ -7243,12 +7535,34 @@ function arcShot(at, t = 40, side = 1) {
 const ARC_WHO = { Korr: 'korr', Tamu: 'tamu', Wena: 'wena', Pell: 'pell' };
 function arcCloseUp(who, other, d = 3.6, side = 1) {
   if (view === 'fpp' || !who || !other) return;
-  const a = who.pos, b = other.pos || other, dx = b.x - a.x, dz = b.z - a.z, L = Math.hypot(dx, dz) || 1, fx = dx / L, fz = dz / L;
-  const k = who.child ? 0.72 : 1, low = who.mode === 'sit' ? 0.55 : 0, gy = Math.max(getHeight(a.x, a.z), 0.2);
-  d = Math.min(d, Math.max(2.2, L - 1.2));
-  let cx = a.x + fx * d + fz * 1.25 * side, cz = a.z + fz * d - fx * 1.25 * side;
-  const cy = Math.max(getHeight(cx, cz), 0.25) + 1.5;                      // never under the bank or the water
-  camShot = ARCS.shot = { pos: new THREE.Vector3(cx, Math.max(cy, gy + 1.45 * k - low * 0.3), cz), look: new THREE.Vector3(a.x, gy + 1.42 * k - low, a.z), t: 60 };
+  const a = who.pos, b = other.pos || other, dx = b.x - a.x, dz = b.z - a.z, L = Math.hypot(dx, dz) || 1;
+  const k = who.child ? 0.72 : 1, gy = Math.max(getHeight(a.x, a.z), 0.2);
+  // ARC-FIX: a seated speaker (Tamu or Sena on the fire bench) is framed from in front of their own face, low and
+  // close, on the near side of the fire (the shot through the fire and the grass showed a headless figure on a log)
+  const seated = who.mode === 'sit' || (who === N && (N.sit > 0 || N.h.pose === 'sit' || N.h.pose === 'sitTalk' || !!N.seat));
+  const ang0 = seated ? who.face : Math.atan2(dx, dz), low = seated ? 0.55 : 0;
+  if (seated) { d = 1.9; side *= 0.65; } else d = Math.min(d, Math.max(2.2, L - 1.2));
+  // ARC-FIX: never inside or behind a trunk, a boulder or a wall (the outcast shot was inside the Great Tree): swing
+  // round the speaker until the line from their face to the lens is clear
+  let cx = 0, cz = 0;
+  for (const sw of [0, 0.45, -0.45, 0.9, -0.9, 1.35, -1.35, Math.PI]) {
+    const an = ang0 + sw, fx = Math.sin(an), fz = Math.cos(an);
+    cx = a.x + fx * d + fz * 1.25 * side; cz = a.z + fz * d - fx * 1.25 * side;
+    if (!arcCamBlocked(a.x, a.z, cx, cz)) break;
+  }
+  const cy = Math.max(getHeight(cx, cz), 0.25) + (seated ? 1.05 : 1.5);   // never under the bank or the water
+  camShot = ARCS.shot = { pos: new THREE.Vector3(cx, Math.max(cy, gy + 1.45 * k - low * 0.55), cz), look: new THREE.Vector3(a.x, gy + (seated ? 1.1 : 1.42 * k), a.z), t: 60 };
+}
+// ARC-FIX: is the line from a subject at (ax, az) to a lens at (cx, cz) inside a collider (trunk, rock, wall)?
+const _acb = new THREE.Vector3();
+function arcCamBlocked(ax, az, cx, cz) {
+  const L = Math.hypot(cx - ax, cz - az); if (L < 0.8) return false;
+  for (let t = 0.75; t <= L + 1e-3; t += 0.35) {
+    const q = Math.min(1, t / L), x0 = ax + (cx - ax) * q, z0 = az + (cz - az) * q;
+    _acb.set(x0, 0, z0); collide(_acb, t > L - 0.36 ? 0.8 : 0.2);
+    if (Math.abs(_acb.x - x0) + Math.abs(_acb.z - z0) > 1e-3) return true;
+  }
+  return false;
 }
 async function arcTalk(lines, other = ARCS.focus) {
   for (const l of lines || []) {
@@ -7256,12 +7570,13 @@ async function arcTalk(lines, other = ARCS.focus) {
     const npc = ARC_WHO[l[0]] ? arcGet(ARC_WHO[l[0]]) : null;
     if (npc && !npc.hidden) { arcCloseUp(npc, P, 3.6, 1); if (!P.ride && !keys.KeyW && !keys.KeyS && !keys.KeyA && !keys.KeyD) arcFace(P, npc.pos); }   // Aro looks at whoever speaks to him
     else if ((l[0] === 'Sena' || l[0] === 'Aro') && other && other !== N) arcCloseUp(l[0] === 'Sena' ? N : P, other, 3.4, l[0] === 'Sena' ? -1 : 1);
-    else if (l[0] === 'Sena' && other === N) arcCloseUp(N, P, 3.2, 1);
-    else if (l[0] === 'Aro' && other === N) arcCloseUp(P, N, 3.2, -1);
+    else if (l[0] === 'Sena' && other === N) { arcStandFace(N, P.pos); arcCloseUp(N, P, 3.2, 1); }   // ARC-FIX: she turns to him (not her back to the lens)
+    else if (l[0] === 'Aro' && other === N) { arcStandFace(P, N.pos); arcCloseUp(P, N, 3.2, -1); }
     say(l[0], l[1]); await arcSubsDone();
   }
 }
 function arcFace(e, tp) { e.face = Math.atan2(tp.x - e.pos.x, tp.z - e.pos.z); }
+function arcStandFace(e, tp) { if (e.ride || e.sit > 0 || e.seat || e.mode === 'sit' || (e === P && (keys.KeyW || keys.KeyS || keys.KeyA || keys.KeyD))) return; arcFace(e, tp); }   // ARC-FIX: standing speakers only
 
 // ----- choices: arcChoose wraps choose() and records the consequences
 const arcAxis = (k, n) => { if (!n) return 0; const was = S.arc[k] || 0; S.arc[k] = ARCD.clampAxis(was + n); return S.arc[k] - was; };
@@ -7371,7 +7686,7 @@ function arcPick(id, i = 0) {
 const ARC_LOOK = {
   korr: { hair: 'parted', beard: true, tint: 0x8b8680, hairColor: 0x181412, scale: 1.07, ash: 0.9, fur: 0x4a4038 },   // a dark wolf-pelt mantle
   tamu: { hair: 'buzz', beard: false, tint: 0xaaa49d, hairColor: 0x2b221c, ash: 0.35 },   // cast out: the ash on his hands is fading
-  wena: { female: true, hair: 'buns', tint: 0xd6ccc2, hairColor: 0x3b2a20, fur: 0x6a5a4a, furO: { wrap: true, skirt: 0x5a4636 } },   // a worn hide wrap and skirt
+  wena: { female: true, hair: 'buns', tint: 0xd6ccc2, hairColor: 0x3b2a20, fur: 0x6a5a4a, furO: { wrap: true, skirt: 0x5a4636 }, dress: false },   // a worn hide wrap and skirt (ADULT-DRESS off: her own wrap covers her)
   pell: { child: 'boy', hair: 'buzz', tint: 0xeee4da, hairColor: 0x4a3828, scale: 0.83 },   // CHILD: a boy's body and tunic (about 1.27 m)
 };
 const arcHunterLook = (i) => ({ ash: 0.85, fur: [0x6b5a48, 0x5d5044, 0x7a6650, 0x625548][i % 4], hair: i % 2 ? 'buzz' : 'parted', beard: i !== 1, tint: [0x9d978f, 0x8e8983, 0xa49e96, 0x96918a][i % 4], hairColor: [0x2a2420, 0x1c1916, 0x3a2e26, 0x231d19][i % 4] });
@@ -7712,6 +8027,13 @@ function arcEnter(id) {
   if (id === 'seeds' && A.tribe === 'allied' && !A.skipped && !A.grainGift && A.choices.korr === 'peace') { A.grainGift = true; setTimeout(() => { banner(...ARCD.L.seeds.gift); give('grain', 3); }, 5200); }
   ARCS.ch = -1;
 }
+// ARC-FIX: the story advance (frame loop). A chapter that turns the season (autumn into winter, the thaw) comes in
+// behind a short fade, and the season's look is set while the screen is dark instead of snapping under the player.
+function arcAdvance() {
+  const nx = CH[S.ch + 1]?.id, from = arcSeasonOf(CH[S.ch].id), to = nx && arcSeasonOf(nx);
+  if (!nx || !S.arc || from === to || CH[S.ch + 1]?.epilogue || !playing) { S.ch++; enterChapter(); return; }
+  fadeTo('', () => { S.ch++; enterChapter(); ARCS.season.snap = true; }, 900);
+}
 function arcSkip(id) {
   const A = S.arc;
   A.skipped = true;
@@ -7789,6 +8111,7 @@ function arcCard(ch) {
 function arcMorningLine(line) {
   const A = S.arc;
   if (A.choices.jealous === 'walk' && !A.walkSaid) { A.walkSaid = true; return ARCD.L.jealous.walk[0][1]; }
+  if (CH[S.ch].id === 'reckoning' && !A.choices.korr && !S.found.camp && !A.hintSaid) { A.hintSaid = true; return ARCD.L.reckoning.hint[1]; }   // ARC-FIX: the authored hint, as her morning line
   if (A.choices.door === 'refuse' && !A.refuseSaid) { A.refuseSaid = true; return ARCD.L.winter.refuseAfter[0][1]; }
   if (A.wena === 'lost' && S.day >= (A.slingDay ?? 1e9) && !A.slingSeen && !A.slingHint) { A.slingHint = true; return ARCD.L.winter.slingHint[1]; }
   if (A.senaWound === 'scarred' && A.feverDone && cnt('slept') % 4 === 0) return 'My leg remembers the winter before I do, these mornings. ' + line;
@@ -7807,6 +8130,7 @@ function arcBoot() {
 }
 function updateArc(dt) {
   if (!ARCS.boot) arcBoot();
+  if (arcCalmNow()) ARCS.calmUntil = Math.max(ARCS.calmUntil || 0, clock + 6);   // ARC-FIX: a grace after every scene
   for (let i = ARCS.waits.length - 1; i >= 0; i--) { const w = ARCS.waits[i]; if (w.subs ? subs.length === 0 && subT <= 0.35 : clock >= w.t) { ARCS.waits.splice(i, 1); w.r(); } }
   if (ARCS.ch !== S.ch) { ARCS.ch = S.ch; arcSync(); }
   arcNpcTick(dt);
@@ -7837,6 +8161,10 @@ function arcSling() {
   if (A.slingSeen || arcDist(P.pos, pr.x, pr.z) > 9) return;
   A.slingSeen = true;
   banner(...ARCD.L.winter.slingBanner); arcSenaSays(ARCD.L.winter.sling);
+  if (view !== 'fpp' && !camShot) {                  // ARC-FIX: a held look at the frozen sling in the snow
+    const sx = pr.x + 0.55, sz = pr.z + 0.65, gy = getHeight(sx, sz), a = Math.atan2(P.pos.x - sx, P.pos.z - sz);
+    camShot = ARCS.shot = { pos: new THREE.Vector3(sx + Math.sin(a) * 1.9, gy + 1.3, sz + Math.cos(a) * 1.9), look: new THREE.Vector3(sx, gy + 0.08, sz), t: 4.5, ease: true, untilSubs: true };
+  }
   arcMem('sling', 'You found Wena\'s sling in an empty camp.');
   save();
 }
@@ -7867,6 +8195,11 @@ function arcSync() {
   if (A.thaw && A.choices.korr && !S.village) arcFoalSpawn();
   if (A.horseFate === 'taken') { const o = tameHorse(); if (o) { if (P.ride === o) dismount(); remove(o); } }
   if (S.village) arcEpilogueProps();
+  arcSenaFur(A.season === 'winter');                 // ARC-FIX: a heavier hide mantle over her dress for the winter chapters
+}
+function arcSenaFur(on) {
+  if (on && !ARCS.senaFur) ARCS.senaFur = arcFurMantle(N.h, 0x5e4c3c);
+  if (ARCS.senaFur) ARCS.senaFur.visible = on;
 }
 
 // ----- Tamu
@@ -7978,7 +8311,7 @@ async function arcReckoning() {
     k.mode = 'walk'; k.tx = P.pos.x + (k.pos.x - P.pos.x) * 0.45; k.tz = P.pos.z + (k.pos.z - P.pos.z) * 0.45; k.then = 'talk'; k.look = 'P';
     await arcWait(1.5);
     ARCS.focus = k; arcShot(k, 90);
-    await arcTalk(L.meet);
+    await arcTalk(Math.hypot(N.pos.x - P.pos.x, N.pos.z - P.pos.z) < 15 ? L.meetWith : L.meet);   // ARC-FIX: never 'You came alone' with Sena beside him
     await arcChoose('korr', 'Korr', ARC_OPTS.korr(), { def: null, note: 'His hunters are on their feet around the fire. Korr has not reached for his spear. Yet.' });
     const c = A.choices.korr;
     const duel = c !== 'peace' && typeof cmbDuel === 'function' && settings.matureStory !== false ? await arcKorrDuel(k, c) : null;   // phase C: a real CMB fight
@@ -7993,8 +8326,9 @@ async function arcReckoning() {
       await arcTalk(L.spare);
     } else { await arcTalk(L.peace); }
     if (A.horseFate === 'taken') { arcHorseBack(); arcSay([L.horseBack]); await arcSubsDone(); }
-    await arcFade(L.thawFade, () => { A.thaw = true; A.season = 'spring'; if (c !== 'kill') arcAshLeave(0.01); arcFoal(); }, 3200);
-    arcSay(L.foal); await arcSubsDone();
+    await arcFade(L.thawFade, () => { A.thaw = true; A.season = 'spring'; if (c !== 'kill') arcAshLeave(0.01); arcFoal(); ARCS.foalShot = ARCS.shot; }, 3200);
+    if (ARCS.foalShot && camShot === ARCS.foalShot) camShot.t = Math.max(camShot.t, 6);
+    arcSay(L.foal); await arcSubsDone(); await arcWait(1.5);
   });
 }
 // The duel (phase C): the story's Korr steps out and CMB's Korr (a chief: no flight; for "spare", he yields at 0) fights
@@ -8058,7 +8392,7 @@ function arcFoal() {                                 // the thaw: a foal on Hors
   try {
     const [x, z] = arcFoalSpawn();
     const gy = getHeight(x, z);
-    camShot = ARCS.shot = { pos: new THREE.Vector3(x + 7, gy + 2.6, z + 7), look: new THREE.Vector3(x, gy + 0.7, z), t: 6 };
+    camShot = ARCS.shot = { pos: new THREE.Vector3(x + 5.5, gy + 1.9, z + 5.5), look: new THREE.Vector3(x, gy + 0.6, z), t: 9, untilSubs: true };   // ARC-FIX: held over the lines (it timed out under the fade and cut back to the camp)
     if (P.pos.distanceTo(new THREE.Vector3(x, P.pos.y, z)) > 150) { const h = arcHome(); if (h) { P.pos.set(h.x + 3, 0, h.z + 4); N.pos.set(h.x + 4, 0, h.z + 3); } }
   } catch (err) { console.error('ARC foal', err); }
 }
@@ -8109,7 +8443,18 @@ async function arcDoor() {
 function arcKnock() { for (let i = 0; i < 3; i++) setTimeout(() => arcSfx(160, 0.12, 0.6), i * 260); setTimeout(() => { for (let i = 0; i < 2; i++) setTimeout(() => arcSfx(150, 0.12, 0.5), i * 260); }, 1300); }
 
 // ----- the raid (phase C: CMB waves via spawnRaider; narrated when fleeing, with Mature story Off, or without CMB)
-function arcKidsIndoors(on) { ARCS.raidOn = on; for (const e of ARCS.npcs) if (e.child || e.id === 'wena' || e.id === 'tamu') e.hidden = on; for (const c of kids) c.h.root.visible = !on; }   // Wena stays in with Pell; a guest Tamu stands by Sena
+function arcKidsIndoors(on) { ARCS.raidOn = on; for (const e of ARCS.npcs) if (e.child || e.id === 'wena') e.hidden = on; for (const c of kids) c.h.root.visible = !on; if (on) arcTamuGuard(true); }   // Wena stays in with Pell; ARC-FIX: a guest Tamu stands by Sena, seen (he was hidden, then died off-screen)
+// ARC-FIX: a guest Tamu on his feet with a spear, keeping between Sena and the dark through the raid (scripted, not a CMB fighter)
+function arcTamuGuard(start = false) {
+  const t = arcGet('tamu'); if (!t || t.mode === 'dead' || !arcTamuGuest()) return;
+  if (start) { t.hidden = false; t.jy = 0; t.talk = false; t.h.spear.visible = true; t.h.place(t.h.spear, 'hand'); }
+  const tx = N.pos.x + Math.sin(N.face) * 1.4 + Math.cos(N.face) * 0.9, tz = N.pos.z + Math.cos(N.face) * 1.4 - Math.sin(N.face) * 0.9;
+  if (start && Math.hypot(t.pos.x - tx, t.pos.z - tz) > 15) t.pos.set(tx, 0, tz);
+  if (Math.hypot(t.pos.x - tx, t.pos.z - tz) > 1.2) { t.mode = 'walk'; t.tx = tx; t.tz = tz; t.spd = 3.4; t.then = 'stand'; }
+  else if (t.mode !== 'walk') t.mode = 'stand';
+  const f = foes.filter((o) => o.live).sort((a, b) => Math.hypot(a.pos.x - t.pos.x, a.pos.z - t.pos.z) - Math.hypot(b.pos.x - t.pos.x, b.pos.z - t.pos.z))[0];
+  t.look = f ? f.pos : 'N';
+}
 // Phase C: when CMB is present (spawnRaider) and the home is defended, the raid is a real fight in two waves; fleeing,
 // Mature story Off and a missing CMB keep the narrated version. The consequences are the same either way (arcRaidAfter).
 const ARC_WAVE = { story: 3, survivor: 5, hardcore: 6, custom: 5 };
@@ -8122,9 +8467,10 @@ function arcRaid() {
     const L = ARCD.L.raid, resumed = (A.raid.wave || 0) > 0;
     arcKidsIndoors(true);                            // GUARDRAIL: children first, before anything else happens
     A.raid.wave = Math.max(1, A.raid.wave || 0);
-    if (!resumed) banner(...L.banner);
+    if (!resumed) { banner(...L.banner); await arcWait(3.2); }   // GORE-FIX: the banner is read before the timed choice opens over it
     if (!A.choices.raid) {
       arcSay(L.surprise); await arcSubsDone();
+      $('event').classList.remove('on');
       await arcChoose('raid', 'Fire in the Night', ARC_OPTS.raid(), { timer: 10, def: 0 });
     }
     if (A.choices.raid !== 'flee' && typeof spawnRaider === 'function' && settings.matureStory !== false) await arcRaidFight(resumed);
@@ -8153,6 +8499,7 @@ function arcRaidSpawn(n, a0, cx, cz, wave) {
     const f = spawnRaider(x, z, tamu ? { name: 'Tamu', role: 'brawler', surrender: true, noFlee: true, mode: 'combat', face: a + Math.PI, band: 'raid' + wave } : { role: roles[i % roles.length], mode: 'combat', face: a + Math.PI, band: 'raid' + wave });
     if (!f) continue;
     f.arcRaid = true; arcRaiderLook(f, k);
+    if (first && !tamu) raidTorch(f, out.length < 2);   // GORE-FIX: the first wave comes down the hill with lit torches
     if (tamu) { f.arcTamu = true; A.raid.tamuSpawned = true; }
     out.push(f);
   }
@@ -8192,6 +8539,7 @@ async function arcRaidFight(resumed) {
       for (;;) {                                     // the fight: until every raider of this wave is dead, gone or spared
         await arcWait(0.25);
         if (MAT.dead) return;
+        arcTamuGuard();                              // ARC-FIX: Tamu keeps by Sena
         const open = list.filter((f) => !arcFoeDone(f));
         const tm = open.find((f) => f.arcTamu && f.mode === 'downed' && !f.deciding && !A.choices.tamu);
         if (tm && open.length === 1 && !(P.downed > 0) && !MAT.choice) TRIBE.decide(tm);   // the last one standing is Tamu on his knees: Aro must answer
@@ -8236,7 +8584,10 @@ async function arcRaidAfter() {
   const A = S.arc, L = ARCD.L.raid;
   if (arcTamuGuest()) {                              // Tamu dies shielding Sena
     A.tamu = 'dead'; arcMem('tamu', 'Tamu died shielding Sena.');
+    arcTamuFall();                                   // ARC-FIX: he is down at Sena's side, in the shot, for his last words
+    await arcWait(1.4);
     arcSay(L.tamuDies); await arcSubsDone();
+    await arcWait(1.2);
     await arcFade(L.tamuBuried, () => { arcDrop('tamu'); arcCairn('Tamu'); }, 2600);
   } else if (A.tamu === 'gone' && !A.choices.tamu) { // he came with them; he is on his knees. Only an explicit pick kills him (never the default)
     await arcChoose('tamu', 'Tamu', ARC_OPTS.tamu(), { def: 0, note: L.tamuSeen });
@@ -8255,10 +8606,31 @@ async function arcRaidAfter() {
     if (h) { P.pos.set(h.x + 3.2, 0, h.z + 4.2); N.pos.set(h.x + 4.2, 0, h.z + 3.4); }
     if (N.downed > 0) cmbSenaRevive('P');
     S.nhp = Math.min(S.nhp, 45);
+    if (h) { arcFace(P, N.pos); arcFace(N, P.pos); N.wait = 8; N.speed = 0; N.path = null; ARCS.focus = N; arcCloseUp(N, P, 2.8, 1); }   // ARC-FIX: dawn opens on Sena, in frame
   }, 1400);
-  arcSay(L.wound); await arcSubsDone();
+  arcSay(L.dawn); arcSay(L.wound); await arcSubsDone();   // ARC-FIX: Aro's 'Stay awake' line was never played
   A.raid.done = true; A.raid.wave = 0; A.raid.left = 0;
   arcKidsIndoors(false);
+}
+// ARC-FIX: the end of the raid: Tamu down on his back beside Sena (a raider's spear took him in front of her), Sena
+// knelt at his side, and a low close shot on the two of them for his last line.
+function arcTamuFall() {
+  const t = arcGet('tamu') || (arcTamuHome(), arcGet('tamu')); if (!t) return;
+  t.hidden = false; t.h.spear.visible = false;
+  const inside = (x, z, pad) => structs.some((q) => (q.kind === 'house' || q.kind === 'hut' || q.kind === 'stable') && Math.hypot(q.x - x, q.z - z) < (q.radius || 3) + pad);
+  let a = N.face;                                    // he lies on the side of her away from the walls
+  for (const sw of [0, Math.PI, Math.PI / 2, -Math.PI / 2]) { const b = N.face + sw; if (!inside(N.pos.x + Math.sin(b) * 1.1, N.pos.z + Math.cos(b) * 1.1, 0.6)) { a = b; break; } }
+  const x = N.pos.x + Math.sin(a) * 1.1, z = N.pos.z + Math.cos(a) * 1.1;
+  t.pos.set(x, 0, z); t.face = a + Math.PI / 2; t.mode = 'stand'; arcDead(t);
+  N.speed = 0; N.path = null; arcFace(N, t.pos);
+  if (view === 'fpp') return;
+  const mx = (x + N.pos.x) / 2, mz = (z + N.pos.z) / 2, gy = Math.max(getHeight(mx, mz), 0.2);
+  let cx = mx + Math.cos(a) * 2.4, cz = mz - Math.sin(a) * 2.4;   // side-on to the two of them; swing round until clear of walls and trunks
+  for (const sw of [0, Math.PI, 0.6, -0.6, Math.PI + 0.6, Math.PI - 0.6, 1.2, -1.2]) {
+    const b = a + Math.PI / 2 + sw, px = mx + Math.sin(b) * 2.4, pz = mz + Math.cos(b) * 2.4;
+    if (!inside(px, pz, 0.8) && !arcCamBlocked(mx, mz, px, pz)) { cx = px; cz = pz; break; }
+  }
+  camShot = ARCS.shot = { pos: new THREE.Vector3(cx, Math.max(getHeight(cx, cz), 0.2) + 1.25, cz), look: new THREE.Vector3(mx, gy + 0.45, mz), t: 6, untilSubs: true };
 }
 // CMB torch scorch marks on the buildings fade into the morning's repair (the house keeps ARC's own scorch if it burned).
 function arcUnscorch() {
@@ -8333,6 +8705,7 @@ function arcRemedy(k, item) {
   A.fever = Math.max(F.floor, (A.fever || 0) - (k === 'bled' ? F.bleed : F.remedy));
   if (k === 'bled') { A.senaWound = 'fever'; arcSay(L.bled); } else arcSay([L.remedy[['willow', 'yarrow', 'moss'].indexOf(k)]]);
   arcBedSide(); P.h.swing(); arcSfx(500, 0.3, 0.25); arcBedShot();
+  if (typeof romShared === 'function') romShared();   // ARC-FIX: tending her counts as time together
   drawInv(); drawQuest(); save();
 }
 // Tending her: Aro steps to her side of the bed, facing her (out of the room camera's way; he stood in its lens).
@@ -8367,7 +8740,8 @@ function arcVigil() {
     const sat = arcVigilSit(b);
     if (sat) arcVigilCam(b); else arcBedShot(40);
     // the night goes by: the sky turns over the roof while she talks, to him and to people long dead
-    const hrs = ((6.5 - S.time) % 24 + 24) % 24, steps = 24, lines = [...L.rising.map((x) => x[1]).filter((l, i, a) => a.findIndex((q) => q[1] === l[1]) === i), ...(L.vigil || [])];
+    const scar = S.arc.senaWound === 'scarred';      // ARC-FIX: the fever already burned out: a night of pain and talk, not fever ravings
+    const hrs = ((6.5 - S.time) % 24 + 24) % 24, steps = 24, lines = scar ? [...L.scarredVigil] : [...L.rising.map((x) => x[1]).filter((l, i, a) => a.findIndex((q) => q[1] === l[1]) === i), ...(L.vigil || [])];
     let li = 0;
     for (let i = 0; i < steps; i++) {
       if (S.time + hrs / steps >= 24) S.day++;
@@ -8377,7 +8751,8 @@ function arcVigil() {
     }
     bump('vigil');
     await arcSubsDone();
-    await arcFade(L.vigilFade, () => {               // morning: the two of them just outside the door, in the first light
+    romShared();                                     // ARC-FIX: a night at her side is shared time (no neglect line next morning)
+    await arcFade(scar ? L.scarredFade : L.vigilFade, () => {               // morning: the two of them just outside the door, in the first light
       arcVigilSit(null); ARCS.vigilDone = true;
       const h = b.s, d = h ? toWorld(h, [0, 0, h.kind === 'house' ? 4.6 : 3.8]) : null;
       if (d) { const a = Math.atan2(d.x - h.x, d.z - h.z), rx = Math.cos(a), rz = -Math.sin(a);
@@ -8459,6 +8834,7 @@ function arcFeverCure() {
   const A = S.arc;
   if (A.feverDone) return;
   A.feverDone = true; A.fever = 0;
+  if (typeof romShared === 'function') romShared();   // ARC-FIX
   if (A.senaWound !== 'scarred') A.senaWound = 'healed';
   ARCS.ch = -1;
   addClose(5, 'sat with her through the fever');
@@ -8483,10 +8859,11 @@ function arcSena(dt) {
     return true;
   }
   if (ARCS.sick?.visible) arcSickCover(null);
+  if (ROM.scene) return false;                      // ARC-FIX: a ROM kiss or embrace moves her (the lake embrace runs inside the scene)
   if (ARCS.lake) {                                   // she walks by Mirror Lake at dusk (a rift to mend)
     const [x, z] = arcSpot('lake'), d = Math.hypot(N.pos.x - x, N.pos.z - z);
     if (d > 2) { if (Math.hypot(N.pos.x - P.pos.x, N.pos.z - P.pos.z) > 45 && d > 30) N.pos.set(x + 1.5, 0, z + 1.5); else walkTo(N, x, z, 2.6, dt, 0.8); }
-    else { N.speed = 0; const L = POIS.find((p) => p.id === 'lake'); N.face = turn(N.face, Math.atan2(L.x - N.pos.x, L.z - N.pos.z), Math.min(1, dt * 3)); }
+    else { N.speed = 0; const L = ARCS.scene === 'reconcile' ? P.pos : POIS.find((p) => p.id === 'lake'); N.face = turn(N.face, Math.atan2(L.x - N.pos.x, L.z - N.pos.z), Math.min(1, dt * 3)); }   // ARC-FIX: in the scene she turns to him
     settle(N, dt, false); return true;
   }
   if (ARCS.jealous) {                                // laughing with Tamu on the far bench
@@ -8497,7 +8874,7 @@ function arcSena(dt) {
   if (ARCS.scene && ARCS.focus && ARCS.scene !== 'vigil') {   // stand by Aro and face whoever is talking
     const dP = Math.hypot(N.pos.x - P.pos.x, N.pos.z - P.pos.z);
     if (dP > 2.4) walkTo(N, P.pos.x + 1.1, P.pos.z + 0.6, dP > 10 ? 5 : 2.8, dt, 0.5);
-    else { N.speed = 0; const t = ARCS.focus.pos || ARCS.focus; N.face = turn(N.face, Math.atan2(t.x - N.pos.x, t.z - N.pos.z), Math.min(1, dt * 4)); }
+    else { N.speed = 0; const t = ARCS.focus === N ? P.pos : ARCS.focus.pos || ARCS.focus; N.face = turn(N.face, Math.atan2(t.x - N.pos.x, t.z - N.pos.z), Math.min(1, dt * 4)); }
     N.h.pose = null; settle(N, dt, false); return true;
   }
   return false;
@@ -8646,11 +9023,11 @@ function arcJealousBeat() {
     ARCS.focus = N; arcShot(N, 60);
     await arcTalk(L.scene, arcGet('tamu'));
     await arcChoose('jealous', 'At the Fire', ARC_OPTS.jealous(), { def: null, note: 'Sena and Tamu are laughing together by the fire.' });
-    ARCS.jealous = false; t.talk = false;
-    const ch = A.choices.jealous;
-    if (ch === 'join') arcSay(L.join);
-    else if (ch === 'forbid') arcSay(L.forbid);
+    const ch = A.choices.jealous;                    // ARC-FIX: she stays on the bench through the answer, each line framed on its speaker (the shot held on an empty log)
+    if (ch === 'join') await arcTalk(L.join, t);
+    else if (ch === 'forbid') await arcTalk(L.forbid, N);
     await arcSubsDone();
+    ARCS.jealous = false; t.talk = false;
   });
 }
 function arcRift(n, cause) {
@@ -8667,15 +9044,40 @@ function arcLakeBeat() {
   const [x, z] = arcSpot('lake');
   if (arcDist(N.pos, x, z) > 3 || arcDist(P.pos, N.pos.x, N.pos.z) > 6) return;
   arcScene('reconcile', async () => {
-    const L = ARCD.L.reconcile;
+    const L = ARCD.L.reconcile, again = A.choices.reconcile === 'proud';
+    if (again) {                                     // ARC-FIX: "Ask me again tomorrow": the answer is asked for again (it softlocked: arcChoose kept the old one)
+      delete A.choices.reconcile; A.proudOnce = true;
+      const i = A.memory.findLastIndex?.((m) => m.id === 'reconcile') ?? -1; if (i >= 0) A.memory.splice(i, 1);
+    }
+    arcLakeStage();                                  // ARC-FIX: they face each other, side-lit by the low sun, with a warm fill at dusk
     ARCS.focus = N; arcShot(N, 60);
-    await arcTalk(L.scene);
-    await arcChoose('reconcile', 'At Mirror Lake', ARC_OPTS.reconcile(), { def: null, note: 'Sena does not look at you. She is waiting.' });
+    await arcTalk(A.proudOnce ? L.again : L.scene);
+    const opts = ARC_OPTS.reconcile().filter((o) => !(A.proudOnce && o.value === 'proud'));   // the second time, pride is no longer on offer
+    await arcChoose('reconcile', 'At Mirror Lake', opts, { def: null, note: A.proudOnce ? 'She asked you to ask again. She is waiting.' : 'Sena does not look at you. She is waiting.' });
     const ch = A.choices.reconcile;
+    arcLakeStage();
     await arcTalk(L[ch]);
-    if (ch === 'afraid' && settings.romance !== 'off' && typeof romEmbrace === 'function') romEmbrace(true);   // ROM: the embrace scene
+    if (ch === 'proud') { say(...L.away); await arcSubsDone(); }   // she sleeps by the fire tonight (romApart while the rift is open)
+    if (ch === 'afraid' && settings.romance !== 'off' && typeof romEmbrace === 'function') {   // ROM: the embrace scene, held inside this scene
+      romEmbrace(true); await arcWait(0.3); while (ROM.scene) await arcWait(0.2);
+    }
+    arcLakeLight(false);
     ARCS.lake = false;
   });
+}
+// ARC-FIX: the lake two-shot: Aro and Sena turned to each other (she stood facing the water, her back to the camera),
+// and a warm low key light on their faces at dusk (the 'I was afraid' frame was black).
+function arcLakeStage() {
+  if (!P.ride) arcFace(P, N.pos); arcFace(N, P.pos); N.wait = Math.max(N.wait || 0, 6); N.speed = 0; N.path = null;
+  arcLakeLight(world.env.night > 0.2 || world.env.day < 0.6);
+}
+function arcLakeLight(on) {
+  if (!on) { if (ARCS.doorLamp === ARCS.lakeLamp) { ARCS.doorLamp = null; if (!torchOn) { torch.light.intensity = 0; torch.light.color.setHex(0xff8f40); } } ARCS.lakeLamp = null; return; }
+  if (torchOn) return;
+  const mx = (P.pos.x + N.pos.x) / 2, mz = (P.pos.z + N.pos.z) / 2, a = Math.atan2(N.pos.x - P.pos.x, N.pos.z - P.pos.z) + Math.PI / 2;
+  torch.light.position.set(mx + Math.sin(a) * 2.2, Math.max(getHeight(mx, mz), 0) + 2, mz + Math.cos(a) * 2.2); torch.light.color.setHex(0xffb070);
+  const fn = () => { if (!torchOn) torch.light.intensity = 3.2; };
+  ARCS.doorLamp = ARCS.lakeLamp = fn;
 }
 function arcHandfast() {
   const A = S.arc;
@@ -8815,6 +9217,7 @@ function arcHooks(G) {
       season: () => { ARCS.season.snap = true; },    // tests: jump the season tint instead of easing it
       vigil: (o) => Object.assign(ARCS, o),          // tests: tune the vigil seat (vigilAt: [lateral k, along])
       sick: () => { const m = ARCS.sick; if (!m) return null; const p = m.geometry.attributes.position, B = N.h.bones, V = THREE.Vector3; return { vis: m.visible, pos: m.position.toArray(), sc: m.scale.toArray(), maxY: Math.max(...p.array.filter((_, i) => i % 3 === 1)), bones: ['pelvis', 'calf_l', 'foot_l', 'ball_l'].map((n) => B[n].getWorldPosition(new V()).toArray().map((v) => +v.toFixed(2))) }; },   // tests: the sick-bed blanket
+      cam: (p, l, t = 60) => { camShot = p ? { pos: new THREE.Vector3(...p), look: new THREE.Vector3(...l), t } : null; return !!camShot; }, shot: () => camShot && { pos: camShot.pos?.toArray().map((v) => +v.toFixed(2)), look: camShot.look?.toArray().map((v) => +v.toFixed(2)) },   // tests: frame a portrait
       beats: () => arcBeats(CH[S.ch].id), memTab: () => { $('maptabs').querySelector('[data-mt="mem"]').click(); },
     },
   });
@@ -8863,6 +9266,7 @@ function epilogue() {
       if (structs.some((s) => Math.hypot(s.x - x, s.z - z) < s.radius + 6)) continue;
       placeStruct('house', x, z, Math.atan2(home.x - x, home.z - z), true); made++;
     }
+    goreTimeSkip();                                  // GORE-FIX: seven winters: no wound or blood survives to the family portrait
     S.village = true; S.time = 8; S.day += EPI_YEARS * 365; S.c.epiDay = S.day; ensureLio();   // STORY epiDay: the HUD counts from the jump
     Object.assign(S, { food: 90, water: 90, warm: 100, hp: 100 });   // final test: the years-long skip left hunger/thirst near empty
     spawnVillagers(); epilogueExtras(home); save();   // WP6: Lio grown, on the horse; final camera shot
@@ -8918,17 +9322,22 @@ const SV_LINES = {
 function survAdd(id, part, sev = 1, who = 'P', o = {}) {
   if (who === 'N' && D().aff !== 'full') return false;  // Sena's own wounds: Hardcore only
   const list = who === 'N' ? S.naff : S.aff;
+  const before = new Map(list.map((a) => [a, a.sev]));   // MAT-SV: did a re-hit make it worse?
   const r = SURV.addAff(list, id, part, sev, svCtx({ force: !!o.force, src: o.src || null }));
   if (!r.a) return false;
+  r.rose = r.fresh || r.a.sev > (before.get(r.a) ?? 0);
   if (r.fresh && who === 'P') S.risk.last = S.gh;
   svMods(); svMoodles(true);
-  if (who === 'P' && !o.quiet) svNotify(r.a, r.fresh);
+  if (who === 'P' && !o.quiet) svNotify(r.a, r.fresh, r.rose);
   return true;
 }
-function svNotify(a, fresh) {
+function svNotify(a, fresh, rose = fresh) {
   const name = SURV.AFF[a.id].name, where = SURV.PART_NAME[a.part];
   if (a.id === 'poison') return;                     // silent until the onset
-  if (a.id === 'bleed') toast(`Bleeding (${SURV.AFF.bleed.sevName[a.sev]}) · ${where} · H to treat`);
+  if (MAT.dead || MAT.endT > 0 || MAT.rescuing) return;   // MAT-SV: nothing over the death or rescue fade
+  if (!fresh && !rose && a.id !== 'sprain') return;  // MAT-SV: a re-hit that did not make it worse says nothing (the moodle pulses)
+  const tk = 'aff_' + a.id + (a.part || '');
+  if (a.id === 'bleed') toast(`Bleeding (${SURV.AFF.bleed.sevName[a.sev]}) · ${where} · H to treat`, tk);
   else if (a.id === 'sprain') toast(fresh ? 'Your ankle twists under you: sprained' : 'The ankle hurts again');
   else if (a.id === 'fracture') toast('Something snaps in your leg: it is broken');
   else if (a.id === 'dysentery') toast('Your gut cramps. The water was bad');
@@ -8936,7 +9345,7 @@ function svNotify(a, fresh) {
   else toast(name);
   A.tone(a.id === 'bleed' ? 110 : 150, 0.5, 0.06);
   const k = 'svl_' + a.id;
-  if (SV_LINES[a.id] && svNear(N.pos, 25) && !(N.downed > 0) && cnt(k) < 3 && fresh) { bump(k); say('Sena', SV_LINES[a.id][cnt(k) % SV_LINES[a.id].length]); }
+  if (SV_LINES[a.id] && svNear(N.pos, 25) && !(N.downed > 0) && !(P.downed > 0) && cnt(k) < 3 && fresh) { bump(k); say('Sena', SV_LINES[a.id][cnt(k) % SV_LINES[a.id].length]); }
 }
 function svCause() {
   const k = S.aff.find((a) => a.id === 'bleed') ? 'bleed' : S.aff.find((a) => a.id === 'infection') ? 'infection' : S.aff.find((a) => a.id === 'hypo') ? 'hypo' : null;
@@ -9172,12 +9581,17 @@ const MD_ICON = {
   dysentery: '<path d="M9 2.8c0 3 1.2 4.2 1.2 6.2 0 2.2-5.4 2-5.4 7 0 3.1 2.6 5.2 6.2 5.2 5.1 0 8.2-3.7 8.2-8.2 0-3.6-2.5-5.3-5.1-5.3-1.7 0-2.2-1.6-2.2-4.9z" fill="#c49a5a"/><path d="M17.6 13.2c-1.4 2.2-2.4 3.4-2.4 4.6a2.4 2.4 0 0 0 4.8 0c0-1.2-1-2.4-2.4-4.6z" fill="#6fb7d9" stroke="#1e2a30" stroke-width=".8"/>',
   hypo: '<g stroke="#bfe3f7" stroke-width="2" stroke-linecap="round" fill="none"><path d="M12 2.8v18.4M4 7.4l16 9.2M4 16.6l16-9.2"/><path d="M9.4 4.4L12 7l2.6-2.6M9.4 19.6L12 17l2.6 2.6M4.6 11l3.4 1-1 3.4M19.4 13l-3.4-1 1-3.4"/></g>',
 };
+const MD_SHORT = { bleed: 'Bleeding', wound: 'Wound', infection: 'Infected', sprain: 'Sprain', fracture: 'Broken', poison: 'Poisoned', dysentery: 'Sick', hypo: 'Freezing', hyporisk: 'Cold' };   // MAT-SV
+// MAT-SV: UI scale for big windows: 1 at 1280x720, up to 1.5 at 1920x1080 (index.html applies it with CSS zoom)
+function uiScale() { document.documentElement.style.setProperty('--ui', clamp(Math.min(innerHeight / 720, innerWidth / 1280), 1, 1.5).toFixed(3)); }
+uiScale(); addEventListener('resize', uiScale);
 function svMoodleHtml(a, who, faint = false) {
   const t = a.id === 'hyporisk' ? 1 : SURV.tier(a), col = MD_COL[t], C = 69.1, k = a.id === 'hyporisk' ? S.risk.hypo : SURV.arc(a);
   const icon = MD_ICON[a.id === 'hyporisk' ? 'hypo' : a.id] || '';
-  return `<div class="md${who === 'N' ? ' sena' : ''}${faint ? ' faint' : ''}" data-k="${who}${a.id}${a.part || ''}"><svg viewBox="0 0 26 26"><circle cx="13" cy="13" r="12.2" fill="rgba(14,10,8,.82)"/>`
-    + `<circle cx="13" cy="13" r="11" fill="none" stroke="${col}" stroke-opacity=".28" stroke-width="2"/><circle class="arc" cx="13" cy="13" r="11" fill="none" stroke="${col}" stroke-width="2.2" stroke-linecap="round" stroke-dasharray="${C}" stroke-dashoffset="${(C * (1 - k)).toFixed(1)}" transform="rotate(-90 13 13)"/>`
-    + `<g transform="translate(5 5) scale(.667)">${icon}</g></svg></div>`;
+  const lab = (who === 'N' ? 'Sena: ' : '') + (MD_SHORT[a.id] || '');   // MAT-SV: a tinted face, a bold ring and a short label
+  return `<div class="md${who === 'N' ? ' sena' : ''}${faint ? ' faint' : ''}" data-k="${who}${a.id}${a.part || ''}"><svg viewBox="0 0 26 26"><circle cx="13" cy="13" r="12.4" fill="rgba(14,10,8,.9)"/><circle cx="13" cy="13" r="12.4" fill="${col}" fill-opacity=".2"/>`
+    + `<circle cx="13" cy="13" r="11" fill="none" stroke="${col}" stroke-opacity=".4" stroke-width="2.4"/><circle class="arc" cx="13" cy="13" r="11" fill="none" stroke="${col}" stroke-width="2.8" stroke-linecap="round" stroke-dasharray="${C}" stroke-dashoffset="${(C * (1 - k)).toFixed(1)}" transform="rotate(-90 13 13)"/>`
+    + `<g transform="translate(4.4 4.4) scale(.717)">${icon}</g></svg><small>${lab}</small></div>`;
 }
 function svMoodles(force = false) {
   const el = $('moodles'); if (!el) return;
@@ -9803,6 +10217,7 @@ function maybeBirth() {
   $('fade-text').textContent = 'Spring came, and with it a daughter. They named her Lio.';
   R.hold4 = 4;                                       // RST: hold the card 4 s before the wake
   S.time = 9; S.day += 20; S.food = Math.max(S.food, 70); S.water = Math.max(S.water, 70);   // final test: fed through the 20-day skip
+  goreTimeSkip();                                    // GORE-FIX: twenty days on: the old blood is gone
   const k = { name: 'Lio', female: true, born: S.day };
   S.kids.push(k); bump('born');
   const c = spawnKid(k);
@@ -9832,6 +10247,7 @@ function updateKids(dt) {
       if (P.rest > 0) { settle(c, dt, false); return; }
       c.rest = 0; c.h.root.rotation.x = 0; c.pos.set(N.pos.x - 1, 0, N.pos.z - 1);   // wake with them at the door
     }
+    if (kidHide(c, dt)) return;                      // GORE-FIX GUARDRAIL: a predator or raider near: she runs indoors (or behind Sena)
     if (kidEpiHold(c, dt)) return;
     // Epilogue: Lio rides the old horse at a walk around the house (unless Aro has taken the reins).
     if (i === 0 && horse && P.ride !== horse && !busy && S.time > 8 && S.time < 11.5) {   // final test: mornings only, else Lio follows Sena
@@ -10245,7 +10661,17 @@ function lock() {
     r?.catch?.(() => { try { canvas.requestPointerLock()?.catch?.(() => {}); } catch {} });
   } catch { try { canvas.requestPointerLock(); } catch {} }
 }
-const lockHint = () => { $('lockhint').style.display = playing && !menuOpen && !paused && !busy && !locked() ? 'block' : 'none'; };
+// MAT-SV: the capture hint shows for 6 s when the mouse is free, then fades; a click without capture brings it back. Never in a cinematic.
+let lockHintAt = 0, lockHintFree = false, lockHintMenu = false;
+const lockHint = () => {
+  const free = playing && !locked(), menu = paused || menuOpen;   // the timer restarts when the mouse becomes free, a menu closes without capture, or on a click; not after a cinematic
+  if (free && (!lockHintFree || (lockHintMenu && !menu))) lockHintAt = performance.now();
+  lockHintFree = free; lockHintMenu = menu;
+  const want = free && !menuOpen && !paused && !busy && !$('hud').classList.contains('cine') && !$('hud').classList.contains('cinew') && !(P.downed > 0);
+  const el = $('lockhint'), show = want && performance.now() - lockHintAt < 6000;
+  el.style.display = want ? 'block' : 'none'; el.classList.toggle('off', !show);
+};
+const lockHintPing = () => { lockHintAt = performance.now(); lockHint(); };
 document.addEventListener('pointerlockchange', () => {
   if (locked()) { lockedAt = performance.now(); lockBroken = false; }
   else {
@@ -10316,7 +10742,7 @@ addEventListener('keyup', (e) => {
 addEventListener('blur', () => { for (const k in keys) keys[k] = false; bagOpen(false); });
 canvas.addEventListener('mousedown', (e) => {
   if (!playing || menuOpen || busy || paused || P.downed > 0) return;   // MAT: no attacks while downed
-  if (!locked()) { lock(); if (!lockBroken) return; }   // the first click only captures the mouse
+  if (!locked()) { lockHintPing(); lock(); if (!lockBroken) return; }   // the first click only captures the mouse (MAT-SV: and shows the hint again)
   if (BOW.on && !placing && (e.button === 2 || (e.button === 0 && W.aim))) { if (e.button === 2) bowAimStart(); else bowLoose(); return; }   // BOW
   if (BOW.on && !placing && e.button === 0) return;   // BOW: left click does nothing until drawn
   if (!placing && ((e.button === 0 && cmbLmbDown()) || (e.button === 2 && cmbRmbDown()))) return;   // CMB: hold for a heavy, right mouse guards (axe, fists, torch)
@@ -10379,7 +10805,7 @@ function pause(on) {
   if (!playing || (on && (busy || menuOpen)) || GFX.lost) return;   // SAVE-PERF: no unpausing behind the graphics-reset panel
   paused = on;
   $('pause').classList.toggle('on', on);
-  if (on) { document.exitPointerLock?.(); save(); for (const k in keys) keys[k] = false; }
+  if (on) { document.exitPointerLock?.(); save(); for (const k in keys) keys[k] = false; matQuitUi(); }   // MAT-SV
   else lock();
   lockHint();
 }
@@ -10397,7 +10823,7 @@ function bindSettings() {
   oad.onchange = () => { settings.autoDraw = oad.checked; saveSettings(); }; osh.onchange = () => { settings.shake = osh.checked; saveSettings(); }; oarc.onchange = () => { settings.arc = oarc.value; saveSettings(); };   // WPN
   $('btn-resume').onclick = () => pause(false);
   $('btn-save').onclick = () => { save({ now: true }); toast('Game saved'); };
-  $('btn-quit').onclick = () => { save({ now: true }); location.reload(); };
+  $('btn-quit').onclick = () => { if (matHoldSave()) return; save({ now: true }); location.reload(); };   // MAT-SV: not during a Hardcore fight
   matBindSettings();                                 // MAT: tabs, Game/Audio/Content rows, difficulty, content notice, credits
 }
 function applyQuality() {
@@ -10554,6 +10980,7 @@ function updatePlayer(dt) {
   }
 }
 function updateSena(dt) {
+  senaBodyPush();                                    // GORE-FIX: never inside an animal's body, live or dead
   if (matSenaRescue(dt)) return;                     // MAT: she runs to a downed Aro, kneels and revives him (or the grief beat)
   if (cmbSena(dt)) return;                           // CMB: Sena downed (timer, revive) or fighting beside Aro
   if (survSena(dt)) return;                          // SURV: she tends Aro's wounds, or walks him with his arm over her shoulders
@@ -10701,7 +11128,8 @@ function updateStats(dt) {
   S.hp = clamp(S.hp + dt * (hurt ? -hurt : S.food > 35 && S.water > 35 ? 0.7 * matRegenK() : 0), 0, 100);   // MAT: no regen while downed, ×0.5 while weak
   survStats(dt, sheltered);                          // SURV: afflictions, spoilage, the spit, boiling, the 1 Hz tick
   if (S.hp <= 0 && !busy) die(hurtFlash > 0 ? 'The wolves drag you down.' : S.warm <= 0 ? 'The cold takes you.' : S.water <= 0 ? 'Thirst overcomes you.' : 'Hunger overcomes you.');
-  if (E.night > 0.6 && !S.warned && !sheltered) { S.warned = true; say('Sena', has('fire') ? 'It grows cold. Come back to the fire.' : 'Night is here and we have no fire. Stay close to me.'); }
+  if (E.night > 0.6 && !S.warned && !sheltered && !arcCalmNow()) { S.warned = true;   // ARC-FIX: not over a story scene
+    say('Sena', has('fire') ? 'It grows cold. Come back to the fire.' : 'Night is here and we have no fire. Stay close to me.'); }
   if (E.night < 0.1) S.warned = false;
   for (const k of ['hp', 'food', 'water', 'warm', 'close']) $('b-' + k).style.width = S[k] + '%';
   const hh = S.time | 0, mm = ((S.time % 1) * 60) | 0;
@@ -10869,7 +11297,7 @@ const fpBodyOf = (h) => { let b = null; h.root.traverse((o) => { if (o.isSkinned
   const body = fpBodyOf(P.h);
   if (!body) return;
   fpMask(body); fpMaterial(body.material, fpU, 'aro');
-  P.h.root.traverse((o) => { if (o.isSkinnedMesh && o !== body) FP.headMats.push(o.material); });
+  P.h.root.traverse((o) => { if (o.isSkinnedMesh && o !== body && !/^dress/.test(o.name)) FP.headMats.push(o.material); });   // ADULT-DRESS: his kilt stays drawn in first person
   P.h.root.traverse((o) => { if (o.isSkinnedMesh) o.castShadow = true; });
   FP.ok = true;
 })();
@@ -11346,7 +11774,7 @@ function fppVm(dt) {
   if (AR.root.visible) {
     const b = AR.bones;
     for (const n in FP.armBase) b[n].quaternion.copy(FP.armBase[n]);   // (ik2 updates each arm chain from the root: no full-rig matrix pass needed)
-    const az = FP.arBase.z - FP_SPR.arm * (FP.twoW || 0);                // FPP-world: the two-handed spear hold steps the arms forward
+    const az = FP.arBase.z - FP_SPR.arm * (FP.twoW || 0) - BOWFP.arm * (BOWFP.on ? BOWFP.a : 0);   // BOW-FPP: raised, the arms step forward so the bow fist reaches the grip                // FPP-world: the two-handed spear hold steps the arms forward
     if (AR.root.position.z !== az) { AR.root.position.z = az; AR.root.updateMatrixWorld(true); }
     if (R) fpArm('r', R[0], R[1], R[2], R[3] ?? 1); else fpArm('r', new THREE.Vector3(0.25, -0.75, 0.1), fpHandBasis('r', 0, -1, 0, -1, 0, 0), 1, 0);
     if (L) fpArm('l', L[0], L[1], L[2], L[3] ?? 1); else fpArm('l', new THREE.Vector3(-0.25, -0.75, 0.1), fpHandBasis('l', 0, -1, 0, 1, 0, 0), 1, 0);
@@ -11394,25 +11822,36 @@ function fppVm(dt) {
   }
 }
 // ----- BOW-FPP: the first-person bow. Viewmodel camera space: the eye at the origin, looking down -z, +x right.
-// The left fist holds the grip low and left of the crosshair, the stave canted with its top away from the centre so
-// neither limb crosses it; the right hand draws the string from the bow to the corner of the mouth; the nocked arrow
-// runs from the string past the fist, its point below and left of the crosshair. Released, the string snaps home and
-// the drawing hand follows through back and out. Hidden riding, swimming, seated, busy or with the torch (bowProps
-// puts the bow on the back then).
+// Raised, the nocked arrow lies along the line of sight: from the drawing fingers at the cheek (low and a little right,
+// in view) it runs almost straight into the screen, its flint point just under the crosshair, resting on the left
+// side of the stave on top of the bow fist. The stave is canted with its top to the right (as an instinctive archer
+// cants it), so the upper limb leans away from the crosshair. The grip, the fist and the arrow's line are all derived
+// from the anchor and the aim point, so the point stays under the crosshair at any aspect. Carried, the bow sits low
+// at the left. Released, the string snaps home and the drawing hand follows through back and out. Hidden riding,
+// swimming, seated, busy or with the torch (bowProps puts the bow on the back then).
 const vmBow = makeBow({ thick: true }), vmNockA = makeArrow();
 vmBow.visible = vmNockA.visible = false; vmScene.add(vmBow, vmNockA);
 const BOWFP = { on: false, sx: 0, sy: 0, yaw: 0, pitch: 0,
   low: { g: new THREE.Vector3(-0.15, -0.2, -0.45), cant: 0.65, fwd: new THREE.Vector3(0.3, -0.25, -1) },   // ready: carried low at the left, limbs leaning
-  up: { g: new THREE.Vector3(-0.04, -0.075, -0.6), cant: 0.3 },                                           // raised: the grip just below and left of the crosshair
-  nock: new THREE.Vector3(0.06, -0.1, -0.2),                                                              // full draw: the string fingers at the jaw
-  shL: new THREE.Vector3(-0.2, -0.3, 0.12) };                                                             // where the bow arm comes from
-const _bv = [0, 1, 2, 3, 4, 5, 6].map(() => new THREE.Vector3()), _bvq = new THREE.Quaternion();
+  cant: -0.32,                                                              // raised: the top limb leans right, away from the crosshair
+  nock: new THREE.Vector3(0.1, -0.105, -0.42),                              // full draw: the string fingers toward the cheek, low right in view
+  tip: [-0.012, -0.075],                                                    // where the flint point sits on screen (NDC): just under the crosshair
+  draw: 0.48, arm: 0.3,                                                     // nock to the arrow rest at full draw; the arms' step forward when raised
+  shL: new THREE.Vector3(-0.2, -0.3, 0.12) };                               // where the bow arm comes from
+const _bv = [0, 1, 2, 3, 4, 5, 6, 7, 8].map(() => new THREE.Vector3()), _bvq = new THREE.Quaternion();
+// The arrow's line at full draw: from the nock n toward the screen point BOWFP.tip, one arrow length long.
+function bowFpLine(n, out) {
+  const tv = Math.tan((vmCam.fov * Math.PI) / 360), r = out.set(BOWFP.tip[0] * tv * vmCam.aspect, BOWFP.tip[1] * tv, -1).normalize();
+  const b = r.dot(n), c = n.lengthSq() - ARROW_LEN * ARROW_LEN, t = b + Math.sqrt(Math.max(0, b * b - c));   // |t r - n| = ARROW_LEN
+  return out.multiplyScalar(t).sub(n).normalize();
+}
 function bowFpp(dt) {
   const show = BOW.on && !!S.tools.bow && !P.ride && !P.swim && !(P.sit > 0) && !wBusy() && !torchOn && !camShot;
-  BOWFP.on = show; vmBow.visible = show; vmNockA.visible = false;
+  BOWFP.on = show; vmBow.visible = show; vmNockA.visible = false; BOWFP.a = 0;
   if (!show) { BOWFP.yaw = camYaw; BOWFP.pitch = camPitch; return null; }
   const rel = clamp((clock - (BOW.relT ?? -9)) / 0.35, 0, 1), ch = W.aim ? W.aim.charge : 0;
   const a = Math.max(smooth01(W.aimW), W.aim ? 0 : smooth01(1 - (clock - (BOW.relT ?? -9) - 0.3) / 0.4));   // after the shot the bow stays up a moment
+  BOWFP.a = a;
   // sway lags the look; a light bob with the steps (the comfort bob setting scales it)
   const dy = wrapA(camYaw - BOWFP.yaw), dp = camPitch - BOWFP.pitch; BOWFP.yaw = camYaw; BOWFP.pitch = camPitch;
   BOWFP.sx += (clamp(-dy * 0.9, -0.04, 0.04) - BOWFP.sx) * Math.min(1, dt * 9);
@@ -11420,13 +11859,18 @@ function bowFpp(dt) {
   const sk = Math.min(1, P.speed / 3) * (1 - 0.6 * a) * ((settings.fppBob ?? 0.7) / 0.7) * (settings.reduceMotion ? 0.3 : 1);
   const bob = Math.sin(P.step * 2.7) * 0.01 * sk, bx = Math.cos(P.step * 1.35) * 0.005 * sk;
   const shake = BOW.tire ? BOW.tire * 0.004 : 0;
-  const g = _bv[0].lerpVectors(BOWFP.low.g, BOWFP.up.g, a);
-  g.x += BOWFP.sx + bx + Math.sin(clock * 23) * shake; g.y += BOWFP.sy + bob + Math.sin(clock * 19 + 1) * shake;
+  // the raised pose from the anchor and the aim point: the arrow's line, the stave's frame, then the grip under the rest
+  const nockFull = _bv[1].copy(BOWFP.nock), ad0 = bowFpLine(nockFull, _bv[7]);
+  const upA = _bv[3].set(-Math.sin(BOWFP.cant), Math.cos(BOWFP.cant), 0), xA = _bv[4].crossVectors(upA, ad0).normalize(); upA.crossVectors(ad0, xA).normalize();
+  const gUp = _bv[8].copy(nockFull).addScaledVector(ad0, BOWFP.draw).addScaledVector(upA, -0.035).addScaledVector(xA, -0.018);
+  const g = _bv[0].lerpVectors(BOWFP.low.g, gUp, a);
+  const sw = _bv[6].set(BOWFP.sx + bx + Math.sin(clock * 23) * shake, BOWFP.sy + bob + Math.sin(clock * 19 + 1) * shake, 0);
+  g.add(sw);
   const kick = a * Math.sin(Math.PI * rel) * (BOW.relCh || 0) * (rel < 1 ? 1 : 0);   // the bow hand pushes through the shot
   g.z -= 0.02 * kick; g.x -= 0.01 * kick;
-  const nockFull = _bv[1].copy(BOWFP.nock); nockFull.x += BOWFP.sx * 0.4; nockFull.y += BOWFP.sy * 0.4;
-  const fwd = _bv[2].copy(_bv[3].copy(BOWFP.up.g).sub(BOWFP.nock).normalize()).lerp(_bv[3].copy(BOWFP.low.fwd).normalize(), 1 - a).normalize();
-  const cant = lerp(BOWFP.low.cant, BOWFP.up.cant, a) + 0.08 * kick;
+  nockFull.addScaledVector(sw, 0.4);
+  const fwd = _bv[2].copy(BOWFP.low.fwd).normalize().lerp(ad0, a).normalize();
+  const cant = lerp(BOWFP.low.cant, BOWFP.cant, a) + 0.08 * kick;
   const up = _bv[3].set(-Math.sin(cant), Math.cos(cant), 0), xAx = _bv[4];
   xAx.crossVectors(up, fwd).normalize(); up.crossVectors(fwd, xAx).normalize();   // xAx: the bow's left
   _bvq.setFromRotationMatrix(_bM.makeBasis(xAx, up, fwd));
@@ -11438,7 +11882,8 @@ function bowFpp(dt) {
   qL.premultiply(_fq2.setFromUnitVectors(ax, _fb.copy(up).multiplyScalar(ax.dot(up) < 0 ? -1 : 1)));
   const scL = AR.bones.hand_l.getWorldScale(_h2).x;
   const L = [g.clone().sub(_fa.copy(GRIP_L).multiplyScalar(scL).applyQuaternion(qL)), qL, 1];
-  // the string: drawn back along the arrow's line (from its rest above the fist toward the jaw) with the charge; let
+  BOWFP.wantL = L[0];
+  // the string: drawn back along the arrow's line (from its rest on the fist toward the cheek) with the charge; let
   // down or loosed, it is back on the bow at once
   const restPt = _bv[6].copy(g).addScaledVector(up, 0.035).addScaledVector(xAx, 0.018);   // the arrow passes the stave above the fist
   const full = restPt.distanceTo(nockFull), ad = _fc.copy(restPt).sub(nockFull).normalize();
@@ -11451,6 +11896,7 @@ function bowFpp(dt) {
     const qR = fpHandBasis('r', ad.x - 0.15, ad.y, ad.z, xAx.x, xAx.y, xAx.z);   // fingers along the arrow, palm to the string
     const scR = AR.bones.hand_r.getWorldScale(_h2).x;
     R = [hand.sub(_fa.copy(GRIP_R).multiplyScalar(scR).applyQuaternion(qR)), qR, drawn ? 1 : a * (1 - rel), 0.55];   // fingers hooked, not a fist
+    BOWFP.wantR = R[0];
     if (drawn && a > 0.3) {                          // the nocked arrow
       vmNockA.visible = true; vmNockA.position.copy(nock).addScaledVector(ad, ARROW_LEN); vmNockA.lookAt(_fa.copy(vmNockA.position).add(ad));
     }
@@ -11665,12 +12111,12 @@ function frame(now) {
     if (tick <= 0) {
       tick = 0.5;
       const ch = CH[S.ch], gl = goalsOf(ch);         // ARC goalsOf
-      if (!busy && gl.length && gl.every(([, f]) => f()) && !arcHold() && !(clock < birthHold)) {   // ARC: let a story beat finish first; STORY: and the birth morning's lines
-        S.ch++; enterChapter();
+      if (!busy && gl.length && gl.every(([, f]) => f()) && !arcCalm() && !(clock < birthHold)) {   // ARC: let a story beat finish first (ARC-FIX: and romance scenes, choices, rests); STORY: and the birth morning's lines
+        arcAdvance();                                // ARC-FIX: S.ch++ and enterChapter, behind a short fade when the season turns
       }
     }
     updateArc(dt);                                   // ARC: story beats, NPCs, seasons, fever (spec §5.8)
-    saveT += dt; if (saveT > 20 && !busy) { saveT = 0; save(); }
+    saveT += dt; if (!busy && (saveT > 20 || (MAT.saveHeld && saveT > 2 && !matInFight()))) { saveT = 0; save(); }   // MAT-SV: a held save goes out as soon as the fight is over
   } else if (!playing) { settle(P, dt, false); settle(N, dt, false); }
   for (const o of [...animals]) updateAnimal(o, dt);
   wolfCorpseCap(dt);                                 // SAVE-PERF: at most WOLF_CORPSES unbutchered wolves lie about
@@ -11868,8 +12314,8 @@ Object.assign(window.G, {
   },
 });
 Object.assign(window.G, { bow: { toggle: bowToggle, aim: bowAimStart, BOW, BOWFP, rocky: bowRocky,   // BOW-FPP hooks: fp(), give(), shoot(charge, yaw, pitch), view(v)
-  fp: () => { const v = (o) => { o.updateWorldMatrix(true, false); const w = new THREE.Vector3().setFromMatrixPosition(o.matrixWorld).project(vmCam); return [+w.x.toFixed(3), +w.y.toFixed(3)]; }; return { on: BOWFP.on, bow: vmBow.visible, nock: vmNockA.visible, arms: AR.root.visible, grip: v(vmBow), tip: vmNockA.visible ? v(vmNockA) : null, hr: v(AR.bones.hand_r), hl: v(AR.bones.hand_l) }; },
+  fp: () => { const v = (o) => { o.updateWorldMatrix(true, false); const w = new THREE.Vector3().setFromMatrixPosition(o.matrixWorld).project(vmCam); return [+w.x.toFixed(3), +w.y.toFixed(3)]; }; return { on: BOWFP.on, bow: vmBow.visible, nock: vmNockA.visible, arms: AR.root.visible, grip: v(vmBow), tip: vmNockA.visible ? v(vmNockA) : null, hr: v(AR.bones.hand_r), hl: v(AR.bones.hand_l), nockEnd: vmNockA.visible ? v(vmNockA.clone().translateZ(-ARROW_LEN)) : null, gapL: BOWFP.wantL ? +AR.bones.hand_l.getWorldPosition(new THREE.Vector3()).distanceTo(BOWFP.wantL).toFixed(3) : null, gapR: BOWFP.wantR ? +AR.bones.hand_r.getWorldPosition(new THREE.Vector3()).distanceTo(BOWFP.wantR).toFixed(3) : null }; },
   give(n = 24) { S.tools.bow = S.tools.quiver = true; S.inv.arrow = n; drawInv(); if (!BOW.on) bowToggle(); return BOW.on; },
   view(v) { view = v; camPitch = clamp(camPitch, pitchMin(), fppPitchMax()); return view; },
   async shoot(ch = 1, yaw = camYaw, pitch = camPitch) { camYaw = yaw; camPitch = pitch; if (!BOW.on) bowToggle(); bowAimStart(); if (!W.aim) return null; const f = () => new Promise((r) => requestAnimationFrame(r)); await f(); await f(); W.aim.t = ch * 0.6; W.aim.charge = Math.min(1, ch); const n = BOW.arrows.length; bowLoose(); return BOW.arrows.length > n ? BOW.arrows[BOW.arrows.length - 1] : null; },
-  st: (ar) => ar && { st: ar.st, o: ar.o?.kind || null, ob: ar.inObst || null, bounced: !!ar.bounced, tip: ar.tip.toArray().map((x) => +x.toFixed(2)) }, loose: bowLoose, pickup: bowPickup, near: () => bowNear(P.pos).length, get on() { return BOW.on; }, get arrows() { return BOW.arrows.map((a) => a.st); }, quest: bowQuestHtml, cam(v) { camDist = v; }, probe() { const v = (o) => { const w = new THREE.Vector3(); o.getWorldPosition(w); w.sub(P.pos); return [+w.x.toFixed(2), +w.y.toFixed(2), +w.z.toFixed(2)]; }; const d = new THREE.Vector3(); camera.getWorldDirection(d); return { face: +P.face.toFixed(2), aimW: +W.aimW.toFixed(2), aim: !!W.aim, hl: v(P.h.bones.hand_l), hr: v(P.h.bones.hand_r), head: v(P.h.bones.Head), bow: v(bowMesh), bowVis: bowMesh.visible, nock: nockArrow.visible && v(nockArrow), cam: v(camera), dir: [d.x, d.y, d.z].map((x) => +x.toFixed(2)) }; } } });   // BOW test hooks
+  st: (ar) => ar && { st: ar.st, o: ar.o?.kind || null, ob: ar.inObst || null, bounced: !!ar.bounced, tip: ar.tip.toArray().map((x) => +x.toFixed(2)) }, loose: bowLoose, pickup: bowPickup, near: () => bowNear(P.pos).length, get on() { return BOW.on; }, get arrows() { return BOW.arrows.map((a) => a.st); }, quest: bowQuestHtml, quiet: bowQuiet, cam(v) { camDist = v; }, probe() { const v = (o) => { const w = new THREE.Vector3(); o.getWorldPosition(w); w.sub(P.pos); return [+w.x.toFixed(2), +w.y.toFixed(2), +w.z.toFixed(2)]; }; const d = new THREE.Vector3(); camera.getWorldDirection(d); return { face: +P.face.toFixed(2), aimW: +W.aimW.toFixed(2), aim: !!W.aim, hl: v(P.h.bones.hand_l), hr: v(P.h.bones.hand_r), head: v(P.h.bones.Head), bow: v(bowMesh), bowVis: bowMesh.visible, nock: nockArrow.visible && v(nockArrow), cam: v(camera), dir: [d.x, d.y, d.z].map((x) => +x.toFixed(2)) }; } } });   // BOW test hooks

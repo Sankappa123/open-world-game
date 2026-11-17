@@ -67,7 +67,7 @@ export const SEG = {
   // (GLTFLoader strips the dots from node names: the rig's "FrontUpperLeg.L" arrives as "FrontUpperLegL"; both spellings match)
   quad: { roots: { 1: 'Neck2', 2: 'FrontUpperLegL', 3: 'FrontUpperLegR', 4: 'BackUpperLegL', 5: 'BackUpperLegR', 6: 'Tail2' },
     extra: [[/^(IKFrontLeg|FF|PoleTarget)L$/, 2], [/^(IKFrontLeg|FF|PoleTarget)R$/, 3], [/^(IKBackLeg|FFB|PoleTargetBack)L$/, 4], [/^(IKBackLeg|FFB|PoleTargetBack)R$/, 5]] },
-  human: { roots: { 1: 'neck_01', 2: 'lowerarm_l', 3: 'lowerarm_r', 4: 'calf_l', 5: 'calf_r' }, extra: [] },
+  human: { roots: { 1: 'Head', 2: 'lowerarm_l', 3: 'lowerarm_r', 4: 'calf_l', 5: 'calf_r' }, extra: [] },   // FIX gore-cmb: the head at its joint (from neck_01 the collar and the necklace left with it)
 };
 export const SEG_NAME = { quad: { 1: 'head', 2: 'front leg', 3: 'front leg', 4: 'hind leg', 5: 'hind leg', 6: 'tail' }, human: { 1: 'head', 2: 'arm', 3: 'arm', 4: 'leg', 5: 'leg' } };
 export function segOfBone(bone, rig) {
@@ -96,15 +96,24 @@ function splatAtlas() {
   for (let t = 0; t < 8; t++) {
     const ox = (t % 4) * 128, oy = Math.floor(t / 4) * 128, cx = ox + 64, cy = oy + 64;
     g.save(); g.beginPath(); g.rect(ox, oy, 128, 128); g.clip();
-    if (t < 4) {                                         // impact splats: a lobed core, droplets thrown out, a few streaks
-      for (let i = 0; i < 7; i++) { const a = rnd() * 6.28, d = rnd() * 14; blob(cx + Math.cos(a) * d, cy + Math.sin(a) * d, 16 + rnd() * 14); }
-      for (let i = 0; i < 26 + t * 4; i++) { const a = rnd() * 6.28, d = 22 + Math.pow(rnd(), 0.6) * 38; blob(cx + Math.cos(a) * d, cy + Math.sin(a) * d, 1.5 + Math.pow(rnd(), 3) * 7); }
-      for (let i = 0; i < 4; i++) { const a = rnd() * 6.28; g.strokeStyle = 'rgba(255,255,255,0.85)'; g.lineWidth = 2 + rnd() * 3; g.lineCap = 'round'; g.beginPath(); g.moveTo(cx + Math.cos(a) * 18, cy + Math.sin(a) * 18); g.lineTo(cx + Math.cos(a) * (36 + rnd() * 20), cy + Math.sin(a) * (36 + rnd() * 20)); g.stroke(); }
+    if (t < 4) {                                         // FIX gore-cmb: impact splats thrown one way (canvas +y = the heading on the ground):
+      // an irregular, elongated core (none on tile 3: a fine spatter field), then droplets fanning forward, each a small
+      // teardrop pointing away from the core; sizes fall off with distance. Every tile differs.
+      const fan = 0.3 + rnd() * 0.35, by = cy - 26 + t * 5;
+      if (t < 3) for (let i = 0; i < 4 + t * 2; i++) { const y = by + rnd() * (10 + t * 6), x = cx + (rnd() - 0.5) * (8 + t * 3); blob(x, y, 5 + rnd() * (7 + t * 2)); }
+      for (let i = 0; i < 34 + t * 10; i++) {
+        const a = Math.PI / 2 + (rnd() - 0.5) * 2 * fan * (0.6 + rnd() * 0.8), d = 10 + Math.pow(rnd(), 0.9) * 62, x = cx + Math.cos(a) * d, y = by + Math.sin(a) * d;
+        const r = (0.6 + Math.pow(rnd(), 2.4) * 3.6) * (1.25 - d / 100);
+        g.save(); g.translate(x, y); g.rotate(a - Math.PI / 2); g.scale(1, 1.3 + rnd() * 1.1); blob(0, 0, r, 0.9 + rnd() * 0.1); g.restore();
+      }
+      if (t === 1) { const a = Math.PI / 2 + (rnd() - 0.5) * fan; g.strokeStyle = 'rgba(255,255,255,0.7)'; g.lineWidth = 1.2; g.lineCap = 'round'; g.beginPath(); g.moveTo(cx + Math.cos(a) * 12, by + Math.sin(a) * 12); g.lineTo(cx + Math.cos(a) * 44, by + Math.sin(a) * 44); g.stroke(); }
     } else if (t < 6) {                                  // trail: a few round drips and a smear
       for (let i = 0; i < 5 + t; i++) blob(cx + (rnd() - 0.5) * 70, cy + (rnd() - 0.5) * 40, 4 + rnd() * 9);
       blob(cx, cy, 14, 0.8);
-    } else if (t === 6) {                                // pool: smooth, lobed, fully opaque in the middle
-      for (let i = 0; i < 10; i++) { const a = rnd() * 6.28, d = rnd() * 17; blob(cx + Math.cos(a) * d, cy + Math.sin(a) * d, 26 + rnd() * 14); }   // (kept inside the tile: no cut edge)
+    } else if (t === 6) {                                // pool: lobed, opaque in the middle; FIX gore-cmb: a feathered rim soaking into the ground
+      const soft = (x, y, r, a) => { const gr = g.createRadialGradient(x, y, 0, x, y, r); gr.addColorStop(0, `rgba(255,255,255,${a})`); gr.addColorStop(0.45, `rgba(255,255,255,${a * 0.8})`); gr.addColorStop(1, 'rgba(255,255,255,0)'); g.fillStyle = gr; g.beginPath(); g.arc(x, y, r, 0, 6.2832); g.fill(); };
+      for (let i = 0; i < 14; i++) { const a = rnd() * 6.28, d = 6 + rnd() * 26; soft(cx + Math.cos(a) * d, cy + Math.sin(a) * d, 14 + rnd() * 16, 0.35); }   // the soaked fringe
+      for (let i = 0; i < 9; i++) { const a = rnd() * 6.28, d = rnd() * 14; blob(cx + Math.cos(a) * d, cy + Math.sin(a) * d, 18 + rnd() * 12); }   // (kept inside the tile: no cut edge)
     } else {                                             // scuff: dusty, broken, half transparent (Blood off)
       for (let i = 0; i < 40; i++) blob(cx + (rnd() - 0.5) * 80, cy + (rnd() - 0.5) * 50, 3 + rnd() * 10, 0.35);
     }
@@ -164,7 +173,8 @@ let DR = null, SP = null, MIST = null, decalMat = null;
 const decals = [], decalQ = [], pieces = [], emitters = [], carcasses = [];
 function makeDrops() {
   const geo = new THREE.IcosahedronGeometry(1, 1);   // round beads (80 triangles each)
-  const mat = new THREE.MeshStandardMaterial({ color: 0x8e0b08, roughness: 0.22, metalness: 0, emissive: 0x2a0202 });   // arterial red that still reads red at 5 m in daylight and in shade
+  // FIX gore-cmb: small, dark, half-matte drops (the old 0.22 gloss and bright red read as berries / jelly beans in daylight)
+  const mat = new THREE.MeshStandardMaterial({ color: 0x780806, roughness: 0.45, metalness: 0, emissive: 0x260202 });
   const m = new THREE.InstancedMesh(geo, mat, POOL.drops);
   m.frustumCulled = false; m.castShadow = false; m.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
   _m.makeScale(0, 0, 0); for (let i = 0; i < POOL.drops; i++) m.setMatrixAt(i, _m);
@@ -183,7 +193,8 @@ function makeSplats() {
   vMapUv = vec2((uv.x + mod(aSp.x, 4.0)) * 0.25, (uv.y + 1.0 - floor(aSp.x / 4.0)) * 0.5);   // 4 x 2 atlas, row 0 on top`);
     sh.fragmentShader = 'uniform float uPulse;\nvarying vec3 vSp;\n' + sh.fragmentShader
       .replace('#include <alphamap_fragment>', '#include <alphamap_fragment>\n  diffuseColor.a *= vSp.y;')
-      .replace('#include <roughnessmap_fragment>', '#include <roughnessmap_fragment>\n  roughnessFactor = mix(0.9, 0.18, vSp.z);')
+      .replace('#include <roughnessmap_fragment>', '#include <roughnessmap_fragment>\n  roughnessFactor = mix(0.9, 0.6, vSp.z);')   // FIX gore-cmb: a wet sheen, never a mirror (0.18 caught the low sun as white blobs)
+      .replace('#include <aomap_fragment>', '#include <aomap_fragment>\n  { vec3 goreSt = vec3(0.09, 0.018, 0.014) * diffuseColor.a; reflectedLight.directSpecular *= goreSt; reflectedLight.indirectSpecular *= goreSt; }')   // FIX gore-cmb: blood's sheen is dark red, scaled by its alpha
       .replace('#include <emissivemap_fragment>', `#include <emissivemap_fragment>
   { vec3 fc = vColor.rgb; float br = max(fc.r, max(fc.g, fc.b)); totalEmissiveRadiance += fc * smoothstep(0.75, 1.1, br) * (0.35 + 0.35 * uPulse); }`);
   };
@@ -196,7 +207,7 @@ function makeSplats() {
   m.visible = false; scene.add(m);
   return { m, aSp, n, x: new Float32Array(n), y: new Float32Array(n), h: new Float32Array(n), z: new Float32Array(n), size: new Float32Array(n), s0: new Float32Array(n), s1: new Float32Array(n),
     gt: new Float32Array(n), gd: new Float32Array(n), rot: new Float32Array(n), kind: new Uint8Array(n), born: new Float32Array(n), age: new Float32Array(n),
-    alpha: new Float32Array(n), trail: new Int32Array(n), seq: new Int32Array(n), live: new Uint8Array(n), focus: new Uint8Array(n), i: 0, count: 0, seqN: 0, t: 0 };
+    alpha: new Float32Array(n), trail: new Int32Array(n), seq: new Int32Array(n), live: new Uint8Array(n), focus: new Uint8Array(n), st: new Float32Array(n).fill(1), i: 0, count: 0, seqN: 0, t: 0 };
 }
 const SPU = { uPulse: { value: 0 } };
 const KIND = { blood: 0, trail: 1, pool: 2, scuff: 3 };
@@ -229,7 +240,7 @@ export function setGore({ blood, gore, screenBlood, reduceFlash, quality } = {})
   cfg.k = LEVEL[cfg.level];
   G.uGore.value = cfg.k.u; G.uBloodOn.value = cfg.blood ? 1 : 0;
   if (decalMat) decalMat.color.set(cfg.blood ? 0x4a0606 : 0x5a4632);
-  if (fleshMat) { fleshMat.color.set(cfg.blood ? 0x5a0a07 : 0x4e3d2c); fleshMat.emissive.set(cfg.blood ? 0x0c0000 : 0); }   // stump caps left from before Blood went off
+  if (fleshMat) fleshMat.color.set(cfg.blood ? 0xffffff : 0x8a7a66);   // stump caps left from before Blood went off (FIX gore-cmb: vertex-coloured caps)
   applyCaps();
   return { ...cfg };
 }
@@ -284,9 +295,9 @@ export function bloodBurst(pos, dir, n, { heavy = false, kill = false, spread = 
     _v3.set(rnd() - 0.5, rnd() - 0.5, rnd() - 0.5).cross(_v).normalize();
     _q.setFromAxisAngle(_v3, rnd() * spread * (back ? 1.3 : 1)); _v.applyQuaternion(_q);
     _v.y += 0.25 + rnd() * 0.35;                         // blood arcs up before it falls
-    const sp = (2 + rnd() * 3) * speed * (heavy ? 1.25 : 1) * (back ? 0.6 : 1);
+    const sp = (1 + Math.pow(rnd(), 1.4) * 4) * speed * (heavy ? 1.25 : 1) * (back ? 0.6 : 1);   // FIX gore-cmb: most drops fall near the body
     spawnDrop(pos.x + (rnd() - 0.5) * 0.06, pos.y + (rnd() - 0.5) * 0.06, pos.z + (rnd() - 0.5) * 0.06, _v.x * sp, _v.y * sp, _v.z * sp,
-      (0.0045 + Math.pow(rnd(), 2.6) * 0.012) * sz * (kill ? 1.15 : 1), 0.35);
+      (0.0025 + Math.pow(rnd(), 2.6) * 0.0075) * sz * (kill ? 1.15 : 1), 0.35);   // FIX gore-cmb: 0.5-2 cm drops (were 1-3.5 cm)
   }
   if (mist) puffMist(pos, _v2, heavy || kill ? 2 : 1);
   return cnt;
@@ -310,7 +321,8 @@ function splatMatrix(i) {
   _v.set(a - b, 2 * e, c - d).normalize();
   _q.setFromUnitVectors(_UP, _v); _q2.setFromAxisAngle(_UP, SP.rot[i]); _q.multiply(_q2);
   const lift = s > 0.6 ? Math.max(0, (a + b + c + d) / 4 - SP.h[i]) : 0;
-  _m.compose(_v3.set(x, SP.y[i] + lift, z), _q, _s.set(s, 1, s)); SP.m.setMatrixAt(i, _m);
+  const st = SP.st[i] || 1;                               // FIX gore-cmb: directional splats are stretched along their heading (rot)
+  _m.compose(_v3.set(x, SP.y[i] + lift, z), _q, _s.set(s / Math.sqrt(st), 1, s * st)); SP.m.setMatrixAt(i, _m);
 }
 function splatColor(i) {
   const k = SP.kind[i], wet = Math.max(0, 1 - SP.age[i] / 120);
@@ -318,7 +330,7 @@ function splatColor(i) {
   if (SP.focus[i]) _c.multiplyScalar(4);
   SP.m.setColorAt(i, _c);
 }
-// kind 'blood' | 'trail' | 'pool' | 'scuff'. o: {trail: id, grow: [to, seconds]}. Returns the splat index or -1.
+// kind 'blood' | 'trail' | 'pool' | 'scuff'. o: {trail: id, grow: [to, seconds], dir: heading (atan2(x, z)), stretch}. Returns the splat index or -1.
 export function groundSplat(x, z, size, kind = 'blood', o = {}) {
   if (!ready) return -1;
   if (!cfg.blood && kind !== 'scuff') kind = 'scuff';
@@ -327,7 +339,8 @@ export function groundSplat(x, z, size, kind = 'blood', o = {}) {
   if (!SP.live[i]) SP.count++;
   const k = KIND[kind] ?? 0;
   SP.x[i] = x; SP.z[i] = z; SP.h[i] = y; SP.y[i] = y + 0.025 + (SP.seqN % 7) * 0.0015;   // tiny offsets stop overlapping splats from z-fighting
-  SP.rot[i] = rnd() * 6.2832; SP.kind[i] = k; SP.born[i] = now; SP.age[i] = 0; SP.alpha[i] = kind === 'scuff' ? 0.7 : 0.95;
+  SP.rot[i] = o.dir != null ? o.dir + (rnd() - 0.5) * 0.3 : rnd() * 6.2832; SP.st[i] = o.dir != null ? (o.stretch || 1.5) : 1; SP.kind[i] = k;   // FIX gore-cmb: o.dir (heading) + o.stretch
+  SP.born[i] = now; SP.age[i] = 0; SP.alpha[i] = kind === 'scuff' ? 0.7 : 0.95;
   SP.trail[i] = o.trail || 0; SP.seq[i] = ++SP.seqN; SP.live[i] = 1; SP.focus[i] = 0;
   const sz = size * (kind === 'scuff' ? 1 : cfg.k.size);
   if (o.grow) { SP.s0[i] = sz; SP.s1[i] = o.grow[0] * cfg.k.size; SP.gt[i] = 0; SP.gd[i] = o.grow[1]; } else SP.gd[i] = 0;
@@ -342,6 +355,17 @@ export function groundSplat(x, z, size, kind = 'blood', o = {}) {
 export function trailCount(id) { if (!SP || !id) return 0; let n = 0; for (let i = 0; i < SP.n; i++) if (SP.live[i] && SP.trail[i] === id) n++; return n; }
 // Remove ground blood near a point (the grief scene must never show blood).
 export function clearSplatsNear(x, z, r) { if (!SP) return; for (let i = 0; i < SP.n; i++) if (SP.live[i] && Math.hypot(SP.x[i] - x, SP.z[i] - z) < r) killSplat(i); }
+// FIX gore-cmb: years (or weeks) pass: every splat, flying drop, severed piece and carcass goes
+export function clearAll() {
+  if (!ready) return;
+  for (let i = 0; i < SP.n; i++) if (SP.live[i]) killSplat(i);
+  for (let i = 0; i < DR.n; i++) if (DR.live[i]) killDrop(i);
+  for (const f of MIST.list) f.s.visible = false;
+  emitters.length = 0; clearPieces(); while (carcasses.length) dropCarcass(carcasses[0]); clearScreen();
+}
+export function piecesNear(x, z, r) { return pieces.some((p) => Math.hypot(p.pivot.position.x - x, p.pivot.position.z - z) < r); }
+export function clearPiecesNear(x, z, r) { for (const p of pieces.slice()) if (Math.hypot(p.pivot.position.x - x, p.pivot.position.z - z) < r) dropPiece(p); }
+export function splatsNear(x, z, r) { if (!SP) return 0; let n = 0; for (let i = 0; i < SP.n; i++) if (SP.live[i] && SP.kind[i] !== 3 && Math.hypot(SP.x[i] - x, SP.z[i] - z) < r) n++; return n; }
 
 // ----- Hunter's Focus: trail splats near `center` glow (instanceColor ×4); returns info for the arrow and Sena's line.
 let focusOn = false, FPT = null, focusN = 0;
@@ -420,7 +444,8 @@ function woundCompile(u, wounds) {
   return (sh) => {
     Object.assign(sh.uniforms, u);
     sh.vertexShader = 'attribute float aSeg;\nattribute float aHand;\nvarying vec3 vGoreBind;\nflat varying float vGoreSeg;\nvarying float vGoreHand;\n'
-      + sh.vertexShader.replace('#include <begin_vertex>', '#include <begin_vertex>\n  vGoreBind = position; vGoreSeg = aSeg; vGoreHand = aHand;');
+      + sh.vertexShader.replace('#include <begin_vertex>', '#include <begin_vertex>\n  vGoreBind = position; vGoreSeg = aSeg; vGoreHand = aHand;')
+        .replace('#include <morphtarget_vertex>', '#include <morphtarget_vertex>\n  vGoreBind = transformed;');   // FIX gore-cmb: the morph pose (the cave bear's wounds are placed on its posed surface)
     let f = 'uniform float uCut, uKeep;\nflat varying float vGoreSeg;\nvarying vec3 vGoreBind;\nvarying float vGoreHand;\n'
       + (wounds ? 'uniform vec4 uW[8];\nuniform float uWet[8];\nuniform int uWN;\nuniform float uGore, uBloodOn, uHands, uBS, uFlesh;\nuniform vec3 uDown;\nuniform vec4 uP[4];\nuniform int uPN;\nuniform vec3 uPC;\n' : '')
       + GLSL_NOISE + '\n' + sh.fragmentShader;
@@ -432,27 +457,32 @@ function woundCompile(u, wounds) {
       f = f.replace('#include <color_fragment>', `#include <color_fragment>
   float goreWet = 0.0, goreM = 0.0;
   {
-    vec3 bloodWet = vec3(0.30, 0.018, 0.014), bloodDry = vec3(0.17, 0.02, 0.012), dust = vec3(0.30, 0.235, 0.165);
+    vec3 bloodWet = vec3(0.21, 0.026, 0.02), bloodDry = vec3(0.10, 0.026, 0.018), dust = vec3(0.30, 0.235, 0.165);   // FIX gore-cmb: less saturated, darker
     // tribe ash paint (CMB): rough patches around bone points
     for (int i = 0; i < 4; i++) { if (i >= uPN) break; vec3 q = (vGoreBind - uP[i].xyz) / uP[i].w;
       float d = length(q) + (goreN(q * 2.5 + 3.1) - 0.5) * 0.8; diffuseColor.rgb = mix(diffuseColor.rgb, uPC, (1.0 - smoothstep(0.6, 1.0, d)) * 0.8); }
-    float core = 0.0;
+    float core = 0.0, torn = 0.0;
     for (int i = 0; i < 8; i++) {
       if (i >= uWN) break;
       vec4 w = uW[i]; vec3 q = (vGoreBind - w.xyz) / w.w;
       float n = goreN(q * 2.6 + float(i) * 7.13) * 0.6 + goreN(q * 6.5 + 1.7) * 0.3;
       float d = length(q) + (n - 0.45) * 0.75;
-      float m = 1.0 - smoothstep(0.5, 1.0, d);
+      float m = 1.0 - smoothstep(0.42, 0.95, d);
+      // FIX gore-cmb: a ragged, broken edge (spatter islands at the rim), not a clean stamp
+      float brk = goreN(q * 13.0 + float(i) * 2.9);
+      m *= mix(1.0, smoothstep(0.3, 0.62, brk), smoothstep(0.35, 0.8, d));
+      torn = max(torn, (1.0 - smoothstep(0.14, 0.36, d)) * smoothstep(0.45, 0.75, goreN(q * 8.0 + 4.2)));
       // the run: thin streaks of blood below the wound, broken by noise across the fall line
       float dn = dot(q, uDown); vec3 ql = q - uDown * dn;
-      float run = (1.0 - smoothstep(0.12, 0.42, length(ql) + (goreN(ql * 9.0 + float(i) * 3.7) - 0.5) * 0.5)) * smoothstep(0.0, 0.3, dn) * (1.0 - smoothstep(1.3, 2.6 + 1.2 * goreN(ql * 5.0 + float(i)), dn));
+      float run = (1.0 - smoothstep(0.1, 0.34, length(ql) + (goreN(ql * 9.0 + float(i) * 3.7) - 0.5) * 0.5)) * smoothstep(0.0, 0.3, dn) * (1.0 - smoothstep(0.9, 1.7 + 0.9 * goreN(ql * 5.0 + float(i)), dn));   // FIX gore-cmb: shorter runs
       m = max(m, run * 0.85 * uBloodOn);
       goreM = max(goreM, m); goreWet = max(goreWet, m * uWet[i]);
-      core = max(core, 1.0 - smoothstep(0.08, 0.26, d));
+      core = max(core, 1.0 - smoothstep(0.06, 0.3, d));
     }
     vec3 bc = mix(bloodDry, bloodWet, goreWet / max(goreM, 0.001));
-    if (uBloodOn < 0.5) { bc = dust; core = 0.0; goreWet = 0.0; }
-    diffuseColor.rgb = mix(diffuseColor.rgb, bc * (1.0 - core * 0.6), goreM * uGore);
+    bc = mix(bc, vec3(0.32, 0.075, 0.06), torn * 0.55);   // FIX gore-cmb: torn flesh showing in the wound
+    if (uBloodOn < 0.5) { bc = dust; core = 0.0; goreWet = 0.0; torn = 0.0; }
+    diffuseColor.rgb = mix(diffuseColor.rgb, bc * (1.0 - core * 0.72), goreM * uGore);   // a dark, clotted core
     // bloody hands (butchering): forearms down to the fingertips, patchy
     float hm = vGoreHand * uHands * (0.55 + 0.6 * goreN(vGoreBind * uBS * 22.0));
     hm = clamp(hm, 0.0, 1.0) * 0.92;
@@ -462,7 +492,7 @@ function woundCompile(u, wounds) {
     if (uFlesh > 0.0) { float fn = goreN(vGoreBind * uBS * 9.0); vec3 flesh = mix(vec3(0.30, 0.035, 0.03), vec3(0.50, 0.33, 0.26), smoothstep(0.70, 0.82, fn) * (0.5 + 0.5 * goreN(vGoreBind * uBS * 31.0)));
       flesh = mix(flesh, vec3(0.16, 0.012, 0.012), smoothstep(0.42, 0.18, fn)); diffuseColor.rgb = mix(diffuseColor.rgb, flesh, uFlesh); goreWet = max(goreWet, uFlesh * 0.7); }
   }`);
-      f = f.replace('#include <roughnessmap_fragment>', '#include <roughnessmap_fragment>\n  roughnessFactor = mix(roughnessFactor, 0.22, goreWet * uGore);');
+      f = f.replace('#include <roughnessmap_fragment>', '#include <roughnessmap_fragment>\n  roughnessFactor = mix(roughnessFactor, 0.4, goreWet * uGore);');   // FIX gore-cmb: a wet sheen, not gloss paint
     }
     sh.fragmentShader = f;
   };
@@ -568,7 +598,7 @@ function nearestBone(body, p) {
   return bi;
 }
 // A wound at a world point (radius in metres): converted through the nearest bone into bind space; 8 slots, FIFO.
-export function addWound(model, worldPt, rWorld = 0.08, { wet = 1 } = {}) {
+export function addWound(model, worldPt, rWorld = 0.08, { wet = 1, maxR = 0 } = {}) {   // FIX gore-cmb maxR: the most a wound may grow to (metres)
   const rec = REC.get(model); if (!rec) return -1;
   const body = rec.body; body.updateWorldMatrix(true, false);
   if (!body.skeleton) _m.copy(body.matrixWorld);       // a morph mesh: its own local space (the rest pose before morphs)
@@ -580,7 +610,8 @@ export function addWound(model, worldPt, rWorld = 0.08, { wet = 1 } = {}) {
   _v.copy(worldPt).applyMatrix4(_m2.copy(_m).invert());
   const r = (rWorld * (0.8 + cfg.k.size * 0.25)) / sc;
   const near = rec.wounds.find((w) => w.p.distanceTo(_v) < w.r * 0.6);
-  if (near) { near.r = Math.min(near.r * 1.25, r * 2.2); near.wet = Math.max(near.wet, wet); near.t = now; }
+  const cap = maxR > 0 ? maxR / sc : r * 2.2;
+  if (near) { near.r = Math.min(near.r * 1.25, cap); near.wet = Math.max(near.wet, wet); near.t = now; }
   else { rec.wounds.push({ p: _v.clone(), r, wet, t: now }); if (rec.wounds.length > 8) rec.wounds.shift(); }
   syncWounds(rec); ACTIVE.add(rec); HAS.add(rec);
   return rec.wounds.length;
@@ -637,18 +668,38 @@ export function clearWounds(model) {
 export function setHands(model, v) { const rec = REC.get(model); if (rec) rec.u.uHands.value = v; }
 
 // ----- dismemberment
-const capGeo = new THREE.SphereGeometry(1, 12, 8), stubGeo = new THREE.CylinderGeometry(1, 0.8, 1, 8);
+// FIX gore-cmb: the stump is a ragged, uneven dome (displaced sphere) coloured per vertex: raw muscle with pale fat flecks
+// on the cut face, darkening to clotted blood at a torn rim; matte-wet (roughness 0.62), no glow. (Was a glossy cherry button.)
+const capGeo = (() => {
+  const g = new THREE.SphereGeometry(1, 18, 12), pos = g.attributes.position, n = pos.count, col = new Float32Array(n * 3), v = new THREE.Vector3();
+  const h3 = (x, y, z) => { const t = Math.sin(x * 12.9898 + y * 78.233 + z * 37.719) * 43758.5453; return t - Math.floor(t); };
+  for (let i = 0; i < n; i++) {
+    v.fromBufferAttribute(pos, i);
+    const rim = 1 - Math.abs(v.y), k = 1 + (h3(v.x, v.y, v.z) - 0.5) * 0.34 * (0.4 + rim);   // torn, lumpy, most at the rim
+    v.multiplyScalar(k); if (v.y < -0.2) v.y *= 0.6;
+    pos.setXYZ(i, v.x, v.y, v.z);
+    const face = Math.max(0, v.y), fat = h3(v.z * 3.1, v.x * 2.7, 1.3) > 0.86 ? 1 : 0, mus = 0.75 + 0.25 * h3(v.x * 5, v.z * 5, 2);
+    let r = 0.36 * mus, gg = 0.07 * mus, b = 0.055 * mus;                 // raw muscle
+    if (fat && face > 0.35) { r = 0.62; gg = 0.46; b = 0.36; }             // a fleck of fat / sinew
+    const clot = Math.min(1, Math.max(0, (0.55 - face) / 0.55));           // the dark clotted rim and sides
+    r = r * (1 - clot) + 0.1 * clot; gg = gg * (1 - clot) + 0.012 * clot; b = b * (1 - clot) + 0.01 * clot;
+    col.set([r, gg, b], i * 3);
+  }
+  g.setAttribute('color', new THREE.BufferAttribute(col, 3)); g.computeVertexNormals();
+  return g;
+})(), stubGeo = new THREE.CylinderGeometry(1, 0.8, 1, 8);
 let fleshMat = null, boneMat = null;
 function capMats() {
-  fleshMat ||= new THREE.MeshStandardMaterial({ color: 0x5a0a07, roughness: 0.28, metalness: 0, emissive: 0x0c0000 });
-  boneMat ||= new THREE.MeshStandardMaterial({ color: 0xd9cfbd, roughness: 0.6 });
+  fleshMat ||= new THREE.MeshStandardMaterial({ color: 0xffffff, vertexColors: true, roughness: 0.62, metalness: 0 });
+  boneMat ||= new THREE.MeshStandardMaterial({ color: 0xd2c6b0, roughness: 0.7 });
+  if (!cfg.blood) fleshMat.color.set(0x8a7a66);
 }
 // Stump cap: wet flesh with a stub of pale bone, attached to the parent bone so it follows the body.
 function makeCap(bone, r, outward) {
   capMats();
   const g = new THREE.Group(); g.userData.goreCap = 1;
   const f = new THREE.Mesh(capGeo, fleshMat); f.scale.set(r, r * 0.55, r); g.add(f);
-  const b = new THREE.Mesh(stubGeo, boneMat); b.scale.set(r * 0.28, r * 0.9, r * 0.28); b.position.y = r * 0.35; g.add(b);
+  const b = new THREE.Mesh(stubGeo, boneMat); b.scale.set(r * 0.24, r * 0.5, r * 0.24); b.position.y = r * 0.42; g.add(b);   // a pale bone end just proud of the cut
   bone.getWorldPosition(g.position);
   g.quaternion.setFromUnitVectors(_UP, outward);
   return g;
@@ -657,6 +708,23 @@ function farthestChild(bone) {
   let far = bone, fd = 0; bone.getWorldPosition(_v3);
   bone.traverse((c) => { if (!c.isBone) return; c.getWorldPosition(_v); const d = _v.distanceTo(_v3); if (d > fd) { fd = d; far = c; } });
   return far;
+}
+// FIX gore-cmb: up to 72 posed world points of the vertices that belong to segment seg (every skinned mesh of the model)
+function segSamples(rec, seg) {
+  const out = [], all = [];
+  for (const m of rec.meshes) {
+    const sg = m.geometry.attributes.aSeg, pos = m.geometry.attributes.position; if (!sg || !m.isSkinnedMesh) continue;
+    for (let i = 0; i < pos.count; i++) if (Math.round(sg.getX(i)) === seg) all.push([m, i]);
+  }
+  const st = Math.max(1, Math.floor(all.length / 72));
+  for (let k = 0; k < all.length; k += st) { const [m, i] = all[k]; const v = new THREE.Vector3().fromBufferAttribute(m.geometry.attributes.position, i); m.applyBoneTransform(i, v); out.push(v.applyMatrix4(m.matrixWorld)); }
+  return out;
+}
+// the lowest sample of a piece above the ground (negative: below it), with the pivot at pos/quat
+function pieceLow(p) {
+  let lo = 1e9; const q = p.pivot.quaternion, o = p.pivot.position;
+  for (let k = 0; k < p.loc.length; k += p.loc.length > 40 ? 2 : 1) { _v.copy(p.loc[k]).applyQuaternion(q).add(o); const d = _v.y - getH(_v.x, _v.z); if (d < lo) lo = d; }
+  return lo;
 }
 // Sever a segment (1 head, 2-5 limbs, 6 tail on animals): hide it on the body (shader discard + shadow depth material),
 // cap the stump, throw a posed copy of the limb that tumbles and comes to rest, spurt from both ends.
@@ -670,6 +738,10 @@ export function sever(model, seg, { dir = null, sceneRoot = null } = {}) {
   rec.cut |= bit; rec.u.uCut.value = rec.cut;
   for (const m of rec.meshes) if (!m.customDepthMaterial) m.customDepthMaterial = depthMat(rec.u);
   const jp = bone.getWorldPosition(new THREE.Vector3()), tip = farthestChild(bone).getWorldPosition(new THREE.Vector3());
+  // FIX gore-cmb: the piece's own vertices (posed, world): its true centre, extent and long axis (a head bone has no child)
+  const smp = segSamples(rec, seg), cen = new THREE.Vector3();
+  for (const q of smp) cen.add(q); if (smp.length) cen.divideScalar(smp.length); else cen.copy(jp).add(tip).multiplyScalar(0.5);
+  if (jp.distanceTo(tip) < 0.03) tip.copy(smp.length ? cen.clone().sub(jp).multiplyScalar(2).add(jp) : bone.parent.getWorldPosition(new THREE.Vector3()).sub(jp).negate().add(jp));
   const len = Math.max(0.12, jp.distanceTo(tip)), out = tip.clone().sub(jp).normalize();
   const r = seg === 6 && rec.rig === 'quad' ? Math.min(0.04, Math.max(0.016, len * 0.07)) : Math.min(0.11, Math.max(0.035, len * (seg === 1 ? 0.22 : 0.16)));   // (a tail is thin)
   // the stump on the body
@@ -687,7 +759,7 @@ export function sever(model, seg, { dir = null, sceneRoot = null } = {}) {
   });
   // rigid parts that ride the severed bones (a stag's antlers) leave the body with the piece
   bone.traverse((o) => { if (o.isMesh && !o.isSkinnedMesh && o.visible && !o.userData.goreCap && under(o, bone)) { o.visible = false; (rec.hid ||= []).push(o); } });
-  const center = jp.clone().add(tip).multiplyScalar(0.5);
+  const center = cen;
   const pivot = new THREE.Group(); pivot.position.copy(center); (sceneRoot || scene).add(pivot); pivot.updateMatrixWorld(true);
   _m.copy(pivot.matrixWorld).invert().multiply(model.matrixWorld); _m.decompose(copy.position, copy.quaternion, copy.scale);
   pivot.add(copy);
@@ -695,7 +767,13 @@ export function sever(model, seg, { dir = null, sceneRoot = null } = {}) {
   const d = dir ? _v.copy(dir).setY(0).normalize() : _v.set(rnd() - 0.5, 0, rnd() - 0.5).normalize();
   const vel = new THREE.Vector3(d.x * (2.2 + rnd() * 1.8) + out.x * 1.2, 2.4 + rnd() * 1.6, d.z * (2.2 + rnd() * 1.8) + out.z * 1.2);
   const spin = new THREE.Vector3(rnd() - 0.5, rnd() - 0.5, rnd() - 0.5).normalize().multiplyScalar(5 + rnd() * 6);
-  pieces.push({ pivot, copy, u: u2, vel, spin, rest: false, t: 0, r: Math.max(0.06, len * 0.25), drip: 0 });
+  // FIX gore-cmb: sample points (pivot-local) for ground contact by the lowest real point, and the long axis to lay it down along
+  const loc = smp.map((q) => q.clone().sub(center)); let A = loc[0] || new THREE.Vector3(0, 1, 0), B = A;
+  for (const q of loc) if (q.lengthSq() > A.lengthSq()) A = q;
+  for (const q of loc) if (q.distanceToSquared(A) > B.distanceToSquared(A)) B = q;
+  const axis = B.clone().sub(A); if (axis.lengthSq() < 1e-6) axis.copy(out); axis.normalize();
+  if (!loc.length) loc.push(new THREE.Vector3(0, -Math.max(0.06, len * 0.25) * 0.5, 0));
+  pieces.push({ pivot, copy, u: u2, vel, spin, rest: false, t: 0, r: Math.max(0.06, len * 0.25), drip: 0, loc, axis, settle: 0, q0: null, q1: null });
   while (pieces.length > POOL.pieces) dropPiece(pieces[0]);
   bloodBurst(jp, out, burstCount('high', true, true) * 0.8, { heavy: true, kill: true });
   groundSplat(jp.x, jp.z, 0.5, 'pool', { grow: [1.3, 5] });
@@ -831,12 +909,13 @@ export function updateGore(dt, env = {}) {
       if ((DR.life[i] -= dt) <= 0) { killDrop(i); continue; }
       const gy = getH(x, z);
       if (y <= gy + 0.01) {
-        if (rnd() < DR.splat[i]) groundSplat(x, z, 0.07 + DR.r[i] * 6 + rnd() * 0.08, 'blood');
+        if (rnd() < DR.splat[i]) { const hs = Math.hypot(vx, vz); groundSplat(x, z, 0.06 + DR.r[i] * 6 + rnd() * 0.07, 'blood', { dir: hs > 0.3 ? Math.atan2(vx, vz) : null, stretch: 1 + Math.min(1.8, hs * 0.45) }); }   // FIX gore-cmb: elongated along the drop's travel
         killDrop(i); continue;
       }
       const sp = Math.hypot(vx, vy, vz), r = DR.r[i];
       if (sp > 1e-4) { _v.set(vx / sp, vy / sp, vz / sp); _q.setFromUnitVectors(_UP, _v); } else _q.identity();
-      _m.compose(_v3.set(x, y, z), _q, _s.set(r, r * (1 + Math.min(2.6, sp * 0.4)), r)); DR.m.setMatrixAt(i, _m);
+      const thin = 1 / Math.sqrt(1 + Math.min(4, sp * 0.8));   // FIX gore-cmb: a streak along the velocity (motion blur), thinner as it stretches
+      _m.compose(_v3.set(x, y, z), _q, _s.set(r * thin, r * (1 + Math.min(5, sp * 0.9)), r * thin)); DR.m.setMatrixAt(i, _m);
       DR.dirty = true;
     }
   }
@@ -866,18 +945,32 @@ export function updateGore(dt, env = {}) {
     }
   }
   // severed pieces: a simple tumbling body that settles on the terrain and drips
+  // FIX gore-cmb: contact by the piece's lowest real point (not its centre), then it settles lying along the ground
   for (const p of pieces) {
     p.t += dt;
     if (!p.rest) {
       p.vel.y -= 9.8 * dt; p.pivot.position.addScaledVector(p.vel, dt);
-      _q.setFromAxisAngle(_v.copy(p.spin).normalize(), p.spin.length() * dt); p.pivot.quaternion.premultiply(_q);
-      const gy = getH(p.pivot.position.x, p.pivot.position.z) + p.r * 0.5;
-      if (p.pivot.position.y < gy) {
-        p.pivot.position.y = gy;
+      _q.setFromAxisAngle(_v2.copy(p.spin).normalize(), p.spin.length() * dt); p.pivot.quaternion.premultiply(_q);
+      const lo = pieceLow(p);
+      if (lo < 0) {
+        p.pivot.position.y -= lo;
         if (p.vel.y < -1.2) { if (cfg.blood) groundSplat(p.pivot.position.x, p.pivot.position.z, 0.22, 'blood'); }
         p.vel.y = -p.vel.y * 0.22; p.vel.x *= 0.45; p.vel.z *= 0.45; p.spin.multiplyScalar(0.4);
-        if (p.vel.length() < 0.5) { p.rest = true; if (cfg.blood) groundSplat(p.pivot.position.x, p.pivot.position.z, 0.3, 'pool', { grow: [0.6, 6] }); }
+        if (p.vel.length() < 0.5 || p.t > 4) {
+          p.rest = true; p.settle = 0; p.q0 = p.pivot.quaternion.clone();
+          // lay the long axis along the ground (the terrain's slope), keeping its heading
+          const aw = _v2.copy(p.axis).applyQuaternion(p.q0), x = p.pivot.position.x, z = p.pivot.position.z;
+          const n = _v3.set(getH(x - 0.3, z) - getH(x + 0.3, z), 0.6, getH(x, z - 0.3) - getH(x, z + 0.3)).normalize();
+          const h = new THREE.Vector3(aw.x, 0, aw.z); if (h.lengthSq() < 0.04) h.set(Math.cos(p.t * 7), 0, Math.sin(p.t * 7));
+          h.addScaledVector(n, -h.dot(n)).normalize();
+          p.q1 = new THREE.Quaternion().setFromUnitVectors(aw.normalize(), h).multiply(p.q0);
+          if (cfg.blood) groundSplat(p.pivot.position.x, p.pivot.position.z, 0.3, 'pool', { grow: [0.6, 6] });
+        }
       }
+    } else if (p.settle < 1) {
+      p.settle = Math.min(1, p.settle + dt / 0.35);
+      p.pivot.quaternion.slerpQuaternions(p.q0, p.q1, smooth(p.settle));
+      p.pivot.position.y -= pieceLow(p) + 0.012;            // resting in the grass: its lowest point just under the surface
     }
     if (p.t > 240) { dropPiece(p); break; }
   }
@@ -936,3 +1029,5 @@ export function stats() {
     screen: counters.screen, screenLive: SC ? SC.list.length : 0, bursts: counters.bursts, severed: counters.severed, pieces: pieces.length, carcasses: carcasses.length,
     mist: MIST ? MIST.list.filter((f) => f.s.visible).length : 0, capDrops, capSplats, focus: focusOn, focusPts: focusOn ? focusN : 0, level: cfg.level, blood: cfg.blood };
 }
+// FIX gore-cmb (tests): each severed piece's lowest point above the ground and how upright its long axis stands (|y| of the unit axis)
+export function pieceInfo() { return pieces.map((p) => ({ low: +pieceLow(p).toFixed(3), rest: p.rest, settle: +p.settle.toFixed(2), up: +Math.abs(_v.copy(p.axis).applyQuaternion(p.pivot.quaternion).y).toFixed(2), n: p.loc.length, at: [p.pivot.position.x, p.pivot.position.y, p.pivot.position.z].map((x) => +x.toFixed(2)) })); }

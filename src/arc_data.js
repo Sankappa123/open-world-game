@@ -25,7 +25,7 @@ export const SEASON_OF = {
   hearth: 'spring', seeds: 'spring', bond: 'spring', newlife: 'spring', village: 'spring',
 };
 export const SEASON_NAME = { summer: 'Summer', autumn: 'Autumn', winter: 'Winter', spring: 'Spring' };
-export const ACT_NAME = { summer: 'The Valley', autumn: 'Other Fires', winter: 'The Long Cold', spring: 'What Grows' };
+export const ACT_NAME = { summer: 'The Valley', autumn: 'Strangers', winter: 'Hunger Moon', spring: 'What Grows' };   // never a chapter title (the card showed 'Other Fires / Autumn · Other Fires')
 export const TITLES = {
   smoke: 'Other Fires', outcast: 'The Wounded Stranger', winter: 'The Long Cold', raid: 'Fire in the Night',
   fever: 'Bitter Roots', reckoning: 'Blood and Ash', bond: 'The Cord and the Stones',
@@ -113,6 +113,7 @@ export const L = {
     wrong: [['Aro', 'I was wrong.'], ['Sena', 'Yes. You were.'], ['Sena', '…Come here.']],
     proud: [['Aro', 'I will not be sorry for caring.'], ['Sena', 'Then care quietly, for one more day. Ask me again tomorrow.']],
     away: ['Sena', 'I will sleep by the fire tonight.'],
+    again: [['Sena', 'You came back. Ask me, then.']],   // the second dusk after 'proud'
   },
   winter: {
     enter: [['Sena', 'The geese left early. The old ones always know.'], ['Aro', 'Then we waste nothing. Not a bone.'], ['Sena', 'Fill the basket, Aro. Dried meat, cooked meat, anything that keeps. This cold comes down from the hills like it did the year my mother died.']],
@@ -127,7 +128,7 @@ export const L = {
     trade: [['Wena', 'Korr\'s people winter east of the horse meadow, under the red cliff. That is where we ran from.'], ['Sena', 'Two meals, for that. I hope it was worth it to you.']],
     slingHint: ['Sena', 'Her tracks went toward the ruins, Aro. Go and look. I cannot.'],
     slingBanner: ['An empty camp', 'A windbreak of branches, half buried in snow. No one is here. Only a woman\'s carry-sling, frozen stiff.'],
-    sling: [['Sena', 'They were walking toward the smoke of our fire.']],
+    sling: [['Sena', 'They went back to the ruins. To wait for the cold.']],
   },
   raid: {
     warn: [['Pell', 'Aro. Korr is coming. Tomorrow night. I heard them at the ruins.'], ['Pell', 'Korr says the valley feeds no one who does not bleed for it.']],
@@ -153,7 +154,11 @@ export const L = {
     bled: [['Sena', 'There. It is… less. You press too hard. Do not stop.']],
     remedy: [['Sena', 'Bitter. Like old bark. …It is old bark.'], ['Sena', 'You went all that way. For a weed.'], ['Sena', 'The moss. Yes. She used the moss.']],
     vigilFade: 'You sat on the edge of the bed all night, her hand in yours. Some of what she said was to you, and some was to people long dead.',
-    scarred: [['', 'The fever broke near dawn. It took something with it: her left leg would never again be quite her own.'], ['Sena', 'I am still here, Aro. Most of me.']],
+    scarred: [['', 'The fever burned through her, and broke at last. It took something with it: her left leg would never again be quite her own.'], ['Sena', 'I am still here, Aro. Most of me.']],
+    // the vigil after the fever has burned out (scarred): recovery and pain, no delirium, no second "the fever broke"
+    scarredVigil: [['Sena', 'It aches. All the way down into the bone. Talk to me, Aro.'], ['Aro', 'About what?'], ['Sena', 'Anything. The lake. Summer.'],
+      ['Sena', 'I will walk crooked now. Like an old woman.'], ['Aro', 'Then I will walk crooked beside you, and no one will know which of us is lame.'], ['Sena', 'Fool.']],
+    scarredFade: 'You sat on the edge of the bed all night, her hand in yours. Toward dawn she slept at last, her bad leg across your knee.',
     firstKiss: [['Sena', 'You did not sleep.'], ['Aro', 'I did not want to miss it.'], ['Sena', 'Miss what?'], ['Aro', 'You, waking up.']],
   },
   reckoning: {
@@ -162,6 +167,7 @@ export const L = {
     hint: ['Sena', 'Their tracks go east, past the horse meadow. Follow the smoke.'],
     campBanner: ['The Ash Camp', 'Hide shelters around a low fire. Grey hands painted on every one.'],
     meet: [['Korr', 'You came alone. Either you are brave, or she is dead.'], ['Aro', 'She lives. No thanks to you.'], ['Korr', 'Then why are you here, river man?']],
+    meetWith: [['Korr', 'You brought her. Brave, or foolish.'], ['Aro', 'She lives. No thanks to you.'], ['Korr', 'Then why are you here, river man?']],   // Sena at his side
     killFade: 'Korr came at you with the spear. It was short, and it was ugly, and then it was over.',
     kill: [['Sena', 'Is it over?'], ['Aro', 'It is over.'], ['Sena', 'Then why are your hands still shaking?']],
     spareFade: 'You put him in the snow three times. The third time, he stayed down.',
@@ -225,15 +231,16 @@ export function epilogueLines(arc = {}, rom = {}) {
   if (arc.legacy || arc.skipped) return { lines: out, ids };
   const c = arc.choices || {};
   if (arc.tribe === 'allied') { ids.push('ash-and-hearth'); out.push(['', 'The Ash People came down from the hills each spring. In Echo Hollow, grey hands and red hands dried side by side on the wall. They called it Ash and Hearth.']); }
-  else if (c.korr === 'kill') { ids.push('palisade'); out.push(['', 'You raised a palisade around the village and set a watcher on it every night. We were safe. We were never again at ease.']); }
+  else if (c.korr === 'kill') { ids.push('palisade'); out.push(['', 'A palisade rose around the village, with a watcher on it every night. The village was safe, and never again at ease.']); }
   else if (c.korr === 'spare') { ids.push('oath'); out.push(['', 'Korr kept his oath. His people traded at the north ford, and never once crossed it with a torch.']); }
   if (arc.wena === 'lost') { ids.push('sling'); out.push(['', 'A woman\'s carry-sling hung from the Great Tree for many years. No one asked whose it was, and no one took it down.']); }
   else if (arc.wena === 'saved') { ids.push('pell'); out.push(['', 'Pell grew tall, and taught Lio to throw a sling.']); }
-  if (arc.senaWound === 'scarred') { ids.push('scar'); out.push(['Aro', 'She carried the winter in her leg all her life, and complained of it to no one but me.']); }
   if (arc.tamu === 'dead') {
     ids.push('cairn');
-    out.push(['', c.outcast === 'kill' || c.tamu === 'kill' ? 'Beneath the Great Tree there is a cairn. Aro never told the children who lay under it.' : 'Beneath the Great Tree there is a cairn. Each spring, Sena laid the first flowers on it.']);
+    const at = arc.wena === 'lost' ? 'Below that bough, among the roots,' : 'Beneath the Great Tree';   // one tree, named once
+    out.push(['', c.outcast === 'kill' || c.tamu === 'kill' ? `${at} there is a cairn. Aro never told the children who lay under it.` : `${at} there is a cairn. Each spring, Sena laid the first flowers on it.`]);
   } else if (arc.tamu === 'traitor') { ids.push('traitor'); out.push(['', 'Tamu was never seen in the valley again.']); }
+  if (arc.senaWound === 'scarred') { ids.push('scar'); out.push(['Aro', 'She carried the winter in her leg all her life, and complained of it to no one but me.']); }   // after the tree lines: the cairn's 'that bough' follows the sling directly
   if (rom.vow != null && VOWS[rom.vow]) { ids.push('vow'); out.push(['Sena', `"${VOWS[rom.vow]}" You said that, at the stones. You kept it.`]); }
   return { lines: out, ids };
 }

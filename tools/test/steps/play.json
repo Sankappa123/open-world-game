@@ -161,7 +161,7 @@
 "name": "cave -> herd"
 },
 {
-"js": "G.time(11); window.LOOK=async(x,y,z)=>{const c=G.camera,d=new c.position.constructor(),f=()=>new Promise(r=>requestAnimationFrame(r));let p=0;for(let k=0;k<6;k++){G.yaw=Math.atan2(-(x-c.position.x),-(z-c.position.z));G.pitch=p;await f();await f();await f();c.getWorldDirection(d);const w=new c.position.constructor(x,y,z).sub(c.position).normalize();p+=(Math.asin(d.y)-Math.asin(w.y))*0.9;}return [G.yaw,p];}; 1"
+"js": "G.time(11); G.tp(10,10); window.LOOK=async(x,y,z)=>{const c=G.camera,d=new c.position.constructor(),f=()=>new Promise(r=>requestAnimationFrame(r));let p=0;for(let k=0;k<6;k++){G.yaw=Math.atan2(-(x-c.position.x),-(z-c.position.z));G.pitch=p;await f();await f();await f();c.getWorldDirection(d);const w=new c.position.constructor(x,y,z).sub(c.position).normalize();p+=(Math.asin(d.y)-Math.asin(w.y))*0.9;}return [G.yaw,p];}; 1"
 },
 {
 "until": "G.S.c.bowOffer",

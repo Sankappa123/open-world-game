@@ -65,8 +65,8 @@
 "wait": 900
 },
 {
-"expect": "(()=>{const f=G.bow.fp(); return f.nock && f.tip && Math.hypot(f.tip[0], f.tip[1]) > 0.08 && f.grip[0] < -0.03 ? JSON.stringify(f) : 0;})()",
-"name": "first person full draw: arrow nocked, grip and point clear of the crosshair"
+"expect": "(()=>{const f=G.bow.fp(); return f.nock && f.tip && Math.abs(f.tip[0]) < 0.04 && f.tip[1] < -0.04 && f.tip[1] > -0.14 && f.grip[1] < -0.15 && f.nockEnd && f.nockEnd[1] > -0.7 && f.nockEnd[0] < 0.6 && f.gapL < 0.03 ? JSON.stringify(f) : 0;})()",
+"name": "first person full draw: arrow on the line of sight, its point just under the crosshair, the fist on the grip, the draw hand in view"
 },
 {
 "shot": "bow_fp_draw.png"

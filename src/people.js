@@ -80,7 +80,7 @@ export async function loadPeople() {
   }
 }
 
-export function makeHuman({ female = false, light = false, tint = 0xffffff, hair = female ? 'long' : 'parted', beard = !female, hairColor = 0x6a5140, scale = 1, child = null } = {}) {
+export function makeHuman({ female = false, light = false, tint = 0xffffff, hair = female ? 'long' : 'parted', beard = !female, hairColor = 0x6a5140, scale = 1, child = null, dress = true } = {}) {   // ADULT-DRESS: dress true | hide colour | false
   // CHILD: children (Lio, Pell, the village children) are built on the MALE base mesh (flat chest, no adult female shape)
   // with child proportions from bone scales and a full tunic; see childBody below. The rig choice never follows `female`.
   if (child) { beard = false; light = true; }
@@ -117,6 +117,7 @@ export function makeHuman({ female = false, light = false, tint = 0xffffff, hair
   const sock = {};
   for (const [slot, b] of Object.entries(SLOT_BONE)) { sock[slot] = new THREE.Group(); sock[slot].name = 'sock_' + slot; bones[b].add(sock[slot]); }
   const kid = child ? childBody(model, body, bones, CHILD[child] || CHILD.girl) : null;   // CHILD: proportions + clothes, before the scale
+  const clothes = !child && dress !== false ? adultDress(model, body, bones, who, typeof dress === 'number' ? dress : who === 'female' ? 0x7d5c40 : 0x6a5038) : null;   // ADULT-DRESS: never the base mesh's underwear
   const grip = sock.hand;
   const spear = makeSpear(), axe = makeAxe();
   spear.userData.kind = 'spear'; axe.userData.kind = 'axe';
@@ -134,7 +135,7 @@ export function makeHuman({ female = false, light = false, tint = 0xffffff, hair
   let shot = null, shotW = 0, shotKey = null, fading = null;
 
   // pose: a loop that overrides the movement state; straddle spreads the legs (riding behind); lie is read by settle() in main
-  const h = { root, spear, axe, grip, sock, bones, who, kid, crouch: 0, pose: null, straddle: false, lie: false, has: (k) => !!act[k] || !!lib.clips[who]?.[k], overrides: [], blends: [], gripR: 0, gripL: 0 };
+  const h = { root, spear, axe, grip, sock, bones, who, kid, clothes, crouch: 0, pose: null, straddle: false, lie: false, has: (k) => !!act[k] || !!lib.clips[who]?.[k], overrides: [], blends: [], gripR: 0, gripL: 0 };
   // Bone overrides run after mixer.update, sorted by order (10 body, 15 stance, 20 fingers, 30 IK, 40 additive).
   // CHILD: the clips' hip height, for the shorter legs; and a child's carriage: the chest eases back a little (the
   // tummy leads, not the chest), and the adult clips carry the head forward over the chest, which on a big child's head
@@ -821,4 +822,127 @@ function childSkin(url) {
   };
   img.src = url;
   return tex;
+}
+
+// ---------- ADULT-DRESS: adults' hide clothing ----------
+// GUARDRAIL (content limits, arc_data.js "no underwear meshes"): no adult is ever shown in the base mesh's painted
+// underwear. Women wear a hide dress: a fitted top grown from the body's own skinned vertices (shoulders to hips, short
+// sleeves; the front falls straight from the bust like a hide smock) and a flared knee-length skirt skinned to the
+// pelvis and thighs. Men wear a hide kilt to above the knee (the chest stays bare). Geometry is built once per rig and
+// shared; each wearer gets its own material (colour). Called from makeHuman (dress: true | colour; false for none).
+const DRESS_GEO = {};
+let hideT = null;
+function hideTex() {                                                   // a soft, mottled tanned-hide grain (tinted)
+  if (hideT) return hideT;
+  const c = document.createElement('canvas'); c.width = c.height = 128; const g = c.getContext('2d');
+  g.fillStyle = '#d4d4d4'; g.fillRect(0, 0, 128, 128);
+  for (let i = 0; i < 420; i++) { const r = 2 + Math.random() * 9, l = Math.random() < 0.5; g.fillStyle = `rgba(${l ? '255,255,255' : '0,0,0'},${0.03 + Math.random() * 0.05})`; g.beginPath(); g.ellipse(Math.random() * 128, Math.random() * 128, r, r * (0.4 + Math.random() * 0.6), Math.random() * 3, 0, Math.PI * 2); g.fill(); }
+  for (let i = 0; i < 60; i++) { g.strokeStyle = 'rgba(0,0,0,0.07)'; g.lineWidth = 0.6; g.beginPath(); const x = Math.random() * 128, y = Math.random() * 128; g.moveTo(x, y); g.quadraticCurveTo(x + Math.random() * 20 - 10, y + Math.random() * 8, x + Math.random() * 26 - 13, y + Math.random() * 16); g.stroke(); }
+  hideT = new THREE.CanvasTexture(c); hideT.wrapS = hideT.wrapT = THREE.RepeatWrapping; hideT.repeat.set(3, 3); hideT.colorSpace = THREE.SRGBColorSpace;
+  return hideT;
+}
+function adultDress(model, body, bones, who, color) {
+  model.updateMatrixWorld(true); body.updateWorldMatrix(true, false);
+  const cache = (DRESS_GEO[who] ||= {});
+  const g0 = body.geometry, pos = g0.attributes.position, si = g0.attributes.skinIndex, sw = g0.attributes.skinWeight, n = pos.count;
+  const names = body.skeleton.bones.map((b) => b.name), main = new Array(n), wy = new Float32Array(n);
+  for (let i = 0; i < n; i++) {
+    let best = 0, bi = 0;
+    for (let k = 0; k < 4; k++) { const w = sw.getComponent(i, k); if (w > best) { best = w; bi = si.getComponent(i, k); } }
+    main[i] = names[bi] || ''; wy[i] = _cv1.fromBufferAttribute(pos, i).applyMatrix4(body.matrixWorld).y;
+  }
+  const bw = (nm) => bones[nm].getWorldPosition(new THREE.Vector3());
+  const unit = 1 / _cv2.setFromMatrixScale(body.matrixWorld).x;
+  const mat = (shade = 1) => new THREE.MeshStandardMaterial({ color: new THREE.Color(color).multiplyScalar(shade), roughness: 0.95, metalness: 0, map: hideTex(), side: THREE.DoubleSide });
+  const out = { parts: [] };
+  // 1. the top (women): the same shell method as the children's tunic (welded, Taubin-smoothed, held off the skin)
+  if (who === 'female') {
+    let g = cache.top;
+    if (!g) {
+      const TOP = /^(pelvis|spine_0[123]|clavicle_[lr]|upperarm_[lr])$/, yHipCut = bw('thigh_l').y - 0.04;
+      const keep = (i) => TOP.test(main[i]) && !(main[i] === 'pelvis' && wy[i] < yHipCut);
+      const off = (i) => (/^upperarm/.test(main[i]) ? 0.012 : 0.016) * unit;
+      g = g0.clone(); const p = g.attributes.position, nr = g.attributes.normal;
+      const src = g.index ? g.index.array : Array.from({ length: n }, (_, i) => i), idx = [];
+      for (let t = 0; t < src.length; t += 3) if (keep(src[t]) && keep(src[t + 1]) && keep(src[t + 2])) idx.push(src[t], src[t + 1], src[t + 2]);
+      const q = 0.0005 * unit, gid = new Int32Array(n).fill(-1), km = new Map(); let G = 0;
+      for (const i of idx) if (gid[i] < 0) { const k = Math.round(p.getX(i) / q) + ',' + Math.round(p.getY(i) / q) + ',' + Math.round(p.getZ(i) / q); let v = km.get(k); if (v === undefined) { v = G++; km.set(k, v); } gid[i] = v; }
+      const gp = new Float64Array(G * 3), gn = new Float64Array(G * 3), go = new Float64Array(G), cnt = new Uint8Array(G), nb = Array.from({ length: G }, () => new Set()), edge = new Map();
+      for (let i = 0; i < n; i++) { const v = gid[i]; if (v < 0) continue; gn[v * 3] += nr.getX(i); gn[v * 3 + 1] += nr.getY(i); gn[v * 3 + 2] += nr.getZ(i); if (cnt[v]) continue; cnt[v] = 1; gp[v * 3] = p.getX(i); gp[v * 3 + 1] = p.getY(i); gp[v * 3 + 2] = p.getZ(i); go[v] = off(i); }
+      for (let v = 0; v < G; v++) { const l = Math.hypot(gn[v * 3], gn[v * 3 + 1], gn[v * 3 + 2]) || 1; gn[v * 3] /= l; gn[v * 3 + 1] /= l; gn[v * 3 + 2] /= l; }
+      for (let t = 0; t < idx.length; t += 3) for (let e = 0; e < 3; e++) { const a = gid[idx[t + e]], b = gid[idx[t + (e + 1) % 3]]; if (a === b) continue; nb[a].add(b); nb[b].add(a); const k = a < b ? a + ':' + b : b + ':' + a; edge.set(k, (edge.get(k) || 0) + 1); }
+      const fixed = new Uint8Array(G); for (const [k, c] of edge) if (c === 1) { const [a, b] = k.split(':'); fixed[+a] = fixed[+b] = 1; }
+      const base = gp.slice(), cur = gp.slice(), tmp = new Float64Array(G * 3);
+      for (let v = 0; v < G; v++) for (let c = 0; c < 3; c++) cur[v * 3 + c] += gn[v * 3 + c] * go[v];
+      for (let it = 0; it < 60; it++) {
+        const lam = it % 2 ? -0.53 : 0.5;
+        for (let v = 0; v < G; v++) {
+          if (fixed[v] || !nb[v].size) { tmp[v * 3] = cur[v * 3]; tmp[v * 3 + 1] = cur[v * 3 + 1]; tmp[v * 3 + 2] = cur[v * 3 + 2]; continue; }
+          let x = 0, y = 0, z = 0; for (const u of nb[v]) { x += cur[u * 3]; y += cur[u * 3 + 1]; z += cur[u * 3 + 2]; }
+          const k = nb[v].size; tmp[v * 3] = cur[v * 3] + lam * (x / k - cur[v * 3]); tmp[v * 3 + 1] = cur[v * 3 + 1] + lam * (y / k - cur[v * 3 + 1]); tmp[v * 3 + 2] = cur[v * 3 + 2] + lam * (z / k - cur[v * 3 + 2]);
+        }
+        cur.set(tmp);
+      }
+      for (let v = 0; v < G; v++) { const d = (cur[v * 3] - base[v * 3]) * gn[v * 3] + (cur[v * 3 + 1] - base[v * 3 + 1]) * gn[v * 3 + 1] + (cur[v * 3 + 2] - base[v * 3 + 2]) * gn[v * 3 + 2]; if (d < go[v]) for (let c = 0; c < 3; c++) cur[v * 3 + c] += gn[v * 3 + c] * (go[v] - d); }
+      // the front falls straight from the bust to the hips (a hide smock): no cleavage line, no fitted waist
+      const inv = new THREE.Matrix4().copy(body.matrixWorld).invert(), nm = new THREE.Matrix3().getNormalMatrix(body.matrixWorld), wn = new THREE.Vector3();
+      const W = []; for (let v = 0; v < G; v++) W.push(new THREE.Vector3(cur[v * 3], cur[v * 3 + 1], cur[v * 3 + 2]).applyMatrix4(body.matrixWorld));
+      const yC = (bw('spine_03').y + bw('neck_01').y) / 2, yB = bw('thigh_l').y; let zM = -1e9, yM = yC;
+      for (const w of W) if (w.y < yC && w.y > yB && Math.abs(w.x) < 0.12 && w.z > zM) { zM = w.z; yM = w.y; }
+      for (let v = 0; v < G; v++) {
+        const w = W[v]; wn.set(gn[v * 3], gn[v * 3 + 1], gn[v * 3 + 2]).applyMatrix3(nm).normalize();
+        if (fixed[v] || w.y > yM || w.y < yB || wn.z < 0.1 || Math.abs(w.x) > 0.19) continue;
+        const t = Math.min(1, (yM - w.y) / 0.03), zt = zM + (yM - w.y) * 0.06 - Math.max(0, Math.abs(w.x) - 0.07) * 0.3; if (w.z >= zt) continue;
+        w.z += (zt - w.z) * t * Math.min(1, wn.z * 2); w.applyMatrix4(inv); cur[v * 3] = w.x; cur[v * 3 + 1] = w.y; cur[v * 3 + 2] = w.z;
+      }
+      for (let i = 0; i < n; i++) { const v = gid[i]; if (v >= 0) p.setXYZ(i, cur[v * 3], cur[v * 3 + 1], cur[v * 3 + 2]); }
+      g.setIndex(idx); g.computeBoundingSphere(); weldNormals(g);
+      cache.top = g;
+    }
+    const m = new THREE.SkinnedMesh(g, mat(1)); m.name = 'dressTop';
+    m.castShadow = m.receiveShadow = true; m.frustumCulled = false;
+    m.position.copy(body.position); m.quaternion.copy(body.quaternion); m.scale.copy(body.scale);
+    body.parent.add(m); m.bind(body.skeleton, body.bindMatrix); out.top = m; out.parts.push(m);
+  }
+  // 2. the skirt (women, to the knee) or kilt (men, a hand above the knee): an open flared elliptical tube, skinned
+  // (top on the pelvis, the lower sides partly on the thighs) so it swings with each stride and opens over a horse
+  const fem = who === 'female', key = fem ? 'skirt' : 'kilt';
+  let sg = cache[key];
+  const P0 = bw('pelvis'), yW = bw('spine_01').y - (fem ? 0.0 : 0.035), yH = Math.min(P0.y - 0.04, bw('thigh_l').y - 0.03), yK = bw('calf_l').y + (fem ? 0.02 : 0.13);
+  const bi = (nm) => body.skeleton.bones.indexOf(bones[nm]), iP = bi('pelvis'), iL = bi('thigh_l'), iR = bi('thigh_r');
+  if (!sg) {
+    const ext = (y0, y1) => {
+      let rx = 0, rz0 = 1e9, rz1 = -1e9;
+      for (let i = 0; i < n; i++) {
+        if (wy[i] < y0 || wy[i] > y1 || !/^(pelvis|thigh_[lr]|spine_01)$/.test(main[i])) continue;
+        _cv1.fromBufferAttribute(pos, i).applyMatrix4(body.matrixWorld);
+        rx = Math.max(rx, Math.abs(_cv1.x - P0.x)); rz0 = Math.min(rz0, _cv1.z); rz1 = Math.max(rz1, _cv1.z);
+      }
+      return [rx, (rz1 - rz0) / 2, (rz1 + rz0) / 2];
+    };
+    const thY = bw('thigh_l').y, hip = ext(thY - 0.08, thY + 0.03), waist = ext(yW - 0.03, yW + 0.03);
+    const fl = fem ? 1 : 0.55, cz = hip[2];
+    const rings = [[yW, waist[0] + 0.022, waist[1] + 0.024, waist[2]], [yH, hip[0] + 0.045, hip[1] + 0.05, cz]];
+    for (let r = 1; r <= 4; r++) { const t = r / 4; rings.push([yH + (yK - yH) * t, hip[0] + 0.045 + (0.015 + 0.075 * fl) * t, hip[1] + 0.05 + (0.025 + 0.07 * fl) * t, cz]); }
+    const SEG = 36, vs = [], uv = [], ssi = [], ssw = [];
+    const lSide = Math.sign(bw('thigh_l').x - P0.x) || 1;
+    body.parent.updateMatrixWorld(true);
+    for (const [y, rx, rz, zc] of rings) for (let k = 0; k <= SEG; k++) {
+      const a = (k / SEG) * Math.PI * 2, x = Math.sin(a) * rx, z = zc + Math.cos(a) * rz;
+      const hem = y === yK ? -0.012 * (0.5 + 0.5 * Math.sin(a * 9)) : 0;   // a cut hide hem: not a ruler-straight line
+      const L = body.parent.worldToLocal(new THREE.Vector3(P0.x + x, y + hem, z)); vs.push(L.x, L.y, L.z); uv.push(k / SEG * 3, (y - yK) * 4);
+      const t = Math.max(0, Math.min(1, (yH - y) / (yH - yK))), f = Math.min(1, Math.abs(x) / rx * 1.5), wT = Math.pow(t, 0.9) * 0.82 * f;
+      ssi.push(iP, Math.sign(x) === lSide ? iL : iR, 0, 0); ssw.push(1 - wT, wT, 0, 0);
+    }
+    const ix = [];
+    for (let r = 0; r < rings.length - 1; r++) for (let k = 0; k < SEG; k++) { const a = r * (SEG + 1) + k, b = a + SEG + 1; ix.push(a, b, a + 1, a + 1, b, b + 1); }
+    sg = cache[key] = new THREE.BufferGeometry();
+    sg.setAttribute('position', new THREE.Float32BufferAttribute(vs, 3)); sg.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2)); sg.setAttribute('skinIndex', new THREE.Uint16BufferAttribute(ssi, 4)); sg.setAttribute('skinWeight', new THREE.Float32BufferAttribute(ssw, 4)); sg.setIndex(ix); sg.computeVertexNormals();
+  }
+  const sk = new THREE.SkinnedMesh(sg, mat(fem ? 0.92 : 1)); sk.name = fem ? 'dressSkirt' : 'dressKilt';
+  sk.castShadow = sk.receiveShadow = true; sk.frustumCulled = false;
+  body.parent.add(sk); sk.updateMatrixWorld(true);
+  sk.bind(new THREE.Skeleton(body.skeleton.bones));                   // inverses from the rest pose (now)
+  out.skirt = sk; out.parts.push(sk);
+  return out;
 }
