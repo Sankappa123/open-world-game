@@ -117,7 +117,8 @@ export function makeHuman({ female = false, light = false, tint = 0xffffff, hair
   const sock = {};
   for (const [slot, b] of Object.entries(SLOT_BONE)) { sock[slot] = new THREE.Group(); sock[slot].name = 'sock_' + slot; bones[b].add(sock[slot]); }
   const kid = child ? childBody(model, body, bones, CHILD[child] || CHILD.girl) : null;   // CHILD: proportions + clothes, before the scale
-  const clothes = !child && dress !== false ? adultDress(model, body, bones, who, typeof dress === 'number' ? dress : who === 'female' ? 0x7d5c40 : 0x6a5038) : null;   // ADULT-DRESS: never the base mesh's underwear
+  const dObj = dress && typeof dress === 'object' ? dress : null;   // SENA-LOOK: { color, style: 'twopiece' }
+  const clothes = !child && dress !== false ? adultDress(model, body, bones, who, dObj ? dObj.color : typeof dress === 'number' ? dress : who === 'female' ? 0x7d5c40 : 0x6a5038, dObj ? dObj.style : null) : null;   // ADULT-DRESS: never the base mesh's underwear
   const grip = sock.hand;
   const spear = makeSpear(), axe = makeAxe();
   spear.userData.kind = 'spear'; axe.userData.kind = 'axe';
@@ -841,9 +842,10 @@ function hideTex() {                                                   // a soft
   hideT = new THREE.CanvasTexture(c); hideT.wrapS = hideT.wrapT = THREE.RepeatWrapping; hideT.repeat.set(3, 3); hideT.colorSpace = THREE.SRGBColorSpace;
   return hideT;
 }
-function adultDress(model, body, bones, who, color) {
+function adultDress(model, body, bones, who, color, style = null) {
   model.updateMatrixWorld(true); body.updateWorldMatrix(true, false);
-  const cache = (DRESS_GEO[who] ||= {});
+  const two = style === 'twopiece' && who === 'female';   // SENA-LOOK: a hide breast-band and a short hip-slung skirt (the user's choice for Sena; non-explicit)
+  const cache = (DRESS_GEO[who + (two ? ':two' : '')] ||= {});
   const g0 = body.geometry, pos = g0.attributes.position, si = g0.attributes.skinIndex, sw = g0.attributes.skinWeight, n = pos.count;
   const names = body.skeleton.bones.map((b) => b.name), main = new Array(n), wy = new Float32Array(n);
   for (let i = 0; i < n; i++) {
@@ -859,8 +861,10 @@ function adultDress(model, body, bones, who, color) {
   if (who === 'female') {
     let g = cache.top;
     if (!g) {
-      const TOP = /^(pelvis|spine_0[123]|clavicle_[lr]|upperarm_[lr])$/, yHipCut = bw('thigh_l').y - 0.04;
-      const keep = (i) => TOP.test(main[i]) && !(main[i] === 'pelvis' && wy[i] < yHipCut);
+      const TOP = two ? /^(spine_0[23]|clavicle_[lr])$/ : /^(pelvis|spine_0[123]|clavicle_[lr]|upperarm_[lr])$/, yHipCut = bw('thigh_l').y - 0.04;
+      const s2 = bw('spine_02').y, s3 = bw('spine_03').y, nk = bw('neck_01').y;
+      const yLo = s2 + (s3 - s2) * 0.55, yHi = s3 + (nk - s3) * 0.42;   // SENA-LOOK: the band covers the bust only; bare shoulders and midriff
+      const keep = (i) => TOP.test(main[i]) && !(main[i] === 'pelvis' && wy[i] < yHipCut) && (!two || (wy[i] > yLo && wy[i] < yHi));
       const off = (i) => (/^upperarm/.test(main[i]) ? 0.012 : 0.016) * unit;
       g = g0.clone(); const p = g.attributes.position, nr = g.attributes.normal;
       const src = g.index ? g.index.array : Array.from({ length: n }, (_, i) => i), idx = [];
@@ -908,7 +912,8 @@ function adultDress(model, body, bones, who, color) {
   // (top on the pelvis, the lower sides partly on the thighs) so it swings with each stride and opens over a horse
   const fem = who === 'female', key = fem ? 'skirt' : 'kilt';
   let sg = cache[key];
-  const P0 = bw('pelvis'), yW = bw('spine_01').y - (fem ? 0.0 : 0.035), yH = Math.min(P0.y - 0.04, bw('thigh_l').y - 0.03), yK = bw('calf_l').y + (fem ? 0.02 : 0.13);
+  const P0 = bw('pelvis'), yW = two ? P0.y + 0.015 : bw('spine_01').y - (fem ? 0.0 : 0.035), yH = Math.min(P0.y - 0.04, bw('thigh_l').y - 0.03);
+  const yK = two ? bw('thigh_l').y - (bw('thigh_l').y - bw('calf_l').y) * 0.5 : bw('calf_l').y + (fem ? 0.02 : 0.13);   // SENA-LOOK: hip-slung, mid-thigh
   const bi = (nm) => body.skeleton.bones.indexOf(bones[nm]), iP = bi('pelvis'), iL = bi('thigh_l'), iR = bi('thigh_r');
   if (!sg) {
     const ext = (y0, y1) => {
@@ -921,8 +926,8 @@ function adultDress(model, body, bones, who, color) {
       return [rx, (rz1 - rz0) / 2, (rz1 + rz0) / 2];
     };
     const thY = bw('thigh_l').y, hip = ext(thY - 0.08, thY + 0.03), waist = ext(yW - 0.03, yW + 0.03);
-    const fl = fem ? 1 : 0.55, cz = hip[2];
-    const rings = [[yW, waist[0] + 0.022, waist[1] + 0.024, waist[2]], [yH, hip[0] + 0.045, hip[1] + 0.05, cz]];
+    const fl = two ? 0.45 : fem ? 1 : 0.55, cz = hip[2];
+    const rings = two ? [[yW, hip[0] + 0.03, hip[1] + 0.035, cz], [yH, hip[0] + 0.045, hip[1] + 0.05, cz]] : [[yW, waist[0] + 0.022, waist[1] + 0.024, waist[2]], [yH, hip[0] + 0.045, hip[1] + 0.05, cz]];
     for (let r = 1; r <= 4; r++) { const t = r / 4; rings.push([yH + (yK - yH) * t, hip[0] + 0.045 + (0.015 + 0.075 * fl) * t, hip[1] + 0.05 + (0.025 + 0.07 * fl) * t, cz]); }
     const SEG = 36, vs = [], uv = [], ssi = [], ssw = [];
     const lSide = Math.sign(bw('thigh_l').x - P0.x) || 1;
@@ -944,5 +949,28 @@ function adultDress(model, body, bones, who, color) {
   body.parent.add(sk); sk.updateMatrixWorld(true);
   sk.bind(new THREE.Skeleton(body.skeleton.bones));                   // inverses from the rest pose (now)
   out.skirt = sk; out.parts.push(sk);
+  if (two) out.parts.push(...senaTrinkets(bones));     // SENA-LOOK: bone-bead necklace and arm cords
   return out;
 }
+// SENA-LOOK: a strand of bone and amber beads at the throat, and braided hide cords on both upper arms.
+function senaTrinkets(bones) {
+  const parts = [], bead = new THREE.SphereGeometry(0.0085, 8, 6), tooth = new THREE.ConeGeometry(0.006, 0.026, 6);
+  const bone = new THREE.MeshStandardMaterial({ color: 0xe8dcc2, roughness: 0.6 }), amber = new THREE.MeshStandardMaterial({ color: 0xc27a22, roughness: 0.35 }), cord = new THREE.MeshStandardMaterial({ color: 0x4a3324, roughness: 0.9 });
+  const neck = bones.neck_01, nw = neck.getWorldPosition(new THREE.Vector3()), s3 = bones.spine_03.getWorldPosition(new THREE.Vector3());
+  const g = new THREE.Group(), cy = nw.y - (nw.y - s3.y) * 0.35, cz = nw.z + 0.015, R = 0.068;
+  for (let k = 0; k < 22; k++) {
+    const a = -Math.PI * 0.95 + (k / 21) * Math.PI * 1.9, x = Math.sin(a) * R, z = Math.cos(a) * R * 0.9, drop = Math.max(0, Math.cos(a)) * 0.05;
+    const m = new THREE.Mesh(k === 11 ? tooth : bead, k % 4 === 1 ? amber : bone);
+    m.position.set(nw.x + x, cy - drop, cz + z - 0.01); if (k === 11) m.rotation.x = Math.PI;
+    g.add(m);
+  }
+  scene_attach(neck, g); parts.push(g);
+  for (const side of ['l', 'r']) {
+    const ua = bones['upperarm_' + side], lo = bones['lowerarm_' + side]; if (!ua || !lo) continue;
+    const a = ua.getWorldPosition(new THREE.Vector3()), b = lo.getWorldPosition(new THREE.Vector3()), c = a.clone().lerp(b, 0.42);
+    const band = new THREE.Mesh(new THREE.TorusGeometry(a.distanceTo(b) * 0.2, 0.006, 6, 18), cord);
+    band.position.copy(c); band.lookAt(b); scene_attach(ua, band); parts.push(band);
+  }
+  return parts;
+}
+function scene_attach(boneObj, o) { boneObj.updateWorldMatrix(true, false); boneObj.attach(o); o.castShadow = true; }

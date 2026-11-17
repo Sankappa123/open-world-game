@@ -455,7 +455,7 @@ addEventListener('beforeunload', () => save({ beacon: true }));
 
 // ---------- characters ----------
 const P = { pos: new THREE.Vector3(0, 0, 4), face: Math.PI, h: makeHuman({ hairColor: 0x3d2f26 }), sneak: false, speed: 0, cool: 0, step: 0, vx: 0, vz: 0, vy: 0, jy: 0, air: false, auto: false, tired: false };
-const N = { pos: new THREE.Vector3(2, 0, 2.5), face: 0, h: makeHuman({ female: true, hairColor: 0x4a382c }), node: null, wait: 4, speed: 0, act: 0 };
+const N = { pos: new THREE.Vector3(2, 0, 2.5), face: 0, h: makeHuman({ female: true, hairColor: 0x4a382c, dress: { color: 0x6e4a2e, style: 'twopiece' } }), node: null   /* SENA-LOOK: the user's choice (2026-11-17): an attractive hide two-piece, not the dress */, wait: 4, speed: 0, act: 0 };
 scene.add(P.h.root, N.h.root);
 const villagers = [];
 let camYaw = 0.4, camPitch = 0.22, camDist = 4.8, view = 'tpp', jumpTap = false;
