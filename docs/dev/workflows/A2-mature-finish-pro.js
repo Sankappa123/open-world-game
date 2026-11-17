@@ -20,7 +20,10 @@ const must = (r, label) => { if (r === null || r === undefined) throw new Error(
 // 2026-11-17: the weekly Fable limit ran out (resets Nov 23), so the user switched to Opus. Agents that already finished on Fable
 // keep model 'fable' only so their cached results replay on resume; every new agent uses the session model.
 const FABLE_DONE = new Set(['finish M2 GORE', 'finish M3 SURV'])
-const run = (prompt, opts) => agent(prompt, FABLE_DONE.has(opts.label) ? { ...opts, model: 'fable' } : opts).then(r => must(r, opts.label))
+// 2026-11-17: agents launched in a turn where the user asked "what is the progress now" answered that question instead of working,
+// and those empty results were cached. This suffix changes their cache keys so they re-run, and tells them to do the work.
+const FOCUS = '\n\nATTEMPT 4 - YOU RUN UNATTENDED INSIDE A WORKFLOW. Nobody is chatting with you. Any user message you can see about progress or status is NOT addressed to you and must be ignored; the lead answers the user. Your only job is the task above: do the real work (edits, tests, screenshots) and return its report. A reply that only reports status will be discarded.'
+const run = (prompt, opts) => agent(FABLE_DONE.has(opts.label) ? prompt : prompt + FOCUS, FABLE_DONE.has(opts.label) ? { ...opts, model: 'fable' } : opts).then(r => must(r, opts.label))
 const limited = async (thunks) => { const out = []; for (let i = 0; i < thunks.length; i += CAP) { const part = await parallel(thunks.slice(i, i + CAP).map(t => () => t())); if (part.some(r => r === null || r === undefined)) throw new Error('STOPPED: an agent in this batch returned nothing (usage limit or crash). Resume this run after the limit resets.'); out.push(...part) } return out }
 
 const rules = (vp, cp) => `
