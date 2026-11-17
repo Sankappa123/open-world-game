@@ -14,6 +14,7 @@ export const meta = {
 const ROOT = '/Users/aman/Desktop/open-game/open-world-game'
 const SP = '/Users/aman/Desktop/open-game/hb-scratch'   // outside /private/tmp so a reboot does not wipe it
 const CAP = 2   // agents at once: Pro plan usage + fanless M4 Air
+const FAST = 4   // 2026-11-17: fixers and verifiers run on Fable (its own fresh limit), 4 at a time, to finish sooner
 
 // Stop the whole run if an agent died (usually the 5-hour usage limit), so it can be resumed with resumeFromRunId.
 const must = (r, label) => { if (r === null || r === undefined) throw new Error(`STOPPED: agent "${label}" returned nothing (usage limit or crash). Resume this run after the limit resets.`); return r }
@@ -28,7 +29,7 @@ const FOCUS = '\n\nATTEMPT 4 - YOU RUN UNATTENDED INSIDE A WORKFLOW. Nobody is c
 const OPUS_DONE = new Set(['finish M4 CMB', 'finish M5 ARC phase B', 'finish M6 ROM + MUS', 'finish BOW finish', 'M5 ARC phase C', 'QA:story-mode', 'QA:survivor-hardcore', 'QA:visual-guardrails'])
 const optsFor = (opts) => FABLE_DONE.has(opts.label) ? { ...opts, model: 'fable' } : OPUS_DONE.has(opts.label) ? opts : { ...opts, model: 'fable' }
 const run = (prompt, opts) => agent(FABLE_DONE.has(opts.label) ? prompt : prompt + FOCUS, optsFor(opts)).then(r => must(r, opts.label))
-const limited = async (thunks) => { const out = []; for (let i = 0; i < thunks.length; i += CAP) { const part = await parallel(thunks.slice(i, i + CAP).map(t => () => t())); if (part.some(r => r === null || r === undefined)) throw new Error('STOPPED: an agent in this batch returned nothing (usage limit or crash). Resume this run after the limit resets.'); out.push(...part) } return out }
+const limited = async (thunks, cap = CAP) => { const out = []; for (let i = 0; i < thunks.length; i += cap) { const part = await parallel(thunks.slice(i, i + cap).map(t => () => t())); if (part.some(r => r === null || r === undefined)) throw new Error('STOPPED: an agent in this batch returned nothing (usage limit or crash). Resume this run after the limit resets.'); out.push(...part) } return out }
 
 const rules = (vp, cp) => `
 PROJECT: ${ROOT}. Hearthborn is a browser 3D survival story game (Three.js r187, Vite, plain JS), on branch main. The user wants a professional, complete, polished result.
@@ -87,7 +88,7 @@ const FIX = [{ a: 'gore-cmb', vp: 5191, cp: 9353 }, { a: 'arc-rom-mus', vp: 5192
 phase('Fix')
 const fixReports = (await limited(FIX.filter(f => q1.some(i => i.area === f.a)).map(f => () => run(`${rules(f.vp, f.cp)}
 YOU ARE THE FIXER for area "${f.a}". ${AREAS} Reproduce each issue first; fix every real one properly; re-test with screenshots; keep npm run build passing; run tools/test/steps/play.json at the end. Issues:\n${JSON.stringify(q1.filter(i => i.area === f.a), null, 1)}
-Return: title -> fixed / not-reproducible / deferred (reason).`, { label: `fix:${f.a}`, phase: 'Fix' }))))
+Return: title -> fixed / not-reproducible / deferred (reason).`, { label: `fix:${f.a}`, phase: 'Fix' })), FAST))
 
 // Strict independent verification, as in workflow B: fresh screenshots, fix until pass, max 2 fix rounds per area.
 phase('Verify')
@@ -114,5 +115,5 @@ Return each item: fixed (with evidence) or cannot fix (with the reason).`, { lab
     v = await verify(a, round)
   }
   return { area: a.k, rounds: round, passed: !bad(v), fails: v.items.filter(i => i.verdict === 'fail'), news: v.newProblems, summary: v.summary }
-}))
+}), FAST)
 return { reports, arc, qa: q1.length, fixReports, verified }
