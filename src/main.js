@@ -8005,6 +8005,7 @@ async function arcKorrDuel(k, c) {
   arcDrop('korr');
   if (camShot && camShot === ARCS.shot) camShot = null; ARCS.shot = null; ARCS.focus = null;
   ARCS.duel = true;
+  { const ax = P.pos.x - x, az = P.pos.z - z, d = Math.hypot(ax, az) || 1; N.pos.set(P.pos.x + ax / d * 4.5 + az / d * 1.5, 0, P.pos.z + az / d * 4.5 - ax / d * 1.5); N.path = null; N.speed = 0; }   // Sena steps back behind Aro (she stood inside Korr)
   const p = cmbDuel(x, z, { chief: true, name: 'Korr', face, surrender: c === 'spare', noFlee: true });
   const f = [...foes].reverse().find((o) => o.chief && o.state === 'live') || null;
   if (f) { f.arcDuel = true; arcRaiderLook(f); }
@@ -8247,7 +8248,8 @@ async function arcRaidAfter() {
   await arcFade('', () => {
     const h = arcHome(), hrs = ((6.5 - S.time) % 24 + 24) % 24;
     if (S.time + hrs >= 24) S.day++; skipHours(hrs);
-    for (const f of [...foes]) if (f.arcRaid && f.state !== 'dead') arcFoeGone(f);   // whoever is still out there is long gone by morning
+    for (const f of [...foes]) if (f.arcRaid) arcFoeGone(f);   // whoever is still out there is long gone by morning; the dead are carried off
+    if (h) { GR.clearSplatsNear(h.x, h.z, 60); GR.clearPieces(); }   // GUARDRAIL: the children come out at dawn: no bodies or blood left by the home
     arcUnscorch();
     if (A.home.burned) arcScorch(true);
     if (h) { P.pos.set(h.x + 3.2, 0, h.z + 4.2); N.pos.set(h.x + 4.2, 0, h.z + 3.4); }
@@ -8330,8 +8332,18 @@ function arcRemedy(k, item) {
   S.inv[item] -= k === 'bled' || item !== k ? 1 : ARC_HERB[k].n; A.rem[k] = true;
   A.fever = Math.max(F.floor, (A.fever || 0) - (k === 'bled' ? F.bleed : F.remedy));
   if (k === 'bled') { A.senaWound = 'fever'; arcSay(L.bled); } else arcSay([L.remedy[['willow', 'yarrow', 'moss'].indexOf(k)]]);
-  P.h.swing(); arcSfx(500, 0.3, 0.25); arcBedShot();
+  arcBedSide(); P.h.swing(); arcSfx(500, 0.3, 0.25); arcBedShot();
   drawInv(); drawQuest(); save();
+}
+// Tending her: Aro steps to her side of the bed, facing her (out of the room camera's way; he stood in its lens).
+function arcBedSide() {
+  const b = arcBed(), s = b?.s; if (!s?.bedPts || P.ride || view === 'fpp') return;
+  const bp = s.bedPts, side = bp[1][0] - (bp[0][0] + bp[1][0]) / 2 > 0 ? 1 : -1, v = toWorld(s, [bp[1][0] + side * 0.62, 0, bp[1][2] - 1.05]);   // on the floor at her side, by her shoulder
+  P.pos.set(v.x, P.pos.y, v.z); P.vx = P.vz = 0; P.face = Math.atan2(N.pos.x - v.x, N.pos.z - v.z);
+  if (torchOn || ARCS.doorLamp || world.env.night < 0.3) return;
+  const lp = toWorld(s, [bp[1][0] + side * 1.3, bp[1][1] + 1.1, bp[1][2] + 0.7]), fn = () => { if (!torchOn) torch.light.intensity = 5.5 * (0.92 + Math.sin(clock * 5) * 0.05); };   // the low fire's glow for the shot
+  torch.light.position.copy(lp); torch.light.color.setHex(0xff9a50); ARCS.doorLamp = fn;
+  setTimeout(() => { if (ARCS.doorLamp === fn) { ARCS.doorLamp = null; if (!torchOn) { torch.light.intensity = 0; torch.light.color.setHex(0xff8f40); } } }, 4200);
 }
 function arcBedTarget() {
   const A = S.arc, r = A.rem || {};
@@ -8466,8 +8478,11 @@ function arcSena(dt) {
     N.pos.set(b.x, b.y, b.z); N.face = b.face;
     const r = N.h.root; r.position.set(b.x, b.y + 0.02, b.z); r.rotation.order = 'YXZ'; r.rotation.set(-Math.PI / 2, b.face, 0);
     N.h.animate(dt, 0, false, false, false);
+    arcStraightLegs(N.h);                            // the idle's knee-forward stance, laid flat, lifted one knee and sank the other foot into the bed
+    arcSickCover(b);
     return true;
   }
+  if (ARCS.sick?.visible) arcSickCover(null);
   if (ARCS.lake) {                                   // she walks by Mirror Lake at dusk (a rift to mend)
     const [x, z] = arcSpot('lake'), d = Math.hypot(N.pos.x - x, N.pos.z - z);
     if (d > 2) { if (Math.hypot(N.pos.x - P.pos.x, N.pos.z - P.pos.z) > 45 && d > 30) N.pos.set(x + 1.5, 0, z + 1.5); else walkTo(N, x, z, 2.6, dt, 0.8); }
@@ -8486,6 +8501,59 @@ function arcSena(dt) {
     N.h.pose = null; settle(N, dt, false); return true;
   }
   return false;
+}
+
+// Lying still: the legs go back to the rig's bind pose (straight and together), read once from the skeleton's inverses.
+const ARC_LEGS = ['thigh_l', 'thigh_r', 'calf_l', 'calf_r', 'foot_l', 'foot_r'];
+function arcStraightLegs(h) {
+  if (!h.arcLegQ) {
+    let sk = null; h.root.traverse((o) => { if (!sk && o.isSkinnedMesh && o.skeleton.bones.includes(h.bones.thigh_l)) sk = o.skeleton; });
+    if (!sk) { h.arcLegQ = []; return; }
+    const M = new THREE.Matrix4(), W = new THREE.Matrix4(), t = new THREE.Vector3(), sc = new THREE.Vector3();
+    h.arcLegQ = ARC_LEGS.map((n) => {
+      const b = h.bones[n], i = sk.bones.indexOf(b), j = sk.bones.indexOf(b.parent), q = new THREE.Quaternion();
+      if (i < 0 || j < 0) return null;
+      W.copy(sk.boneInverses[i]).invert(); M.copy(sk.boneInverses[j]).multiply(W).decompose(t, q, sc);   // parent-bind⁻¹ · bind
+      return [b, q];
+    }).filter(Boolean);
+  }
+  for (const [b, q] of h.arcLegQ) b.quaternion.copy(q);
+}
+// The sick bed: a hide blanket over Sena from under the ribs to past her feet while the fever has her (draped over her
+// body like cloth, re-shaped once a second as she breathes and as the vigil lifts her hand).
+const _sbA = new THREE.Vector3(), _sbB = new THREE.Vector3(), _sbC = new THREE.Vector3(), _sbP = [];
+const SICK_BONES = [['spine_02', 0.12], ['spine_01', 0.12], ['pelvis', 0.14], ['thigh_l', 0.11], ['thigh_r', 0.11], ['calf_l', 0.075], ['calf_r', 0.075], ['foot_l', 0.08], ['foot_r', 0.08], ['ball_l', 0.07], ['ball_r', 0.07], ['hand_l', 0.05], ['hand_r', 0.05], ['lowerarm_l', 0.04], ['lowerarm_r', 0.04]];   // her hands rest under the cover
+function arcSickCover(b) {
+  let m = ARCS.sick;
+  if (!b) { if (m) m.visible = false; return; }
+  if (!m) { m = ARCS.sick = makeBlanket(1, 1, 22, 30); scene.add(m); m.userData.t = -1e9; m.onBeforeRender = () => arcSickDrape(m); }   // shaped at render time, on the pose actually drawn
+  if (!m.visible) m.userData.t = -1e9;
+  m.visible = true; m.userData.y0 = b.y + 0.01;
+}
+function arcSickDrape(m) {
+  if (clock - m.userData.t < 1) return;
+  m.userData.t = clock;
+  const B = N.h.bones, y0 = m.userData.y0;
+  B.spine_02.getWorldPosition(_sbA);
+  B.foot_l.getWorldPosition(_sbB).add(B.foot_r.getWorldPosition(_sbC)).multiplyScalar(0.5);
+  const dx = _sbB.x - _sbA.x, dz = _sbB.z - _sbA.z, dl = Math.hypot(dx, dz) || 1, len = dl + 0.2, wid = 0.9, fx = dx / dl, fz = dz / dl;
+  const cx = _sbA.x + fx * len / 2, cz = _sbA.z + fz * len / 2;
+  _sbP.length = 0;
+  for (const [n, r] of SICK_BONES) { B[n].getWorldPosition(_sbC); _sbP.push([_sbC.x, _sbC.z, _sbC.y - y0 + r * 1.1 + 0.03, r]); }
+  for (const [n1, n2, r] of DRAPE_MIDS) for (const k of [0.33, 0.66]) {   // along the thighs and shins too, not only at the joints
+    B[n1].getWorldPosition(_sbB); B[n2].getWorldPosition(_sbC); _sbC.lerp(_sbB, 1 - k);
+    _sbP.push([_sbC.x, _sbC.z, _sbC.y - y0 + r * 1.3 + 0.03, r]);
+  }
+  for (const sd of ['l', 'r']) { B['pelvis'].getWorldPosition(_sbB); B['thigh_' + sd].getWorldPosition(_sbC); _sbC.lerp(_sbB, 0.3); _sbP.push([_sbC.x, _sbC.z, _sbC.y - y0 + 0.17, 0.12]); }   // the hips
+  m.position.set(cx, y0, cz); m.rotation.y = Math.atan2(fx, fz); m.scale.set(wid, 1, len); m.updateMatrixWorld(true);
+  const body = (lx, lz) => {                         // plane-local (-0.5..0.5) to the world, then the highest limb in reach
+    const x = cx + fz * lx * wid + fx * lz * len, z = cz - fx * lx * wid + fz * lz * len;
+    let h = 0.012;
+    for (const [px, pz, top, r] of _sbP) { const d = Math.hypot(px - x, pz - z); h = Math.max(h, top - Math.max(0, d - r * 0.8) * 1.3); }
+    return h;
+  };
+  const hem = (lx, lz) => Math.max(0, Math.min(1, (0.5 - Math.abs(lx)) / 0.06, lz < 0 ? (0.5 + lz) / 0.06 : 1, (0.5 - lz) / 0.09));   // the hems fall flat on the mattress
+  m.userData.drape((lx, lz) => 0.012 + (body(lx, lz) - 0.012) * hem(lx, lz), 2, (lx, lz) => (Math.abs(lx) < 0.42 && lz < 0.38 ? body(lx, lz) : 0));
 }
 
 // ----- the beats, by chapter (4 Hz, never during a fade, a choice, a rest or a scene)
@@ -8534,6 +8602,7 @@ function arcBeats(id) {
           const pl = arcGet('pell'); if (pl) { pl.hidden = false; pl.mode = 'stand'; pl.pos.set(p.x + 1.6, 0, p.z + 1.2); pl.look = 'P'; ARCS.focus = pl; }
           await arcTalk(ARCD.L.raid.warn);
           await arcChoose('raid', 'Korr is coming', ARC_OPTS.raid(), { def: 0, note: 'Pell heard them at the ruins. Tomorrow night.' });
+          A.raidDay = Math.max(A.raidDay ?? 0, S.time < 5 ? S.day : S.day + 1);   // "tomorrow night": a full day to light the braziers
         });
         break;
       }
@@ -8745,6 +8814,7 @@ function arcHooks(G) {
       skip: () => { subs.length = 0; subT = 0; $('sub').classList.remove('on'); for (const w of ARCS.waits) if (!w.subs) w.t = clock; },   // tests: fast-forward lines and waits
       season: () => { ARCS.season.snap = true; },    // tests: jump the season tint instead of easing it
       vigil: (o) => Object.assign(ARCS, o),          // tests: tune the vigil seat (vigilAt: [lateral k, along])
+      sick: () => { const m = ARCS.sick; if (!m) return null; const p = m.geometry.attributes.position, B = N.h.bones, V = THREE.Vector3; return { vis: m.visible, pos: m.position.toArray(), sc: m.scale.toArray(), maxY: Math.max(...p.array.filter((_, i) => i % 3 === 1)), bones: ['pelvis', 'calf_l', 'foot_l', 'ball_l'].map((n) => B[n].getWorldPosition(new V()).toArray().map((v) => +v.toFixed(2))) }; },   // tests: the sick-bed blanket
       beats: () => arcBeats(CH[S.ch].id), memTab: () => { $('maptabs').querySelector('[data-mt="mem"]').click(); },
     },
   });

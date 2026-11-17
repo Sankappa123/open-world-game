@@ -4,12 +4,16 @@
 "timeout": 90000
 },
 {
-"js": "document.getElementById('btn-new').click(); 1",
+"js": "G.mat.newGame('story'); 1",
 "wait": 3000
 },
 {
-"js": "window.ADV=[]; window._lastCh=G.chId(); setInterval(()=>{ if (G.chId()!==window._lastCh){ ADV.push(window._lastCh+'>'+G.chId()); window._lastCh=G.chId(); } },200); G.time(10); G.give('stick',3); G.give('stone',3); G.give('berry',4); 1",
+"js": "window.UP=()=>{ if (document.getElementById('pause').classList.contains('on')) G.pause(false); }; setInterval(UP, 250); window.ADV=[]; window._lastCh=G.chId(); setInterval(()=>{ if (G.chId()!==window._lastCh){ ADV.push(window._lastCh+'>'+G.chId()); window._lastCh=G.chId(); } },200); G.time(10); G.give('stick',3); G.give('stone',3); G.give('berry',4); 1",
 "wait": 500
+},
+{
+"expect": "G.mat.state().mode==='story'",
+"name": "Story difficulty"
 },
 {
 "key": "KeyF"
@@ -157,6 +161,63 @@
 "name": "cave -> herd"
 },
 {
+"js": "G.time(11); window.LOOK=async(x,y,z)=>{const c=G.camera,d=new c.position.constructor(),f=()=>new Promise(r=>requestAnimationFrame(r));let p=0;for(let k=0;k<6;k++){G.yaw=Math.atan2(-(x-c.position.x),-(z-c.position.z));G.pitch=p;await f();await f();await f();c.getWorldDirection(d);const w=new c.position.constructor(x,y,z).sub(c.position).normalize();p+=(Math.asin(d.y)-Math.asin(w.y))*0.9;}return [G.yaw,p];}; 1"
+},
+{
+"until": "G.S.c.bowOffer",
+"timeout": 60000
+},
+{
+"expect": "G.S.c.bowOffer && /Hunter's Bow/.test(G.bow.quest())",
+"name": "bow side quest offered after the cave"
+},
+{
+"js": "for (const [k,n] of [['wood',2],['fiber',8],['hide',2],['stick',2],['flint',2]]) G.give(k,n); const R=(id)=>G.RECIPES.find(r=>r.id===id); G.craft(R('bow')); G.craft(R('quiver')); G.craft(R('arrows')); G.craft(R('arrows')); G.tp(40,30); G.N.pos.set(20,0,10); for (const a of G.animals.slice()) if (!a.tame && !a.horse && Math.hypot(a.root.position.x-40,a.root.position.z-30)<80) G.remove(a); [G.S.tools.bow, G.S.tools.quiver, G.S.inv.arrow]",
+"wait": 600
+},
+{
+"js": "UP(); 1"
+},
+{
+"key": "Digit5",
+"wait": 500
+},
+{
+"js": "UP(); window.DEER=G.spawn('deer', G.P.pos.x, G.P.pos.z+17); DEER.stun=1e6; 1",
+"wait": 500
+},
+{
+"js": "(async()=>{ const o=DEER, log=[]; for (let k=0;k<6 && o.state==='live';k++){ UP(); const p=o.root.position; await LOOK(p.x, p.y+0.75*(o.root.scale.x||1), p.z); const ar=await G.bow.shoot(1); const t0=performance.now(); while(ar && ar.st==='air' && performance.now()-t0<3000) await new Promise(r=>setTimeout(r,50)); log.push(G.bow.st(ar)); } return JSON.stringify({log, state:o.state}); })()",
+"wait": 500
+},
+{
+"expect": "DEER.state!=='live' && G.cnt('arrow_deer')>=1 && G.cnt('arrow_far')>=1",
+"name": "bow quest: a deer brought down by arrows from 17 m"
+},
+{
+"js": "{ const p=G.P.pos, V=p.constructor; for (let k=0;k<3;k++){ const x=p.x+1+k*0.3, z=p.z+1.2, y=G.h(x,z); G.gore.arrow(new V(x,y+3,z-6), new V(x,y,z)); } } UP(); 1",
+"wait": 1500
+},
+{
+"js": "UP(); 1"
+},
+{
+"key": "KeyE",
+"wait": 800
+},
+{
+"until": "G.S.c.bowQDone",
+"timeout": 15000
+},
+{
+"expect": "G.S.c.bowQDone && !G.bow.quest()",
+"name": "The Hunter's Bow side quest complete"
+},
+{
+"key": "Digit1",
+"wait": 400
+},
+{
 "js": "G.time(12); G.S.tools.saddle=true; G.tp(170,40); 1",
 "wait": 3000
 },
@@ -219,7 +280,7 @@
 "js": "[G.horses().length, G.chId()]"
 },
 {
-"js": "window.ADV=[]; window._lastCh=G.chId(); setInterval(()=>{ if (G.chId()!==window._lastCh){ ADV.push(window._lastCh+'>'+G.chId()); window._lastCh=G.chId(); } },200); window._M=(()=>{ try { return JSON.parse(localStorage.getItem('hearthborn-settings')||'{}').matureStory!==false; } catch(e) { return true; } })(); G.tp(-185,72); G.N.ride=true; [_M, G.rideState().nRide, G.cnt('peak_ride')]",
+"js": "window.ADV=[]; window._lastCh=G.chId(); setInterval(()=>{ if (G.chId()!==window._lastCh){ ADV.push(window._lastCh+'>'+G.chId()); window._lastCh=G.chId(); } },200); window._M=(()=>{ try { return JSON.parse(localStorage.getItem('hearthborn-settings')||'{}').matureStory!==false; } catch(e) { return true; } })(); window._SK=setInterval(()=>{ if (_M && !G.arcDbg.state().choice) G.arcDbg.skip(); },500); G.tp(-185,72); G.N.ride=true; [_M, G.rideState().nRide, G.cnt('peak_ride')]",
 "wait": 2500
 },
 {
@@ -281,7 +342,7 @@
 "name": "house -> winter (Mature) / hearth"
 },
 {
-"js": "if (_M) { G.stash.dried=(G.stash.dried||0)+10; for (let i=0;i<5;i++) G.bump('slept'); G.give('dried',2); G.arcChoose('door',2); } [G.chId(), JSON.stringify(G.goalsOf())]",
+"js": "if (_M) { G.stash.dried=(G.stash.dried||0)+16; for (let i=0;i<5;i++) G.bump('slept'); G.give('dried',2); G.arcChoose('door',0); } [G.chId(), JSON.stringify(G.goalsOf())]",
 "wait": 1500
 },
 {
@@ -289,12 +350,49 @@
 "timeout": 30000
 },
 {
-"expect": "!_M || G.chId()==='raid' && G.arc.choices.door==='trade'",
+"expect": "!_M || G.chId()==='raid' && G.arc.choices.door==='share' && G.arc.wena==='saved'",
 "name": "winter -> raid (Mature)"
 },
 {
-"js": "if (_M) G.setArc({raid:{done:true}}); [G.chId(), JSON.stringify(G.goalsOf())]",
+"js": "if (_M) { G.tp(_ho.x+3,_ho.z+7); G.N.pos.set(_ho.x+4,0,_ho.z+6); G.time(15); } [G.chId(), G.arc.wena, G.arc.raidDay, G.S.day]",
 "wait": 1500
+},
+{
+"until": "!_M || G.arcDbg.state().choice==='raid'",
+"timeout": 60000
+},
+{
+"js": "if (_M) { G.arcChoose('raid',0); for (const [dx,dz] of [[9,9],[-9,9],[9,-9],[-9,-9]]) G.placeStruct('brazier', _ho.x+dx, _ho.z+dz, 0, true); } [G.arc.choices.raid, G.arc.raidDay, G.S.day, JSON.stringify(G.goalsOf())]",
+"wait": 2500
+},
+{
+"expect": "!_M || G.arc.choices.raid==='stand' && G.arc.raidDay>G.S.day && !G.arc.raid.wave",
+"name": "Pell's warning: a day to prepare"
+},
+{
+"js": "if (_M) { window.PELLT=0; window.PELLV=0; window.MAXF=0; window._pv=setInterval(()=>{ const p=G.arcDbg.npc('pell'); for (const f of G.foes) if (p && f.target===p) PELLT++; if (G.arcDbg.state().raidOn && p && !p.hidden) PELLV++; MAXF=Math.max(MAXF, G.foes.filter(f=>f.arcRaid&&f.state==='live').length); },200); G.S.day=G.arc.raidDay; G.tp(_ho.x+3,_ho.z+7); G.time(19.9); } 1",
+"wait": 1000
+},
+{
+"until": "!_M || G.foes.some(f=>f.arcRaid && f.state==='live')",
+"timeout": 60000
+},
+{
+"shot": "raid_fight.png"
+},
+{
+"js": "if (_M) window._kl=setInterval(()=>{ for (const f of G.foes) if (f.arcRaid && f.state==='live' && f.mode!=='downed' && Math.hypot(f.pos.x-G.P.pos.x,f.pos.z-G.P.pos.z)<30) G.cmb.tribe.hurtFoe(f,999,{kind:'finisher',weapon:'spear'}); const c=G.arcDbg.state().choice; if (c==='guard') G.arcChoose('guard',1); else if (c==='tamu') G.arcChoose('tamu',0); },1500); 1"
+},
+{
+"until": "!_M || G.arc.raid.done",
+"timeout": 300000
+},
+{
+"js": "clearInterval(window._kl); clearInterval(window._pv); JSON.stringify([G.arc.raid, G.arc.senaWound, G.arc.tamu, G.arc.horseFate, PELLT, PELLV, MAXF, G.foes.length])"
+},
+{
+"expect": "!_M || G.arc.raid.done && G.arc.raid.spawned>=3 && G.arc.senaWound==='bleeding' && PELLT===0 && PELLV===0 && !G.foes.some(f=>f.arcRaid)",
+"name": "raid: CMB raider waves fought, Pell kept indoors and never targeted, Sena wounded, raiders gone by dawn"
 },
 {
 "until": "!_M || G.chId()!=='raid'",
@@ -305,8 +403,35 @@
 "name": "raid -> fever (Mature)"
 },
 {
-"js": "if (_M) G.setArc({feverDone:true, fever:0}); [G.chId(), JSON.stringify(G.goalsOf())]",
-"wait": 1500
+"js": "if (_M) { G.give('poultice',1); G.give('willow',2); G.give('yarrow',2); G.give('moss',1); G.time(10); } [G.arc.fever, G.arc.senaWound]",
+"wait": 1000
+},
+{
+"js": "(async()=>{ if (!_M) return 0; const out=[]; for (let k=0;k<4;k++){ const b=G.arcDbg.bed(); G.tp(b.x+1.2,b.z+1.6); await new Promise(r=>setTimeout(r,700)); const t=G.arcDbg.target(); out.push(t&&t.label); t&&t.act&&t.act(); await new Promise(r=>setTimeout(r,2500)); } return JSON.stringify([out, G.arc.rem, G.arc.fever, G.arcDbg.sick()&&G.arcDbg.sick().vis]); })()",
+"wait": 500
+},
+{
+"expect": "!_M || G.arc.rem.bled && G.arc.rem.willow && G.arc.rem.yarrow && G.arc.rem.moss && G.arc.fever<=20 && G.arcDbg.sick().vis",
+"name": "fever: poultice and SURV herbs given at the bed (Sena under a blanket)"
+},
+{
+"js": "(async()=>{ if (!_M) return 0; G.time(20); const b=G.arcDbg.bed(); G.tp(b.x+1.2,b.z+1.6); await new Promise(r=>setTimeout(r,700)); const t=G.arcDbg.target(); const l=t&&t.label; t&&t.act&&t.act(); return l; })()",
+"wait": 4000
+},
+{
+"shot": "fever_vigil.png"
+},
+{
+"until": "!_M || G.arcDbg.state().choice==='firstkiss'",
+"timeout": 120000
+},
+{
+"js": "if (_M) document.querySelector('#choice button, #choice .opt').click(); 1",
+"wait": 3000
+},
+{
+"expect": "!_M || G.S.rom.firstKiss>0 && G.arc.senaWound==='healed' && G.arc.feverDone",
+"name": "vigil through the night; fever broke; first kiss (ROM)"
 },
 {
 "until": "!_M || G.chId()!=='fever'",
@@ -317,8 +442,33 @@
 "name": "fever -> reckoning (Mature)"
 },
 {
-"js": "if (_M) { G.S.found.camp=1; G.arcChoose('korr',1); } [G.chId(), JSON.stringify(G.goalsOf()), G.arc.thaw]",
-"wait": 1500
+"js": "if (_M) { G.time(11); const c=G.arcDbg.camp(); G.tp(c[0]-20,c[1]); G.N.pos.set(c[0]-21,0,c[1]+1); } 1",
+"wait": 6000
+},
+{
+"js": "if (_M) G.tp(G.arc.campPos[0]-9, G.arc.campPos[1]); 1"
+},
+{
+"until": "!_M || G.arcDbg.state().choice==='korr'",
+"timeout": 60000
+},
+{
+"js": "if (_M) { G.arcChoose('korr',1); window._kk=setInterval(()=>{ const f=G.foes.find(f=>f.chief&&f.state==='live'&&f.mode!=='downed'); if (f) G.cmb.tribe.hurtFoe(f,25,{kind:'light',weapon:'axe'}); },1200); } 1",
+"wait": 2500
+},
+{
+"shot": "korr_duel.png"
+},
+{
+"until": "!_M || G.arc.thaw",
+"timeout": 120000
+},
+{
+"js": "clearInterval(window._kk); JSON.stringify([G.arc.choices.korr, G.arc.tribe, G.arc.horseFate, G.foes.length])"
+},
+{
+"expect": "!_M || G.arc.choices.korr==='spare' && G.arc.tribe==='wary' && G.arc.horseFate!=='taken' && !G.foes.some(f=>f.chief&&f.state==='live')",
+"name": "reckoning: duel with Korr (CMB), spared; the horse comes home"
 },
 {
 "until": "G.chId()==='hearth'",
@@ -333,7 +483,7 @@
 "timeout": 20000
 },
 {
-"js": "G.give('stone',8); G.give('clay',4); G.homeUpgrade('hearth'); 1",
+"js": "G.tp(window._ho.x, window._ho.z+6); G.give('stone',8); G.give('clay',4); G.homeUpgrade('hearth'); 1",
 "wait": 4500
 },
 {
