@@ -437,7 +437,7 @@ bool goreBit(float mask, float seg) { return mod(floor(mask / exp2(seg)), 2.0) >
 function newUniforms() {
   return { uW: { value: Array.from({ length: 8 }, () => new THREE.Vector4()) }, uWet: { value: new Float32Array(8) }, uWN: { value: 0 },
     uGore: G.uGore, uBloodOn: G.uBloodOn, uHands: { value: 0 }, uBS: { value: 1 }, uCut: { value: 0 }, uKeep: { value: 0 },
-    uP: { value: Array.from({ length: 4 }, () => new THREE.Vector4()) }, uPN: { value: 0 }, uPC: { value: new THREE.Color(0x8c8a84) }, uFlesh: { value: 0 },
+    uP: { value: Array.from({ length: 4 }, () => new THREE.Vector4()) }, uPN: { value: 0 }, uPC: { value: new THREE.Color(0x8c8a84) }, uFlesh: { value: 0 }, uFY: { value: new THREE.Vector2(0, 1) },
     uDown: { value: new THREE.Vector3(0, -1, 0) } };   // bind-space 'down': blood runs from a wound
 }
 function woundCompile(u, wounds) {
@@ -447,7 +447,7 @@ function woundCompile(u, wounds) {
       + sh.vertexShader.replace('#include <begin_vertex>', '#include <begin_vertex>\n  vGoreBind = position; vGoreSeg = aSeg; vGoreHand = aHand;')
         .replace('#include <morphtarget_vertex>', '#include <morphtarget_vertex>\n  vGoreBind = transformed;');   // FIX gore-cmb: the morph pose (the cave bear's wounds are placed on its posed surface)
     let f = 'uniform float uCut, uKeep;\nflat varying float vGoreSeg;\nvarying vec3 vGoreBind;\nvarying float vGoreHand;\n'
-      + (wounds ? 'uniform vec4 uW[8];\nuniform float uWet[8];\nuniform int uWN;\nuniform float uGore, uBloodOn, uHands, uBS, uFlesh;\nuniform vec3 uDown;\nuniform vec4 uP[4];\nuniform int uPN;\nuniform vec3 uPC;\n' : '')
+      + (wounds ? 'uniform vec4 uW[8];\nuniform float uWet[8];\nuniform int uWN;\nuniform float uGore, uBloodOn, uHands, uBS, uFlesh;\nuniform vec2 uFY;\nuniform vec3 uDown;\nuniform vec4 uP[4];\nuniform int uPN;\nuniform vec3 uPC;\n' : '')
       + GLSL_NOISE + '\n' + sh.fragmentShader;
     f = f.replace('void main() {', `void main() {
   { float gs = floor(vGoreSeg + 0.5);
@@ -455,9 +455,12 @@ function woundCompile(u, wounds) {
     if (uKeep > 0.5 && !goreBit(uKeep, gs)) discard; }`);
     if (wounds) {
       f = f.replace('#include <color_fragment>', `#include <color_fragment>
-  float goreWet = 0.0, goreM = 0.0;
+  float goreWet = 0.0, goreM = 0.0, goreDark = 0.0, goreFR = -1.0;
   {
-    vec3 bloodWet = vec3(0.21, 0.026, 0.02), bloodDry = vec3(0.10, 0.026, 0.018), dust = vec3(0.30, 0.235, 0.165);   // FIX gore-cmb: less saturated, darker
+    // GORE-FIX4: on dark fur (a bear, a dark aurochs) the wound reads by colour and wet sheen: brighter, redder blood and
+    // raw flesh, a lighter core (a near-black core vanished into the fur), more gloss. Light skin keeps the darker set.
+    goreDark = 1.0 - smoothstep(0.035, 0.16, dot(diffuseColor.rgb, vec3(0.3, 0.59, 0.11)));
+    vec3 bloodWet = mix(vec3(0.21, 0.026, 0.02), vec3(0.46, 0.035, 0.026), goreDark), bloodDry = mix(vec3(0.10, 0.026, 0.018), vec3(0.24, 0.03, 0.022), goreDark), dust = vec3(0.30, 0.235, 0.165);   // FIX gore-cmb: less saturated, darker
     // tribe ash paint (CMB): rough patches around bone points
     for (int i = 0; i < 4; i++) { if (i >= uPN) break; vec3 q = (vGoreBind - uP[i].xyz) / uP[i].w;
       float d = length(q) + (goreN(q * 2.5 + 3.1) - 0.5) * 0.8; diffuseColor.rgb = mix(diffuseColor.rgb, uPC, (1.0 - smoothstep(0.6, 1.0, d)) * 0.8); }
@@ -480,19 +483,40 @@ function woundCompile(u, wounds) {
       core = max(core, 1.0 - smoothstep(0.06, 0.3, d));
     }
     vec3 bc = mix(bloodDry, bloodWet, goreWet / max(goreM, 0.001));
-    bc = mix(bc, vec3(0.32, 0.075, 0.06), torn * 0.55);   // FIX gore-cmb: torn flesh showing in the wound
+    bc = mix(bc, mix(vec3(0.32, 0.075, 0.06), vec3(0.62, 0.12, 0.09), goreDark), torn * mix(0.55, 0.8, goreDark));   // FIX gore-cmb: torn flesh showing in the wound
     if (uBloodOn < 0.5) { bc = dust; core = 0.0; goreWet = 0.0; torn = 0.0; }
-    diffuseColor.rgb = mix(diffuseColor.rgb, bc * (1.0 - core * 0.72), goreM * uGore);   // a dark, clotted core
+    diffuseColor.rgb = mix(diffuseColor.rgb, bc * (1.0 - core * mix(0.72, 0.3, goreDark)), goreM * uGore);   // a dark, clotted core
     // bloody hands (butchering): forearms down to the fingertips, patchy
     float hm = vGoreHand * uHands * (0.55 + 0.6 * goreN(vGoreBind * uBS * 22.0));
     hm = clamp(hm, 0.0, 1.0) * 0.92;
     diffuseColor.rgb = mix(diffuseColor.rgb, uBloodOn > 0.5 ? vec3(0.26, 0.016, 0.012) : dust, hm);
     goreWet = max(goreWet, hm * (uBloodOn > 0.5 ? 0.8 : 0.0));
-    // a butchered carcass: skinned, raw flesh with fat and darker muscle
-    if (uFlesh > 0.0) { float fn = goreN(vGoreBind * uBS * 9.0); vec3 flesh = mix(vec3(0.30, 0.035, 0.03), vec3(0.50, 0.33, 0.26), smoothstep(0.70, 0.82, fn) * (0.5 + 0.5 * goreN(vGoreBind * uBS * 31.0)));
-      flesh = mix(flesh, vec3(0.16, 0.012, 0.012), smoothstep(0.42, 0.18, fn)); diffuseColor.rgb = mix(diffuseColor.rgb, flesh, uFlesh); goreWet = max(goreWet, uFlesh * 0.7); }
+    // a butchered carcass (GORE-FIX4): skinned to the knees and the neck. The hide stays on the head, the tail and the lower
+    // legs (a ragged cut line); the rest is raw muscle in fibrous dark-to-bright red, a creamy fat cap and marbling, thin pale
+    // fascia streaks, pale rib bands on the flank and a dark dried crust at the hide line; matte-moist, never glossy plastic.
+    if (uFlesh > 0.0) {
+      vec3 bp = vGoreBind * uBS; float gs2 = floor(vGoreSeg + 0.5);
+      float hy = clamp((vGoreBind.y - uFY.x) / max(uFY.y - uFY.x, 1e-4), 0.0, 1.0) + (goreN(bp * 16.0) - 0.5) * 0.05;
+      float hide = max((gs2 > 0.5 && gs2 < 1.5) || gs2 > 5.5 ? 1.0 : 0.0, 1.0 - smoothstep(0.26, 0.29, hy));
+      float mf = goreN(bp * vec3(5.0, 5.0, 1.6)) * 0.7 + goreN(bp * vec3(22.0, 22.0, 5.0)) * 0.3;
+      vec3 flesh = mix(vec3(0.15, 0.012, 0.011), vec3(0.40, 0.05, 0.038), smoothstep(0.25, 0.8, mf));
+      flesh *= 0.85 + 0.3 * goreN(bp * 55.0);
+      float fatN = goreN(bp * 6.0 + 11.0) * 0.6 + goreN(bp * 17.0 + 3.0) * 0.4;
+      float fat = smoothstep(0.56, 0.68, fatN + smoothstep(0.62, 0.95, hy) * 0.12);       // more fat along the back
+      flesh = mix(flesh, vec3(0.58, 0.42, 0.28) * (0.85 + 0.25 * goreN(bp * 40.0)), fat * 0.92);
+      float fas = smoothstep(0.66, 0.8, goreN(bp * vec3(2.5, 16.0, 2.5) + 5.0)) * (1.0 - fat);
+      flesh = mix(flesh, vec3(0.46, 0.30, 0.27), fas * 0.4);
+      float rib = smoothstep(0.55, 0.9, sin(bp.z * 34.0 + goreN(bp * 6.0) * 2.0)) * smoothstep(0.42, 0.5, hy) * (1.0 - smoothstep(0.66, 0.76, hy)) * smoothstep(0.35, 0.6, goreN(bp * 3.0 + 7.0));
+      flesh = mix(flesh, vec3(0.56, 0.44, 0.36), rib * 0.75);
+      float crust = 1.0 - smoothstep(0.0, 0.06, hy - 0.285); crust *= 1.0 - hide;
+      flesh = mix(flesh, vec3(0.09, 0.012, 0.01), crust * 0.85);
+      float fl = uFlesh * (1.0 - hide);
+      diffuseColor.rgb = mix(diffuseColor.rgb, flesh, fl);
+      goreFR = mix(0.78, 0.6, (1.0 - fat) * (1.0 - crust)) * step(0.001, fl) + (1.0 - step(0.001, fl)) * -1.0;
+      goreWet = max(goreWet, fl * (1.0 - fat) * 0.35);
+    }
   }`);
-      f = f.replace('#include <roughnessmap_fragment>', '#include <roughnessmap_fragment>\n  roughnessFactor = mix(roughnessFactor, 0.4, goreWet * uGore);');   // FIX gore-cmb: a wet sheen, not gloss paint
+      f = f.replace('#include <roughnessmap_fragment>', '#include <roughnessmap_fragment>\n  roughnessFactor = mix(roughnessFactor, mix(0.4, 0.3, goreDark), goreWet * uGore);\n  if (goreFR > 0.0) roughnessFactor = goreFR;');   // FIX gore-cmb: a wet sheen, not gloss paint · GORE-FIX4: carcass flesh matte-moist
     }
     sh.fragmentShader = f;
   };
@@ -773,11 +797,38 @@ export function sever(model, seg, { dir = null, sceneRoot = null } = {}) {
   for (const q of loc) if (q.distanceToSquared(A) > B.distanceToSquared(A)) B = q;
   const axis = B.clone().sub(A); if (axis.lengthSq() < 1e-6) axis.copy(out); axis.normalize();
   if (!loc.length) loc.push(new THREE.Vector3(0, -Math.max(0.06, len * 0.25) * 0.5, 0));
-  pieces.push({ pivot, copy, u: u2, vel, spin, rest: false, t: 0, r: Math.max(0.06, len * 0.25), drip: 0, loc, axis, settle: 0, q0: null, q1: null });
+  // GORE-FIX4: a severed human head keeps its own frame (crown up, face forward) so it comes to rest on a cheek or the
+  // back of the skull, never upright on the neck like a bust
+  let head = null;
+  if (seg === 1 && rec.rig === 'human') { const hq = bone.getWorldQuaternion(new THREE.Quaternion()); head = { up: new THREE.Vector3(0, 1, 0).applyQuaternion(hq), fw: new THREE.Vector3(0, 0, 1).applyQuaternion(hq) }; }
+  pieces.push({ pivot, copy, u: u2, vel, spin, rest: false, t: 0, r: Math.max(0.06, len * 0.25), drip: 0, loc, axis, settle: 0, q0: null, q1: null, head });
   while (pieces.length > POOL.pieces) dropPiece(pieces[0]);
   bloodBurst(jp, out, burstCount('high', true, true) * 0.8, { heavy: true, kill: true });
   groundSplat(jp.x, jp.z, 0.5, 'pool', { grow: [1.3, 5] });
   return { seg, pivot, cap };
+}
+// GORE-FIX4: the resting turn of a severed head: the crown points along the ground (keeping its heading), and it lies on
+// whichever side it fell nearest to: a cheek (most), the back of the skull, never the neck stump or the face.
+function headRest(p, n) {
+  const q0 = p.q0, up = _v.copy(p.head.up).applyQuaternion(q0), fw = _v2.copy(p.head.fw).applyQuaternion(q0);
+  const rt = new THREE.Vector3().crossVectors(up, fw).normalize();
+  const h = up.clone().addScaledVector(n, -up.dot(n)); if (h.lengthSq() < 0.02) h.copy(fw).addScaledVector(n, -fw.dot(n)); if (h.lengthSq() < 0.02) h.set(1, 0, 0).addScaledVector(n, -n.x); h.normalize();
+  // the side facing the ground: a cheek (right or left), else the back of the skull (face up, turned a little)
+  const sides = [rt.clone(), rt.clone().negate(), fw.clone().negate()].map((d, i) => ({ d, i, s: -d.dot(n) + (i === 2 ? -0.35 : 0) }));
+  const down = sides.sort((a, b) => b.s - a.s)[0];
+  // target frame: up → h, the chosen side → -n
+  const ups = _m.makeBasis(new THREE.Vector3().crossVectors(p.head.up, p.head.fw).normalize(), p.head.up, p.head.fw);   // head frame in pivot space at sever (pivot unrotated then)
+  const dl = down.i === 0 ? new THREE.Vector3(1, 0, 0) : down.i === 1 ? new THREE.Vector3(-1, 0, 0) : new THREE.Vector3(0, 0, -1);   // the side in the head frame
+  const tN = n.clone().negate(), tU = h, tX = new THREE.Vector3().crossVectors(tU, tN);   // world: side → tN, up → tU
+  // head-frame basis vectors (x=right, y=up, z=fwd) mapped to world
+  const L = [dl, new THREE.Vector3(0, 1, 0)], W = [tN, tU];
+  const lc = new THREE.Vector3().crossVectors(L[0], L[1]), wc = new THREE.Vector3().crossVectors(W[0], W[1]);
+  const mL = new THREE.Matrix4().makeBasis(L[0], L[1], lc), mW = new THREE.Matrix4().makeBasis(W[0], W[1], wc);
+  const R = mW.multiply(mL.transpose());                 // head frame → world rest frame
+  const qH = new THREE.Quaternion().setFromRotationMatrix(ups);   // head frame → pivot space
+  const tilt = new THREE.Quaternion().setFromAxisAngle(tU, (rnd() - 0.5) * 0.5);   // not perfectly square to the ground
+  void tX;
+  return tilt.multiply(new THREE.Quaternion().setFromRotationMatrix(R)).multiply(qH.invert());
 }
 function depthMat(u) {
   const m = new THREE.MeshDepthMaterial({ depthPacking: THREE.RGBADepthPacking });
@@ -806,12 +857,12 @@ export function leaveCarcass(model, { flesh = true, scale = 0.9, life = 120 } = 
   const copy = SkeletonUtils.clone(model);
   const u = newUniforms(); u.uFlesh.value = flesh && cfg.blood ? 0.86 : 0;
   if (rec) { u.uBS.value = rec.bs; u.uDown.value.copy(rec.u.uDown.value); u.uCut.value = rec.cut; rec.wounds.forEach((w, i) => { u.uW.value[i].set(w.p.x, w.p.y, w.p.z, w.r); u.uWet.value[i] = w.wet * 0.6; }); u.uWN.value = rec.wounds.length; }
+  const bodyG = rec?.body?.geometry; if (bodyG) { bodyG.boundingBox || bodyG.computeBoundingBox(); u.uFY.value.set(bodyG.boundingBox.min.y, bodyG.boundingBox.max.y); }   // GORE-FIX4: the hide line (knees)
   const mats = [];
   copy.traverse((o) => {
     if (o.isSkinnedMesh || (rec?.rig === 'mesh' && o.isMesh)) {
       const src = o.material; o.material = src.clone(); mats.push(o.material);
       const wounds = !SKIP_MAT.test(src.name || '');
-      if (flesh && cfg.blood && wounds) { o.material.roughness = 0.45; }
       patchWoundMaterial(o.material, { u, wounds }); if (u.uCut.value) o.customDepthMaterial = depthMat(u);
       o.castShadow = true; o.frustumCulled = false;
     } else if (o.isSprite || o.isPoints || o.isLight) o.visible = false;
@@ -822,7 +873,8 @@ export function leaveCarcass(model, { flesh = true, scale = 0.9, life = 120 } = 
   // scale ×0.9 about the ground point under the body, so it sinks a little rather than floating
   const base = new THREE.Vector3().setFromMatrixPosition(model.matrixWorld);
   g.position.copy(base); copy.position.sub(base); g.scale.setScalar(scale); g.add(copy);
-  carcasses.push({ g, copy, mats, t: 0, life, u });
+  g.updateMatrixWorld(true);
+  carcasses.push({ g, copy, mats, t: 0, life, u, foot: footprint(copy, base.y) });
   while (carcasses.length > POOL.carcasses) dropCarcass(carcasses[0]);
   return g;
 }
@@ -830,6 +882,18 @@ function dropCarcass(c) {
   const i = carcasses.indexOf(c); if (i >= 0) carcasses.splice(i, 1);
   c.g.parent?.remove(c.g); for (const m of c.mats) m.dispose();
 }
+// GORE-FIX4: the ground footprint of a posed body: [x, z, ...] of its vertices below 1.2 m over the ground (Sena keeps clear)
+export function footprint(root, gy, per = 700) {
+  const out = [], v = new THREE.Vector3();
+  root.updateMatrixWorld(true);
+  root.traverse((m) => {
+    if (!m.isMesh || !m.visible || !m.geometry?.attributes.position) return;
+    const pos = m.geometry.attributes.position, st = Math.max(1, Math.floor(pos.count / per));
+    for (let i = 0; i < pos.count; i += st) { v.fromBufferAttribute(pos, i); if (m.isSkinnedMesh) m.applyBoneTransform(i, v); v.applyMatrix4(m.matrixWorld); if (v.y < gy + 1.2) out.push(v.x, v.z); }
+  });
+  return new Float32Array(out);
+}
+export const carcassFeet = () => carcasses.filter((c) => c.g.visible).map((c) => c.foot);
 export const carcassList = () => carcasses.map((c) => ({ visible: c.g.visible, flesh: c.u.uFlesh.value, t: c.t, opacity: c.mats[0]?.opacity ?? 1 }));
 
 // ----- screen blood (DOM canvas #splat, half resolution)
@@ -964,6 +1028,7 @@ export function updateGore(dt, env = {}) {
           const h = new THREE.Vector3(aw.x, 0, aw.z); if (h.lengthSq() < 0.04) h.set(Math.cos(p.t * 7), 0, Math.sin(p.t * 7));
           h.addScaledVector(n, -h.dot(n)).normalize();
           p.q1 = new THREE.Quaternion().setFromUnitVectors(aw.normalize(), h).multiply(p.q0);
+          if (p.head) p.q1 = headRest(p, n);
           if (cfg.blood) groundSplat(p.pivot.position.x, p.pivot.position.z, 0.3, 'pool', { grow: [0.6, 6] });
         }
       }

@@ -218,7 +218,7 @@ const RECIPES = [
   { id: 'axe', name: 'Stone axe', desc: 'Lets you fell trees for timber.', cost: { stick: 1, stone: 2, fiber: 2 }, ch: 'shelter' },
   { id: 'hut', name: 'Thatch hut', desc: 'Shelter from the cold. Build it together, and rest there side by side.', cost: { wood: 12, fiber: 8 }, ch: 'shelter', place: true },
   { id: 'flintaxe', name: 'Flint axe', desc: 'A flint edge bites deep: trees fall in half the strokes.', cost: { flint: 3, stick: 2, fiber: 2 }, ch: 'cave' },
-  { id: 'bow', name: 'Hunting bow', desc: 'An ash stave with a twisted-fibre string and a hide grip. Key 5, hold right mouse to draw, release to loose.', cost: { wood: 2, fiber: 3, hide: 1 }, ch: 'herd' },   // BOW
+  { id: 'bow', name: 'Hunting bow', desc: 'An ash stave with a twisted-fibre string and a hide grip. Key 5, hold right mouse to draw, left click to loose; let go of right mouse to ease the string down.', cost: { wood: 2, fiber: 3, hide: 1 }, ch: 'herd' },   // BOW
   { id: 'quiver', name: 'Quiver', desc: 'A hide tube at the hip: carry 24 arrows instead of 8.', cost: { hide: 1, fiber: 2 }, ch: 'herd' },   // BOW
   { id: 'arrows', item: 'arrow', n: 3, name: 'Flint arrows ×3', desc: 'Straight shafts, flint points, fibre bindings. Arrows can be picked up again (E).', cost: { stick: 1, flint: 1, fiber: 1 }, ch: 'herd' },   // BOW
   { id: 'flintspear', name: 'Flint spear', desc: 'A flint point: your thrown spear strikes twice as hard.', cost: { flint: 2, stick: 2, fiber: 1 }, ch: 'cave' },
@@ -413,8 +413,8 @@ function fadeTo(text, mid, hold = 2600) {
 let saveFlash = 0;
 function save(opts = {}) {
   if (!playing || MAT.dead) return;                  // MAT: never write a save after a permadeath (pagehide/beforeunload too)
-  if (!opts.force && matHoldSave()) { MAT.saveHeld = true; return; }   // MAT-SV: Hardcore keeps the last calm save while a fight is on (pagehide, pause, autosave, quit)
-  MAT.saveHeld = false;
+  if (!opts.force && matHoldSave()) { MAT.saveHeld = true; matFightMark(); return; }   // MAT-SV: Hardcore keeps the last calm save while a fight is on (pagehide, pause, autosave, quit); MAT-SV r2: the fight mark beside it
+  MAT.saveHeld = false; matFightClear();             // MAT-SV r2: a calm save supersedes any fight mark
   S.chId = CH[S.ch]?.id || S.chId;                   // MAT: story v3 saves the chapter id
   S.structs = structs.map((s) => ({ k: s.kind, x: s.x, z: s.z, r: s.rot, g: s.grow, p: s.timed && s.rise < 1 ? +s.rise.toFixed(3) : undefined, h: s.hang?.length ? s.hang.map(([k, t]) => [k, +t.toFixed(1)]) : undefined }));   // WP2 p: site progress, h: rack
   S.px = P.pos.x; S.pz = P.pos.z; S.nx = N.pos.x; S.nz = N.pos.z;
@@ -1942,10 +1942,17 @@ function arcUpdate(charge) {
   if (hit) push(_at);
   const obst = hit === 'obst';                        // BOW
   ARC.n = n; ARC.hit = hit ? (hit === 'ground' || obst ? 'ground' : 'animal') : null; ARC.end.copy(hit && hit !== 'ground' && !obst ? hit.root.position : _at);
-  arcGeo.setDrawRange(0, n); arcGeo.attributes.position.needsUpdate = true; arcGeo.attributes.lineDistance.needsUpdate = true;
+  let n0 = 0;                                         // BOW-ARC: in first person the arc leaves from the eye: its near run piles up round the crosshair (a blurred disc of dots and halos)
+  if (view === 'fpp') for (let i = 0; i < n; i++) {  // so it starts only past the last point still within 4 m of the eye or within ~45 px of the crosshair
+    _w3.set(arcPos[i * 3], arcPos[i * 3 + 1], arcPos[i * 3 + 2]);
+    const far = _w3.distanceToSquared(camera.position) > 16; _w3.project(camera);
+    if (!far || _w3.z > 1 || Math.hypot(_w3.x * camera.aspect, _w3.y) < 0.125) n0 = i + 1;
+  }
+  ARC.n0 = n0;
+  arcGeo.setDrawRange(n0, Math.max(0, n - n0)); arcGeo.attributes.position.needsUpdate = true; arcGeo.attributes.lineDistance.needsUpdate = true;
   const mode = settings.arc ?? 'on', op = mode === 'off' ? 0 : mode === 'fade' ? 1 - THREE.MathUtils.clamp((charge - 0.7) / 0.3, 0, 1) : 1;
   const ok = !P.ride || Math.abs(wrapA(camFace() - P.face)) <= 2.1;
-  arcLine.visible = arcDots.visible = op > 0.01 && ok; arcRing.visible = !!hit && op > 0.01 && ok;
+  arcLine.visible = arcDots.visible = op > 0.01 && ok && n - n0 > 1; arcRing.visible = !!hit && op > 0.01 && ok;
   arcLine.material.opacity = 0.85 * op; arcDots.material.opacity = 0.95 * op; arcRing.material.opacity = 0.95 * op;
   arcHalo.material.opacity = 0.55 * op; arcRingHalo.material.opacity = 0.5 * op;
   arcRing.material.color.set(ARC.hit === 'animal' ? 0xff5a4a : 0xffd27a);       // WH: warm amber on the ground, red on game
@@ -2121,7 +2128,7 @@ function wpnSenaFetch(dt) {
 }
 
 // ----- BOW: bow and arrows. Key 5 readies the bow; hold right mouse to draw (reuses the spear's aim: camera, crosshair,
-// arc, strafe), release right mouse or click left to loose. Arrows fly on the aim arc, stick in game, the ground and
+// arc, strafe), click left to loose; letting go of right mouse eases the string down, no arrow spent. Arrows fly on the aim arc, stick in game, the ground and
 // raiders, and are picked up with E. Friendlies are never in the hit test (spearStep only sees wild animals and raiders).
 const BOW = { on: false, arrows: [], drawT: 0 };
 const bowMesh = makeBow(), quiverMesh = makeQuiver(), nockArrow = makeArrow();
@@ -2138,7 +2145,7 @@ function bowToggle() {
     if (W.st !== 'sheathed') wpnStowAll('switch', true);
     if (torchOn) toggleTorch();
     W.sel = 'fists';
-    toast(S.inv.arrow > 0 ? `Bow ready · ${S.inv.arrow} arrows · hold right mouse to draw` : 'Bow ready, but you have no arrows');
+    toast(S.inv.arrow > 0 ? `Bow ready · ${S.inv.arrow} arrows · hold right mouse to draw, click to loose` : 'Bow ready, but you have no arrows');
   } else { if (W.aim) wpnCancelAim(); }
   A.hit(1500, 0.05, 0.06); drawInv();
 }
@@ -2192,28 +2199,67 @@ function bowLandGround(ar) {
 }
 // The arrow's own step: the spear's (game, raiders, ground), then tree trunks, boulders and buildings. The arc preview
 // uses it too while the bow is drawn, so the arc stops where the arrow will.
-const BOWOB = { k: null, n: null };
+const BOWOB = { k: null, n: null, stamp: 0 };
+const _bS0 = new THREE.Vector3(), _bS1 = new THREE.Vector3(), _bSp = new THREE.Vector3();
+// BOW-SWEEP: an arrow covers ~1 m per 1/60 s step, more than a trunk is wide, so the obstacles are tested against the
+// whole segment the point swept this step (from where it was to where it is), not just where it ends up.
 function bowStep(pos, vel, tip, ar) {
-  const r = spearStep(pos, vel, tip); if (r) return r;
-  if ((ar && ar.noOb > 0 && ar.noOb--) || BOW.noObst) return null;   // noObst: test switch (G.bow.BOW) for damage tests in wooded spots
-  const t = tip, cell = bowCell(t.x, t.z);
-  if (cell) for (const [k, n] of cell) {
+  const a = _bS0.copy(vel).normalize().multiplyScalar(SP_TIP).add(pos);   // the point before the step
+  const r = spearStep(pos, vel, tip); if (r && r !== 'ground') return r;
+  if ((ar && ar.noOb > 0 && ar.noOb--) || BOW.noObst) return r;   // noObst: test switch (G.bow.BOW) for damage tests in wooded spots
+  const b = _bS1.copy(tip);                          // the point after it (spearStep may have stopped short at the ground: still tested to here)
+  const ob = bowSweep(a, b);
+  if (ob) { tip.copy(ob); pos.copy(tip).addScaledVector(_bSp.copy(vel).normalize(), -SP_TIP); return 'obst'; }
+  return r;
+}
+// The first obstacle the segment a->b meets (trunk, boulder, building wall), or null; its entry point in a shared vector.
+const _bSh = new THREE.Vector3();
+function bowSweep(a, b) {
+  const dx = b.x - a.x, dy = b.y - a.y, dz = b.z - a.z, L2 = dx * dx + dz * dz;
+  let best = 2, bk = null, bn = null;
+  // a vertical cylinder (centre cx,cz, radius rr, from y0 to y1): first u in [0,1] where the segment is inside it
+  const cyl = (cx, cz, rr, y0, y1) => {
+    const fx = a.x - cx, fz = a.z - cz, c = fx * fx + fz * fz - rr * rr;
+    let u;
+    if (c <= 0) u = 0;
+    else {
+      if (L2 < 1e-9) return 2;
+      const bb = fx * dx + fz * dz, disc = bb * bb - L2 * c;
+      if (disc < 0) return 2;
+      u = (-bb - Math.sqrt(disc)) / L2;
+      if (u < 0 || u > 1) return 2;
+    }
+    const y = a.y + dy * u;
+    if (y > y0 && y < y1) return u;
+    return 2;
+  };
+  const stamp = ++BOWOB.stamp;                       // each obstacle once, though it sits in several cells
+  for (const cell of [bowCell(a.x, a.z), bowCell(b.x, b.z), bowCell(a.x, b.z), bowCell(b.x, a.z)]) if (cell) for (const e of cell) {
+    if (e.st === stamp) continue; e.st = stamp;
+    const [k, n] = e;
     if (!n.alive) continue;
-    const dx = t.x - n.x, dz = t.z - n.z;
-    if (k === 'rock') {
-      const rr = 1.15 * n.s, dy = (t.y - n.y) / (1.05 * n.s);
-      if (dy < 1 && (dx * dx + dz * dz) / (rr * rr) + Math.max(0, dy) ** 2 < 1) { BOWOB.k = 'rock'; BOWOB.n = n; return 'obst'; }
+    if (k === 'rock') {                              // an ellipsoid-topped mound: sampled every 0.2 m along the segment
+      const steps = Math.max(1, Math.ceil(Math.sqrt(L2 + dy * dy) / 0.2));
+      for (let i = 1; i <= steps; i++) {
+        const u = i / steps; if (u >= best) break;
+        _bSh.set(a.x + dx * u, a.y + dy * u, a.z + dz * u);
+        if (bowInObst('rock', n, _bSh) && _bSh.y - n.y < 1.05 * n.s) { best = u; bk = 'rock'; bn = n; break; }
+      }
     } else {
-      const rr = 0.27 * n.s;
-      if (dx * dx + dz * dz < rr * rr && t.y > n.y - 0.2 && t.y < n.y + 5 * n.s) { BOWOB.k = 'tree'; BOWOB.n = n; return 'obst'; }
+      const u = cyl(n.x, n.z, 0.27 * n.s, n.y - 0.2, n.y + 5 * n.s);
+      if (u < best) { best = u; bk = 'tree'; bn = n; }
     }
   }
   for (const st of structs) {
     const c = st.col; if (!c || c.off) continue;
-    const dx = t.x - c.x, dz = t.z - c.z;
-    if (dx * dx + dz * dz < c.r * c.r && t.y < st.group.position.y + 2.3) { BOWOB.k = 'wood'; BOWOB.n = c; return 'obst'; }
+    if ((a.x - c.x) ** 2 + (a.z - c.z) ** 2 > (c.r + 2) ** 2 && (b.x - c.x) ** 2 + (b.z - c.z) ** 2 > (c.r + 2) ** 2) continue;
+    const u = cyl(c.x, c.z, c.r, -1e9, st.group.position.y + 2.3);
+    if (u < best) { best = u; bk = 'wood'; bn = c; }
   }
-  return null;
+  if (!bk) return null;
+  BOWOB.k = bk; BOWOB.n = bn;
+  const u = Math.min(1, best + 0.02);                // just inside the surface (bowLandObst backs out to it)
+  return _bSh.set(a.x + dx * u, a.y + dy * u, a.z + dz * u);
 }
 // Trunks and boulders bucketed on a 6 m grid (built on first use; felled trees stay in it, skipped by n.alive), so a
 // step tests a handful of obstacles, not every tree in the valley (the arc preview runs up to 180 steps a frame).
@@ -2553,7 +2599,7 @@ function wpnTorch() {
 }
 // Sena: the carry basket on her back from the Shelter chapter; the old stone spear behind it once Aro has flint.
 function wpnSena(dt) {
-  const hide = (N.rest > 0 && !R.nOut) || !!N.ride || N.sit > 0 || seatedPose(N.h) || !!N.soak || !!N.soakOut || !!N.working || N.h.pose === 'work' || N.h.pose === 'dance';   // integration: R.nOut = walking out after a night, carrying them again
+  const hide = (N.rest > 0 && !R.nOut) || !!N.ride || N.sit > 0 || seatedPose(N.h) || !!N.soak || !!N.soakOut || !!N.working || N.h.pose === 'work' || N.h.pose === 'dance' || !!ROM.fkHold;   // ARC-FIX4: no basket in the first-kiss beat; integration: R.nOut = walking out after a night, carrying them again
   if (!W.props) senaBasket.visible = reached('shelter') && !hide;
   N.h.spear.visible = !!S.tools.flintspear && !hide && !W.props;
   if (N.h.spear.userData.slot !== 'back') N.h.place(N.h.spear, 'back');
@@ -4823,6 +4869,52 @@ function matQuitUi() {                               // MAT-SV: the pause menu's
   b.textContent = f ? 'Save & quit: not during a fight' : 'Save & quit to title';
   b.title = f ? 'Hardcore saves only when no enemy is near. Closing the game now returns you to your last calm save.' : '';
 }
+// MAT-SV r2: closing or reloading the tab mid-fight in Hardcore. The calm save stays as it is and a fight mark goes beside it
+// (localStorage, tied to that save's savedAt): Aro's hp, downed time and position, Sena's state and every hostile within 45 m.
+// Continue from that save puts the fight back exactly (downed stays downed), so a reload is never a way out of a losing fight.
+const HC_FIGHT_KEY = 'hearthborn-hc-fight';
+function matFightMark() {
+  if (!matHoldSave() || MAT.dead || !S.savedAt) return;
+  const near = (x, z) => Math.hypot(x - P.pos.x, z - P.pos.z) < 45;
+  const beasts = animals.filter((o) => (o.kind === 'wolf' || o.hostile) && o.state === 'live' && !o.leave && near(o.root.position.x, o.root.position.z))
+    .map((o) => ({ k: o.kind, a: o.alpha ? 1 : 0, x: +o.root.position.x.toFixed(2), z: +o.root.position.z.toFixed(2), hp: Number.isFinite(o.hp) ? +o.hp.toFixed(1) : null }));
+  const men = ARCS.raidFight ? [] : foes.filter((f) => f.live && !f.fled && near(f.pos.x, f.pos.z))   // the story raid resumes itself (arcRaidFight)
+    .map((f) => ({ x: +f.pos.x.toFixed(2), z: +f.pos.z.toFixed(2), hp: Number.isFinite(f.hp) ? +f.hp.toFixed(1) : null, chief: f.chief ? 1 : 0 }));
+  const m = { base: S.savedAt, at: Date.now(), hp: +Math.max(0, S.hp).toFixed(1), down: P.downed > 0 ? +P.downed.toFixed(1) : 0, why: MAT.downWhy || null,
+    nhp: +S.nhp.toFixed(1), ndown: N.downed > 0 ? 1 : 0, px: +P.pos.x.toFixed(2), pz: +P.pos.z.toFixed(2), nx: +N.pos.x.toFixed(2), nz: +N.pos.z.toFixed(2), beasts, men };
+  try { localStorage.setItem(HC_FIGHT_KEY, JSON.stringify(m)); } catch {}
+}
+function matFightClear() { try { localStorage.removeItem(HC_FIGHT_KEY); } catch {} }
+function matFightResume(data) {                      // start(), after matStart: Continue from a save that was left mid-fight
+  let m = null; try { m = JSON.parse(localStorage.getItem(HC_FIGHT_KEY) || 'null'); } catch {}
+  if (!m) return null;
+  if (!data || m.base !== data.savedAt || D().saves !== 'auto') { matFightClear(); return null; }
+  P.pos.set(m.px, 0, m.pz); N.pos.set(m.nx, 0, m.nz); P.vx = P.vz = 0;
+  if (P.ride) dismount();
+  S.hp = Math.min(S.hp, m.hp); S.nhp = Math.min(S.nhp, m.nhp);
+  world.setTime(S.time, P.pos, camera);             // the title's daylight is still in env: by day the wolves would turn for the pines at once
+  const wolves = [];
+  for (const b of [...(m.beasts || [])].sort((p, q) => q.a - p.a)) {   // the alpha first: PRED.pack makes the first wolf the alpha
+    let o = null;
+    if (b.k === 'bear') o = cmbSpawn('bear', b.x, b.z, { keepHp: true });
+    else if (b.k === 'aurochs') o = cmbSpawn('aurochs', b.x, b.z);
+    else o = spawn(b.k, b.x, b.z, b.k === 'wolf' ? {} : { hostile: true });
+    if (!o) continue;
+    if (b.k === 'wolf') wolves.push([o, b]);
+    else if (Number.isFinite(b.hp)) o.hp = Math.min(o.hp ?? b.hp, b.hp);
+  }
+  if (wolves.length) {
+    PRED.pack(wolves.map((w) => w[0]));
+    if (wolves[0][1].a && !wolves[0][0].alpha) PRED.makeAlpha(wolves[0][0]);
+    for (const [o, b] of wolves) { if (Number.isFinite(b.hp)) o.hp = Math.min(o.hp ?? b.hp, b.hp); o.hostile = true; }
+  }
+  for (const f of m.men || []) { const r = spawnRaider(f.x, f.z, { mode: 'combat', chief: !!f.chief }); if (r && Number.isFinite(f.hp)) r.hp = Math.min(r.hp ?? f.hp, f.hp); }
+  if (m.ndown) cmbSenaDown(null);
+  if (m.down > 0) { S.hp = 1; die(m.why || 'The fight you left was still waiting.'); if (P.downed > 0) P.downed = Math.max(4, m.down); }
+  MAT.saveHeld = true;
+  setTimeout(() => toast('Hardcore: you left in the middle of a fight. It is still here.'), 900);
+  return m;
+}
 function matDressing() { return ['bandage', 'hidebandage', 'ypoultice', 'poultice'].find((k) => S.inv[k] > 0) || null; }
 function canBeDowned(inWater = false) {
   if ((P.swim && !inWater) || P.ride || N.downed > 0 || N.ride && P.ride) return false;
@@ -5005,7 +5097,7 @@ function permadeath(why, who = 'P') {
   const entry = matStoneEntry(why, who);
   MATD.pushStone(entry);                             // the memorial first, then the save goes
   try { localStorage.setItem('hearthborn-perma-dead', String(Date.now())); } catch {}   // a tombstone: an older server copy can never be continued
-  deleteGame();
+  deleteGame(); matFightClear();                     // MAT-SV r2
   MAT.end = { who, fallen, mourner, entry, placed: false, lines: GRIEF[who === 'N' ? 'N' : 'P'], said: 0, hold: 0 };
   emit('died', { who, cause: why });
   $('fade-text').textContent = ''; $('fade').classList.add('on');
@@ -5032,7 +5124,7 @@ function matEndTick(dt) {
   }
   if (E.placed && !E.knelt && MAT.endT > 0.8) {      // still dark, the body has settled: the other kneels at the chest
     E.knelt = true;
-    const k = matKneelSpot(fallen, mourner.pos);
+    const k = matKneelSpot(fallen, mourner.pos); E.kneel = [...k];   // MAT-GRIEF r2: the shot is built on this line
     mourner.pos.set(k[0], 0, k[1]); mourner.face = Math.atan2(k[2] - k[0], k[3] - k[1]);
     mourner.h.pose = 'work';
     mourner.h.addOverride('matHold', 30, (h) => {    // a hand finds theirs
@@ -5046,19 +5138,25 @@ function matEndTick(dt) {
   if (fallen === P) settle(P, dt, false); else { P.h.pose = 'work'; settle(P, dt, false); }
   if (MAT.endT > T0 && !E.lit) { E.lit = true; $('fade').classList.remove('on'); }
   if (E.lit && E.said < E.lines.length && MAT.endT > T0 + 0.6 + E.said * 2.6) say(...E.lines[E.said++]);
-  // the camera: on the mourner's face (a slow push in), then up and past them to the sky
+  // the camera: MAT-GRIEF r2. Low, across the fallen body, on the mourner's face (she or he kneels at the chest and looks
+  // down at it, so a lens behind or above them saw only the back of a bowed head); a slow push in, then up and away to the
+  // sky. The long grass is trodden flat round the two of them and along the lens line (blades used to fill the frame).
   const hd = mourner.h.bones.Head;
   if (hd) hd.getWorldPosition(_mPt2); else _mPt2.set(mourner.pos.x, mourner.pos.y + 0.9, mourner.pos.z);
-  if (!E.fx && E.knelt && MAT.endT > T0 - 0.4) {     // where the face really points (the kneel clip turns the body): the Head's +Z
-    let fx = Math.sin(mourner.face), fz = Math.cos(mourner.face);
-    if (hd) { _mDir2.set(0, 0, 1).applyQuaternion(hd.getWorldQuaternion(_mq)); const l = Math.hypot(_mDir2.x, _mDir2.z); if (l > 0.3) { fx = _mDir2.x / l; fz = _mDir2.z / l; } }
-    E.fx = [fx, fz];
+  if (!E.fx && E.knelt) {
+    const k = E.kneel || [mourner.pos.x, mourner.pos.z, fallen.pos.x, fallen.pos.z];
+    let fx = k[2] - k[0], fz = k[3] - k[1]; const l = Math.hypot(fx, fz) || 1; fx /= l; fz /= l;   // mourner -> the chest
+    let side = 1;                                    // three-quarter: the side with a clear line (no trunk, boulder or wall)
+    for (const sd of [1, -1]) { const cx = k[0] + fx * 1.9 + fz * 0.7 * sd, cz = k[1] + fz * 1.9 - fx * 0.7 * sd; if (!arcCamBlocked(k[0], k[1], cx, cz)) { side = sd; break; } }
+    E.fx = [fx, fz]; E.side = side;
+    world.clear(k[2], k[3], 2.8);                    // round the two of them
+    for (let t = 1.2; t <= 3.4; t += 0.7) world.clear(k[0] + fx * t + fz * 0.36 * t * side, k[1] + fz * t - fx * 0.36 * t * side, 1.3);   // the lens line
   }
-  const [fx, fz] = E.fx || [Math.sin(mourner.face), Math.cos(mourner.face)], rx = fz, rz = -fx;
-  const u1 = clamp((MAT.endT - T0) / 4, 0, 1), u2 = smooth01((MAT.endT - T0 - 3.5) / (T1 - T0 - 3.5));
-  const c = MAT.cam, d = 1.45 - u1 * 0.3 + u2 * 1.4;
-  c.pos.set(_mPt2.x + fx * d + rx * 0.55, _mPt2.y + 0.3 + u2 * 1.8, _mPt2.z + fz * d + rz * 0.55);
-  c.look.set(_mPt2.x - fx * u2 * 16, _mPt2.y - 0.15 + u2 * 7, _mPt2.z - fz * u2 * 16);
+  const [fx, fz] = E.fx || [Math.sin(mourner.face), Math.cos(mourner.face)], rx = fz * (E.side || 1), rz = -fx * (E.side || 1);
+  const u1 = smooth01(clamp((MAT.endT - T0) / 4.5, 0, 1)), u2 = smooth01((MAT.endT - T0 - 4) / (T1 - T0 - 4));
+  const c = MAT.cam, d = 2.05 - u1 * 0.4 + u2 * 1.6, gy = Math.max(getHeight(_mPt2.x + fx * d, _mPt2.z + fz * d), 0.1);
+  c.pos.set(_mPt2.x + fx * d + rx * (0.72 - u1 * 0.12), Math.max(gy + 0.62, _mPt2.y - 0.22) + u2 * 2.2, _mPt2.z + fz * d + rz * (0.72 - u1 * 0.12));
+  c.look.set(_mPt2.x - fx * u2 * 16, _mPt2.y - 0.12 + u2 * 7, _mPt2.z - fz * u2 * 16);
   c.t = 1; if (camShot !== c) { camShot = c; c.snap = undefined; }
   if (MAT.endT > T1 && !E.dark) { E.dark = true; $('fade').classList.add('on'); }
   if (MAT.endT > T2 && !E.obit) { E.obit = true; matShowObit(E.entry); }
@@ -5237,6 +5335,7 @@ function matGate(show) {
   $('gate').classList.toggle('on', show);
   $('title').classList.toggle('gated', show && !playing);
   for (const id of ['btn-new', 'btn-continue', 'btn-stones']) { const b = $(id); if (show && !playing) { b.tabIndex = -1; b.setAttribute('aria-disabled', 'true'); } else { b.removeAttribute('tabindex'); b.removeAttribute('aria-disabled'); } }
+  $('btn-new').disabled = !!(show && !playing);      // MAT-GATE (spec M1.1): disabled while the 21+ notice is up
   if (show) setTimeout(() => $('gate-ok').focus(), 50);
 }
 
@@ -5863,10 +5962,30 @@ function goreLookAway() {
   clearTimeout(GS.dipT); GS.dipT = setTimeout(() => { el.style.transition = 'opacity .3s'; el.style.opacity = '0'; }, 420);
 }
 // Sena never stands inside an animal, live or dead: pushed out of its body ellipse (plus 0.3 m).
+// GORE-FIX4: a dead body (and a butchered carcass) is not the standing ellipse: a toppled bear's legs and back spread past
+// it. She keeps 0.4 m from every vertex of its posed footprint (sampled while it settles, then cached).
+function senaFootPush(f) {
+  const R = 0.4, nx0 = N.pos.x, nz0 = N.pos.z; let sx = 0, sz = 0, dmin = 9, cx = 0, cz = 0, n = 0;
+  for (let i = 0; i < f.length; i += 2) {
+    const dx = nx0 - f[i], dz = nz0 - f[i + 1]; if (Math.abs(dx) > 3 || Math.abs(dz) > 3) continue;
+    cx += f[i]; cz += f[i + 1]; n++;
+    const d = Math.hypot(dx, dz); if (d >= R) continue;
+    dmin = Math.min(dmin, d); const w = (R - d) / (d || 1e-3); sx += dx * w; sz += dz * w;
+  }
+  if (dmin >= R || !n) return;
+  let l = Math.hypot(sx, sz);
+  if (l < 1e-3) { sx = nx0 - cx / n; sz = nz0 - cz / n; l = Math.hypot(sx, sz) || 1; }   // deep inside: straight out from its middle
+  const k = Math.min(0.25, R - dmin + 0.02); N.pos.x += (sx / l) * k; N.pos.z += (sz / l) * k;
+}
 function senaBodyPush() {
   if (N.rest > 0 || N.sit > 0 || N.ride || N.board || N.seat || N.downed > 0 || MAT.rescuing || N.swim) return;
   for (const o of animals) {
-    if (o === P.ride || o.looted || !o.root.visible || Math.hypot(o.root.position.x - N.pos.x, o.root.position.z - N.pos.z) > 4) continue;
+    if (o === P.ride || o.looted || !o.root.visible || Math.hypot(o.root.position.x - N.pos.x, o.root.position.z - N.pos.z) > (o.state === 'dead' ? 5 : 4)) continue;
+    if (o.state === 'dead') {                       // GORE-FIX4: the fallen body's real footprint
+      if (!o.gfoot || (o.gfootT || 0) < 6 && o.deadT - (o.gfootT || 0) > 0.4) { o.gfoot = GR.footprint(o.a.model, getHeight(o.root.position.x, o.root.position.z)); o.gfootT = o.deadT; }
+      senaFootPush(o.gfoot); continue;
+    }
+    o.gfoot = null; o.gfootT = 0;
     const g = goreBodyGap(o, N.pos.x, N.pos.z), m = 0.3 - g.d;
     if (m > 0) {
       const dx = N.pos.x - g.x, dz = N.pos.z - g.z, l = Math.hypot(dx, dz) || 1, nx = dx / l, nz = dz / l;
@@ -5876,6 +5995,7 @@ function senaBodyPush() {
       if ((P.pos.x - N.pos.x) * nx + (P.pos.z - N.pos.z) * nz < 0) { N.pos.x += -nz * sd * k; N.pos.z += nx * sd * k; }
     }
   }
+  if (GS.init) for (const f of GR.carcassFeet()) senaFootPush(f);   // GORE-FIX4: a butchered carcass too
 }
 // The first raid wave carries lit torches down the hill (Sena: "Only the torches"). No new lights (CMB §5.9: a light
 // recompiles every material); the flame and a wide glow read from 40 m in the dark, the lead two carry a bigger glow.
@@ -6356,37 +6476,82 @@ function romFirstKissFallback() {
   const fv = chIdx('fever');
   return fv < 0 || settings.matureStory === false || !!S.arc?.legacy || S.ch > fv;
 }
+// ARC-FIX4: the first kiss is one staged beat, start to end: letterbox and HUD away, the two of them held face to face
+// in a side-on two-shot (Sena no longer walks off to gather stones), the choice over that shot, the kiss, and the
+// lines after it; only then do the camera, the HUD and Sena go back to the game (and the chapter may turn).
+function romFkCam() {
+  if (view === 'fpp' || (P.sit > 0 && camShot)) return;   // first person keeps his eyes; a fire sit keeps its own two-shot
+  const ux = N.pos.x - P.pos.x, uz = N.pos.z - P.pos.z, d = Math.hypot(ux, uz) || 1;
+  const sc = { mid: new THREE.Vector3((P.pos.x + N.pos.x) / 2, 0, (P.pos.z + N.pos.z) / 2), u: new THREE.Vector3(ux / d, 0, uz / d), o: {} };
+  const [pos, lk] = romCam(sc, 'embrace');
+  R.lastLook = null; rstShot(pos, lk, 1.1);
+}
+function romFkStage(on) {
+  if (on) {
+    if (P.sit <= 0 && N.sit <= 0) {                 // standing: a step apart, face to face
+      const ux = N.pos.x - P.pos.x, uz = N.pos.z - P.pos.z, d = Math.hypot(ux, uz);
+      if (d < 0.9 || d > 1.6) { const nx = d > 0.01 ? ux / d : Math.sin(P.face), nz = d > 0.01 ? uz / d : Math.cos(P.face); N.pos.set(P.pos.x + nx * 1.15, 0, P.pos.z + nz * 1.15); collide(N.pos, 0.3); }
+      P.face = Math.atan2(N.pos.x - P.pos.x, N.pos.z - P.pos.z); N.face = P.face + Math.PI;
+      P.vx = P.vz = 0; P.speed = 0; P.auto = false; N.path = null; N.node = null; N.act = 0; N.fetch = null; N.speed = 0; if (N.h.pose !== 'sit') N.h.pose = null;
+    }
+    ROM.fkHold = true; busy = true; for (const k in keys) keys[k] = false;
+    $('prompt').style.display = 'none';
+    if (!$('hud').classList.contains('cine')) { ROM.fkCine = true; cine(true); }
+    romFkCam();
+  } else {
+    ROM.fkHold = false; busy = false; $('choice').classList.remove('low');
+    if (ROM.fkCine) { ROM.fkCine = false; if (!ROM.nightOn && !R.on) cine(false); }
+    if (camShot?.dolly) camShot = { release: true, from: camPos.clone(), lookFrom: (R.lastLook || look).clone(), k: 0, dur: 1.2 };
+    if (playing && !paused && !MAT.choice) lock();
+  }
+}
+// updateSena (from arcSena): while the beat is on she stays where she is, turned to him
+function romFkHoldTick(dt) {
+  if (!ROM.fkHold || ROM.scene) return false;
+  N.speed = 0; N.path = null; N.node = null; N.act = 0; N.fetch = null;
+  if (!(N.sit > 0)) N.face = turn(N.face, Math.atan2(P.pos.x - N.pos.x, P.pos.z - N.pos.z), Math.min(1, dt * 5));
+  settle(N, dt, false);
+  return true;
+}
 async function romFirstKiss(ctx = 'fever') {
   if (S.rom.firstKiss != null || ROM.fk) return false;
   ROM.fk = true; ROM.music = true;
   arcCalmClear();                                    // ARC-FIX
+  let staged = false;
   try {
+    while (busy && !ROM.fkHold && (ARCS.vigilOn || MAT.choice || ROM.scene || R.on)) await romSleep(200);   // ARC-FIX4: the vigil hands over first (its fade stands them at the door)
     if (romDist() > 6) N.pos.set(P.pos.x + Math.sin(P.face) * 1.1, 0, P.pos.z + Math.cos(P.face) * 1.1);
+    romFkStage(true); staged = true;
     const lead = ctx === 'fever' ? ROMD.L.firstFever : S.rom.kissOffer ? ROMD.L.firstAgain : ROMD.L.firstFire;
     if (romSetting() !== 'off' || ctx === 'fever') lead.forEach((l) => say(...l));   // ARC-FIX: Romance Off: only the fever morning's (tender, not romantic) lines
     await romWaitSubs();
-    while (busy && !MAT.choice) await romSleep(200);
     if (romSetting() === 'off') {                     // ARC-FIX: Romance Off (spec 2.6): no kiss or hand choice; a quiet beat, the story carries on
       S.rom.kissOffer = false; S.rom.fkQuiet = S.day || 1; romShared();   // (firstKiss stays unset: with romance back on, the fire offers it later)
       addClose(5, 'a quiet morning together');
       say('Sena', 'Stay a while. Just sit with me.'); say('Aro', 'As long as you want.');
       emit('romance', { kind: 'firstKiss', off: true });
+      await romWaitSubs();
       return false;
     }
+    $('choice').classList.add('low');                // ARC-FIX4: the panel sits under their faces, not over them
     const i = await choose('firstkiss', 'Sena', [{ label: 'Kiss her' }, { label: 'Hold her hand' }], { def: 1, note: 'She is waiting for you.' });
+    $('choice').classList.remove('low');
     if (i === 0) {
       S.rom.firstKiss = S.day || 1; S.rom.kissOffer = false; S.rom.kisses = (S.rom.kisses || 0) + 1; S.rom.dayCaps.kiss = S.day; romShared();
       addClose(10, 'your first kiss');
-      if (romSetting() !== 'off' && !romKidNear()) await romSceneStart('kiss', { lines: null });
+      if (romSetting() !== 'off' && !romKidNear()) { ROM.fkHold = false; busy = false; await romSceneStart('kiss', { lines: null, keepCam: true }); romFkStage(true); }
       ROMD.L.firstKissAfter.forEach((l) => say(...l));
       emit('romance', { kind: 'firstKiss' });
+      await romWaitSubs();                           // ARC-FIX4: the lines after the kiss stay inside the beat
     } else {
       S.rom.kissOffer = true; addClose(5, 'held her hand'); romShared();
       ROMD.L.firstHandAfter.forEach((l) => say(...l));
+      await romWaitSubs();
+      romFkStage(false); staged = false;
       if (romSetting() !== 'off') romHand(true, true);
     }
     return i === 0;
-  } finally { ROM.fk = false; setTimeout(() => { ROM.music = false; }, 8000); }
+  } finally { if (staged) romFkStage(false); ROM.fk = false; setTimeout(() => { ROM.music = false; }, 8000); }
 }
 
 // ----- the fire: one shared bench (40+), her head on his shoulder (80+); heart events and the first-kiss fallback
@@ -7540,6 +7705,8 @@ function arcCloseUp(who, other, d = 3.6, side = 1) {
   // ARC-FIX: a seated speaker (Tamu or Sena on the fire bench) is framed from in front of their own face, low and
   // close, on the near side of the fire (the shot through the fire and the grass showed a headless figure on a log)
   const seated = who.mode === 'sit' || (who === N && (N.sit > 0 || N.h.pose === 'sit' || N.h.pose === 'sitTalk' || !!N.seat));
+  const fr = seated && structs.find((q) => q.kind === 'fire' && Math.hypot(q.x - a.x, q.z - a.z) < 3.2);   // ARC-FIX4: on a fire bench: shot round the ring, never across the flames
+  if (fr) { arcFireCloseUp(who, fr); return; }
   const ang0 = seated ? who.face : Math.atan2(dx, dz), low = seated ? 0.55 : 0;
   if (seated) { d = 1.9; side *= 0.65; } else d = Math.min(d, Math.max(2.2, L - 1.2));
   // ARC-FIX: never inside or behind a trunk, a boulder or a wall (the outcast shot was inside the Great Tree): swing
@@ -7552,6 +7719,46 @@ function arcCloseUp(who, other, d = 3.6, side = 1) {
   }
   const cy = Math.max(getHeight(cx, cz), 0.25) + (seated ? 1.05 : 1.5);   // never under the bank or the water
   camShot = ARCS.shot = { pos: new THREE.Vector3(cx, Math.max(cy, gy + 1.45 * k - low * 0.55), cz), look: new THREE.Vector3(a.x, gy + (seated ? 1.1 : 1.42 * k), a.z), t: 60 };
+}
+// ARC-FIX4: someone seated at a fire, framed from a point on a ring round the fire ~60 degrees round from them: a
+// three-quarter face at eye level, the flames off to the side (not in front), nobody else in the line, the trodden
+// ring round the fire clear of tall grass (a blade covered Sena's face).
+function arcFireGrass(f) { if (!f.arcGrass) { f.arcGrass = true; world.clear(f.x, f.z, 4.8); } }
+function arcLineHits(ax, az, cx, cz, skip) {        // a person within 0.5 m of the segment (subject excluded)
+  const L = Math.hypot(cx - ax, cz - az) || 1;
+  for (const e of [P, N, ...ARCS.npcs.filter((q) => !q.hidden && q.mode !== 'dead')]) {
+    if (e === skip || !e.pos) continue;
+    const t = clamp(((e.pos.x - ax) * (cx - ax) + (e.pos.z - az) * (cz - az)) / (L * L), 0, 1);
+    if (t > 0.12 && Math.hypot(ax + (cx - ax) * t - e.pos.x, az + (cz - az) * t - e.pos.z) < 0.5) return true;
+  }
+  return false;
+}
+function arcFireCloseUp(who, f) {
+  arcFireGrass(f);
+  const a = who.pos, th = Math.atan2(a.x - f.x, a.z - f.z), r = Math.hypot(a.x - f.x, a.z - f.z), rc = Math.max(1.4, r * 0.78);   // inside their ring: the face, not the back
+  const gy = Math.max(getHeight(a.x, a.z), 0.2);
+  let best = null, bs = -1e9;
+  for (const d of [0.95, -0.95, 1.2, -1.2, 0.75, -0.75]) {
+    const an = th + d, cx = f.x + Math.sin(an) * rc, cz = f.z + Math.cos(an) * rc;
+    let sc = -Math.abs(Math.abs(d) - 0.95);
+    if (arcLineHits(a.x, a.z, cx, cz, who)) sc -= 4;
+    if (arcCamBlocked(a.x, a.z, cx, cz)) sc -= 6;
+    if (sc > bs) { bs = sc; best = [cx, cz]; }
+  }
+  const cy = Math.max(gy + 1.2, getHeight(best[0], best[1]) + 0.9);
+  camShot = ARCS.shot = { pos: new THREE.Vector3(best[0], cy, best[1]), look: new THREE.Vector3(a.x + (f.x - a.x) * 0.06, gy + 0.98, a.z + (f.z - a.z) * 0.06), t: 60 };
+}
+// The two of them on the benches, from across the fire and a little above it (the flames low in the frame, between them).
+function arcFireTwoShot(f, e1, e2) {
+  arcFireGrass(f);
+  const bx = (e1.pos.x + e2.pos.x) / 2 - f.x, bz = (e1.pos.z + e2.pos.z) / 2 - f.z, th = Math.atan2(bx, bz) + Math.PI, gy = Math.max(getHeight(f.x, f.z), 0.2);
+  let best = null;
+  for (const d of [0, 0.3, -0.3, 0.6, -0.6]) {
+    const an = th + d, cx = f.x + Math.sin(an) * 3.6, cz = f.z + Math.cos(an) * 3.6;
+    best ||= [cx, cz];
+    if (!arcLineHits(f.x, f.z, cx, cz, null) && !arcCamBlocked(f.x, f.z, cx, cz)) { best = [cx, cz]; break; }
+  }
+  camShot = ARCS.shot = { pos: new THREE.Vector3(best[0], Math.max(gy + 1.75, getHeight(best[0], best[1]) + 1.4), best[1]), look: new THREE.Vector3(f.x + bx, gy + 0.72, f.z + bz), t: 60 };
 }
 // ARC-FIX: is the line from a subject at (ax, az) to a lens at (cx, cz) inside a collider (trunk, rock, wall)?
 const _acb = new THREE.Vector3();
@@ -8161,9 +8368,9 @@ function arcSling() {
   if (A.slingSeen || arcDist(P.pos, pr.x, pr.z) > 9) return;
   A.slingSeen = true;
   banner(...ARCD.L.winter.slingBanner); arcSenaSays(ARCD.L.winter.sling);
-  if (view !== 'fpp' && !camShot) {                  // ARC-FIX: a held look at the frozen sling in the snow
-    const sx = pr.x + 0.55, sz = pr.z + 0.65, gy = getHeight(sx, sz), a = Math.atan2(P.pos.x - sx, P.pos.z - sz);
-    camShot = ARCS.shot = { pos: new THREE.Vector3(sx + Math.sin(a) * 1.9, gy + 1.3, sz + Math.cos(a) * 1.9), look: new THREE.Vector3(sx, gy + 0.08, sz), t: 4.5, ease: true, untilSubs: true };
+  if (view !== 'fpp' && (!camShot || camShot.release)) {   // ARC-FIX: a held look at the frozen sling in the snow (ARC-FIX4: from the open side, the windbreak behind it)
+    const sx = pr.x + 0.55, sz = pr.z + 0.65, gy = pr.g.position.y, a = 0.35;
+    camShot = ARCS.shot = { pos: new THREE.Vector3(sx + Math.sin(a) * 2.1, Math.max(gy + 1.25, getHeight(sx + Math.sin(a) * 2.1, sz + Math.cos(a) * 2.1) + 0.8), sz + Math.cos(a) * 2.1), look: new THREE.Vector3(sx - 0.15, gy + 0.2, sz - 0.45), t: 5.5, ease: true, untilSubs: true, story: true };   // ARC-FIX4: story: the not-sitting branch of updatePlayer dropped every ease shot (sitShotOff) on its first frame
   }
   arcMem('sling', 'You found Wena\'s sling in an empty camp.');
   save();
@@ -8584,11 +8791,13 @@ async function arcRaidAfter() {
   const A = S.arc, L = ARCD.L.raid;
   if (arcTamuGuest()) {                              // Tamu dies shielding Sena
     A.tamu = 'dead'; arcMem('tamu', 'Tamu died shielding Sena.');
-    arcTamuFall();                                   // ARC-FIX: he is down at Sena's side, in the shot, for his last words
-    await arcWait(1.4);
+    const cineOn = !$('hud').classList.contains('cine'); if (cineOn) cine(true);   // ARC-FIX4: letterboxed, HUD away
+    await arcFade('', () => arcTamuFall(), 700);     // ARC-FIX4: a dip to black: he is down at Sena's side, on open ground, in the shot
+    await arcWait(1.2);
     arcSay(L.tamuDies); await arcSubsDone();
     await arcWait(1.2);
-    await arcFade(L.tamuBuried, () => { arcDrop('tamu'); arcCairn('Tamu'); }, 2600);
+    await arcFade(L.tamuBuried, () => { ARCS.nHold = null; N.h.pose = null; arcDrop('tamu'); arcCairn('Tamu'); }, 2600);
+    if (cineOn) cine(false);
   } else if (A.tamu === 'gone' && !A.choices.tamu) { // he came with them; he is on his knees. Only an explicit pick kills him (never the default)
     await arcChoose('tamu', 'Tamu', ARC_OPTS.tamu(), { def: 0, note: L.tamuSeen });
     if (A.choices.tamu === 'kill') { await arcFade('', () => arcSfx(140, 0.25, 0.7), 500); arcSay(L.tamuKill); await arcSubsDone(); arcCairn('Tamu'); }   // a hard cut, never shown
@@ -8604,33 +8813,128 @@ async function arcRaidAfter() {
     arcUnscorch();
     if (A.home.burned) arcScorch(true);
     if (h) { P.pos.set(h.x + 3.2, 0, h.z + 4.2); N.pos.set(h.x + 4.2, 0, h.z + 3.4); }
-    if (N.downed > 0) cmbSenaRevive('P');
+    if (N.downed > 0) { N.downed = 0; S.nhp = Math.max(S.nhp, 30); }   // ARC-FIX4: no revive line: the dawn lines carry it
     S.nhp = Math.min(S.nhp, 45);
-    if (h) { arcFace(P, N.pos); arcFace(N, P.pos); N.wait = 8; N.speed = 0; N.path = null; ARCS.focus = N; arcCloseUp(N, P, 2.8, 1); }   // ARC-FIX: dawn opens on Sena, in frame
+    if (h) { ARCS.focus = null; arcDawnStage(h); if (!$('hud').classList.contains('cine')) { ARCS.dawnCine = true; cine(true); } }   // ARC-FIX4: dawn opens on Sena wounded on the ground, Aro kneeling over her
   }, 1400);
+  if (ARCS.nHold?.lie) busy = true;                 // ARC-FIX4: he stays knelt over her through the lines
+  await arcWait(0.6);
   arcSay(L.dawn); arcSay(L.wound); await arcSubsDone();   // ARC-FIX: Aro's 'Stay awake' line was never played
+  arcDawnUp(); await arcWait(1.6);                   // ARC-FIX4: she gets up, slowly
+  if (ARCS.dawnCine) { ARCS.dawnCine = false; cine(false); }
+  if (camShot && camShot === ARCS.shot) { camShot = null; ARCS.shot = null; }
   A.raid.done = true; A.raid.wave = 0; A.raid.left = 0;
   arcKidsIndoors(false);
 }
-// ARC-FIX: the end of the raid: Tamu down on his back beside Sena (a raider's spear took him in front of her), Sena
-// knelt at his side, and a low close shot on the two of them for his last line.
+// ARC-FIX4: the end of the raid: behind a dip to black, Tamu lies on clear, open ground at Sena's side (never across a
+// fire bench, a brazier or a wall: his whole length is tested), Sena kneels at his chest, raiders who fell on the fire
+// or in the shot are moved off it, and a low side-on shot holds the two of them, letterboxed, for his last line.
+function arcClearAt(x, z, r) {
+  for (const q of structs) {
+    if (!(q.rise > 0.2)) continue;
+    const R = q.kind === 'fire' ? 3.1 : q.kind === 'house' || q.kind === 'hut' || q.kind === 'stable' ? (q.radius || 3) + 0.4 : (q.radius || 0.9);
+    if (Math.hypot(q.x - x, q.z - z) < R + r) return false;
+  }
+  _acb.set(x, 0, z); collide(_acb, r);
+  if (Math.abs(_acb.x - x) + Math.abs(_acb.z - z) > 1e-3) return false;
+  return true;
+}
+// A body lying from (x, z) along angle a: the root is at the hips' end, the clip lays it out up to ~1.7 m either way.
+function arcBodyClear(x, z, a) {
+  const dx = Math.sin(a), dz = Math.cos(a);
+  for (const k of [0, 0.85, -0.85, 1.6, -1.6]) if (!arcClearAt(x + dx * k, z + dz * k, k ? 0.32 : 0.45)) return false;
+  return true;
+}
+// Sena's spot near (x, z) and an angle round her where a body lies clear (spec: he falls in front of her).
+function arcPairSpot(x, z, bodyD = 1.1) {
+  for (const rr of [0, 1.5, 3, 4.5, 6, 8]) for (let k = 0; k < (rr ? 10 : 1); k++) {
+    const nx = x + Math.sin(k * 0.628) * rr, nz = z + Math.cos(k * 0.628) * rr;
+    if (!arcClearAt(nx, nz, 0.45)) continue;
+    for (let j = 0; j < 8; j++) {
+      const a = j * Math.PI / 4, bx = nx + Math.sin(a) * bodyD, bz = nz + Math.cos(a) * bodyD;
+      if (arcBodyClear(bx, bz, a + Math.PI / 2)) return { nx, nz, bx, bz, a };
+    }
+  }
+  return null;
+}
+// Fallen raiders on a fire or within r of a point are carried clear (they read as props through the logs and flames).
+function arcClearBodies(pts, r = 2.4) {
+  for (const f of foes) {
+    if (f.state !== 'dead') continue;
+    const onFire = structs.some((q) => q.kind === 'fire' && Math.hypot(q.x - f.pos.x, q.z - f.pos.z) < 3.1);
+    if (!onFire && !pts.some(([x, z]) => Math.hypot(x - f.pos.x, z - f.pos.z) < r)) continue;
+    const a0 = Math.atan2(f.pos.x - pts[0][0], f.pos.z - pts[0][1]);
+    for (const rr of [5, 6.5, 8, 10]) {
+      let done = false;
+      for (const sw of [0, 0.5, -0.5, 1, -1, 1.6, -1.6, Math.PI]) {
+        const x = pts[0][0] + Math.sin(a0 + sw) * rr, z = pts[0][1] + Math.cos(a0 + sw) * rr;
+        if (arcBodyClear(x, z, f.face) && !pts.some(([px, pz]) => Math.hypot(px - x, pz - z) < r + 1)) { f.pos.set(x, getHeight(x, z), z); f.h.root.position.copy(f.pos); done = true; break; }
+      }
+      if (done) break;
+    }
+  }
+}
+// A low side-on shot of a kneeling one and a lying one (from the side away from walls and trunks).
+function arcLowShot(x1, z1, x2, z2, t = 60) {
+  if (view === 'fpp') return;
+  const mx = (x1 + x2) / 2, mz = (z1 + z2) / 2, gy = Math.max(getHeight(mx, mz), 0.2), a = Math.atan2(x2 - x1, z2 - z1);
+  let best = null, bs = -1e9;
+  for (const sw of [0, Math.PI, 0.5, -0.5, Math.PI + 0.5, Math.PI - 0.5, 1.0, -1.0]) {
+    const b = a + Math.PI / 2 + sw, px = mx + Math.sin(b) * 2.7, pz = mz + Math.cos(b) * 2.7;
+    let sc = -Math.abs(Math.sin(sw)) * 2;
+    if (!arcClearAt(px, pz, 0.3)) sc -= 5;
+    if (arcCamBlocked(mx, mz, px, pz)) sc -= 6;
+    if (arcLineHits(mx, mz, px, pz, null)) sc -= 3;
+    if (sc > bs) { bs = sc; best = [px, pz]; }
+  }
+  camShot = ARCS.shot = { pos: new THREE.Vector3(best[0], Math.max(getHeight(best[0], best[1]), 0.2) + 1.35, best[1]), look: new THREE.Vector3(mx, gy + 0.4, mz), t, untilSubs: true };
+}
 function arcTamuFall() {
   const t = arcGet('tamu') || (arcTamuHome(), arcGet('tamu')); if (!t) return;
   t.hidden = false; t.h.spear.visible = false;
-  const inside = (x, z, pad) => structs.some((q) => (q.kind === 'house' || q.kind === 'hut' || q.kind === 'stable') && Math.hypot(q.x - x, q.z - z) < (q.radius || 3) + pad);
-  let a = N.face;                                    // he lies on the side of her away from the walls
-  for (const sw of [0, Math.PI, Math.PI / 2, -Math.PI / 2]) { const b = N.face + sw; if (!inside(N.pos.x + Math.sin(b) * 1.1, N.pos.z + Math.cos(b) * 1.1, 0.6)) { a = b; break; } }
-  const x = N.pos.x + Math.sin(a) * 1.1, z = N.pos.z + Math.cos(a) * 1.1;
-  t.pos.set(x, 0, z); t.face = a + Math.PI / 2; t.mode = 'stand'; arcDead(t);
-  N.speed = 0; N.path = null; arcFace(N, t.pos);
-  if (view === 'fpp') return;
-  const mx = (x + N.pos.x) / 2, mz = (z + N.pos.z) / 2, gy = Math.max(getHeight(mx, mz), 0.2);
-  let cx = mx + Math.cos(a) * 2.4, cz = mz - Math.sin(a) * 2.4;   // side-on to the two of them; swing round until clear of walls and trunks
-  for (const sw of [0, Math.PI, 0.6, -0.6, Math.PI + 0.6, Math.PI - 0.6, 1.2, -1.2]) {
-    const b = a + Math.PI / 2 + sw, px = mx + Math.sin(b) * 2.4, pz = mz + Math.cos(b) * 2.4;
-    if (!inside(px, pz, 0.8) && !arcCamBlocked(mx, mz, px, pz)) { cx = px; cz = pz; break; }
-  }
-  camShot = ARCS.shot = { pos: new THREE.Vector3(cx, Math.max(getHeight(cx, cz), 0.2) + 1.25, cz), look: new THREE.Vector3(mx, gy + 0.45, mz), t: 6, untilSubs: true };
+  const sp = arcPairSpot(N.pos.x, N.pos.z) || { nx: N.pos.x, nz: N.pos.z, bx: N.pos.x + 1.1, bz: N.pos.z, a: Math.PI / 2 };
+  N.pos.set(sp.nx, 0, sp.nz); N.speed = 0; N.path = null; N.node = null;
+  t.pos.set(sp.bx, 0, sp.bz); t.face = sp.a + Math.PI / 2; t.mode = 'stand'; arcDead(t);
+  arcClearBodies([[sp.bx, sp.bz], [sp.nx, sp.nz]]);
+  arcFace(N, t.pos); ARCS.nHold = { at: t.pos, pose: null };
+  setTimeout(() => {                                 // his body has settled (one frame): she kneels at his chest
+    if (!ARCS.nHold) return;
+    const k = matKneelSpot(t, N.pos); N.pos.set(k[0], 0, k[1]); collide(N.pos, 0.25);
+    ARCS.nHold = { at: new THREE.Vector3(k[2], 0, k[3]), pose: 'work' };
+    arcLowShot(N.pos.x, N.pos.z, k[2], k[3], 8);
+  }, 120);
+}
+// updateSena (arcSena): Sena held in a staged pose (kneeling at Tamu, lying wounded at dawn)
+function arcNHoldTick(dt) {
+  const H = ARCS.nHold; if (!H) return false;
+  N.speed = 0; N.path = null; N.node = null; N.act = 0; N.fetch = null; N.vx = N.vz = 0;
+  if (H.lie) { settle(N, dt, false); return true; }
+  N.face = turn(N.face, Math.atan2(H.at.x - N.pos.x, H.at.z - N.pos.z), Math.min(1, dt * 6));
+  N.h.pose = H.pose || null;
+  settle(N, dt, false);
+  return true;
+}
+// ARC-FIX4: the raid's dawn: Sena on the ground with the spear wound, Aro kneeling over her ('Sena, look at me. Stay
+// awake.'); after her line she gets up, slowly, insisting it is nothing (the fever chapter opens on 'only a scratch').
+function arcDawnStage(h) {
+  const sp = arcPairSpot(h.x + 4, h.z + 3.8, 0.01) || { nx: h.x + 4, nz: h.z + 3.8 };
+  N.pos.set(sp.nx, 0, sp.nz); N.speed = 0; N.path = null; N.node = null;
+  for (let j = 0; j < 8; j++) { const a = j * Math.PI / 4; if (arcBodyClear(sp.nx, sp.nz, a)) { N.face = a; break; } }
+  N.h.pose = null; N.matUp = 0; matLieStart(N, true); N.matStill = false;
+  ARCS.nHold = { lie: true };
+  P.pos.set(sp.nx + Math.cos(N.face) * 0.8, 0, sp.nz - Math.sin(N.face) * 0.8);
+  setTimeout(() => {                                 // her body has settled: he kneels at her chest
+    if (!ARCS.nHold?.lie) return;
+    const k = matKneelSpot(N, P.pos); P.pos.set(k[0], 0, k[1]); collide(P.pos, 0.25);
+    ARCS.dawnSite = { x: k[2], z: k[3], rise: 0 }; P.work = 60; P.workSite = ARCS.dawnSite; P.face = Math.atan2(k[2] - P.pos.x, k[3] - P.pos.z);
+    arcLowShot(P.pos.x, P.pos.z, k[2], k[3], 30);
+  }, 150);
+}
+function arcDawnUp() {
+  if (!ARCS.nHold?.lie) return;
+  ARCS.nHold = null; busy = false;
+  if (P.workSite === ARCS.dawnSite) { P.work = 0; P.workSite = null; } ARCS.dawnSite = null;
+  N.matUp = 1.1; N.matW = 1; if (N.h.has('getUp')) N.h.swing('getUp', 1.35);
 }
 // CMB torch scorch marks on the buildings fade into the morning's repair (the house keeps ARC's own scorch if it burned).
 function arcUnscorch() {
@@ -8759,7 +9063,7 @@ function arcVigil() {
         P.pos.set(d.x - rx * 0.6, 0, d.z - rz * 0.6); N.pos.set(d.x + rx * 0.6, 0, d.z + rz * 0.6); P.face = Math.atan2(N.pos.x - P.pos.x, N.pos.z - P.pos.z); N.face = P.face + Math.PI; N.path = null; N.speed = 0; }
     }, 3400);
     ARCS.vigil = false;
-    arcFeverCure();
+    await arcFeverCure();                            // ARC-FIX4: the first kiss plays inside the vigil scene (no chapter turn under it)
     await arcSubsDone();
   });
 }
@@ -8839,9 +9143,9 @@ function arcFeverCure() {
   ARCS.ch = -1;
   addClose(5, 'sat with her through the fever');
   if (A.senaWound !== 'scarred') arcMem('fever', 'You sat with Sena until her fever broke.');
-  if (typeof romFirstKiss === 'function') romFirstKiss();   // ROM (phase C): the consent-gated first kiss
-  else arcSay(ARCD.L.fever.firstKiss);
   drawQuest(); save();
+  if (typeof romFirstKiss === 'function') return romFirstKiss();   // ROM (phase C): the consent-gated first kiss (ARC-FIX4: the vigil scene waits for it)
+  arcSay(ARCD.L.fever.firstKiss);
 }
 
 // ----- scripted Sena (updateSena, after MAT's rescue): sick in bed, at the lake, at the fire with Tamu, in scenes
@@ -8860,6 +9164,8 @@ function arcSena(dt) {
   }
   if (ARCS.sick?.visible) arcSickCover(null);
   if (ROM.scene) return false;                      // ARC-FIX: a ROM kiss or embrace moves her (the lake embrace runs inside the scene)
+  if (romFkHoldTick(dt)) return true;              // ARC-FIX4: the first-kiss beat holds her face to face with him
+  if (arcNHoldTick(dt)) return true;               // ARC-FIX4: kneeling at Tamu, lying wounded at dawn
   if (ARCS.lake) {                                   // she walks by Mirror Lake at dusk (a rift to mend)
     const [x, z] = arcSpot('lake'), d = Math.hypot(N.pos.x - x, N.pos.z - z);
     if (d > 2) { if (Math.hypot(N.pos.x - P.pos.x, N.pos.z - P.pos.z) > 45 && d > 30) N.pos.set(x + 1.5, 0, z + 1.5); else walkTo(N, x, z, 2.6, dt, 0.8); }
@@ -9020,13 +9326,20 @@ function arcJealousBeat() {
   if (!ARCS.jealous || d > 9) return;
   arcScene('jealous', async () => {
     const L = ARCD.L.jealous;
-    ARCS.focus = N; arcShot(N, 60);
+    ARCS.focus = N; arcFireGrass(f);
+    const cineOn = !$('hud').classList.contains('cine'); if (cineOn) cine(true);   // ARC-FIX4: letterbox, HUD away for the scene
+    try {
+    arcFireTwoShot(f, N, t); await arcWait(1.6);
     await arcTalk(L.scene, arcGet('tamu'));
+    arcFireTwoShot(f, N, t);                         // ARC-FIX4: the choice over the two of them laughing (not a blurred back under the panel)
+    $('choice').classList.add('low');
     await arcChoose('jealous', 'At the Fire', ARC_OPTS.jealous(), { def: null, note: 'Sena and Tamu are laughing together by the fire.' });
+    $('choice').classList.remove('low');
     const ch = A.choices.jealous;                    // ARC-FIX: she stays on the bench through the answer, each line framed on its speaker (the shot held on an empty log)
     if (ch === 'join') await arcTalk(L.join, t);
     else if (ch === 'forbid') await arcTalk(L.forbid, N);
     await arcSubsDone();
+    } finally { if (cineOn) cine(false); }
     ARCS.jealous = false; t.talk = false;
   });
 }
@@ -10750,7 +11063,7 @@ canvas.addEventListener('mousedown', (e) => {
   if (e.button === 2) { if (placing) { placing = null; ghost.visible = false; } else wpnAimStart(); }   // WPN: hold to aim
 });
 addEventListener('mouseup', (e) => {                 // WPN: release right mouse to throw
-  if (BOW.on && e.button === 2) { W.rmb = false; if (W.aim) { if (!playing || paused || menuOpen || busy) wpnCancelAim(); else bowLoose(); } return; }   // BOW: release to loose
+  if (BOW.on && e.button === 2) { W.rmb = false; if (W.aim) { if (W.aim.charge > 0.3) A.hit(150, 0.35, 0.04); wpnCancelAim(); } return; }   // BOW (spec §3): letting go of right mouse eases the string down, no arrow spent; left click looses
   if (cmbMouseUp(e)) return;                         // CMB: light attack on release, guard down, a brace never throws
   if (e.button !== 2) return;
   W.rmb = false;
@@ -10897,8 +11210,8 @@ function updatePlayer(dt) {
   if (P.sit > 0) {
     P.sitSince ??= clock; P.sit -= dt;
     const eUp = eTap && clock - P.sitSince > 0.6;
-    if (mx || mz || jumpTap || eUp || P.sit <= 0) { endSit(P); endSit(N); P.sitSince = null; if (camShot?.ease) sitShotOff(); if (camShot?.hearthSit) camShot = null; if (eUp) { tapE = false; eLatch = true; useCool = Math.max(useCool, 0.5); } }   // STORY: the stand-up press is used up until E is released
-  } else { P.sitSince = null; if (camShot?.ease) sitShotOff(); if (camShot?.hearthSit) camShot = null; }   // round 2: the hearth two-shot never outlives the sit
+    if (mx || mz || jumpTap || eUp || P.sit <= 0) { endSit(P); endSit(N); P.sitSince = null; if (camShot?.ease && !camShot.story) sitShotOff(); if (camShot?.hearthSit) camShot = null; if (eUp) { tapE = false; eLatch = true; useCool = Math.max(useCool, 0.5); } }   // STORY: the stand-up press is used up until E is released
+  } else { P.sitSince = null; if (camShot?.ease && !camShot.story) sitShotOff(); if (camShot?.hearthSit) camShot = null; }   // round 2: the hearth two-shot never outlives the sit
   // WP2: resting in bed (input ignored), kneeling at a construction site (movement stops it), dancing after a shared build
   if (P.rest > 0) { P.vx = P.vz = 0; jumpTap = false; rstUpdate(dt); if (P.rest > 0) { settle(P, dt, false); target = null; $('prompt').style.display = 'none'; return; } }   // RST
   if (P.work > 0) {
@@ -11776,6 +12089,7 @@ function fppVm(dt) {
     for (const n in FP.armBase) b[n].quaternion.copy(FP.armBase[n]);   // (ik2 updates each arm chain from the root: no full-rig matrix pass needed)
     const az = FP.arBase.z - FP_SPR.arm * (FP.twoW || 0) - BOWFP.arm * (BOWFP.on ? BOWFP.a : 0);   // BOW-FPP: raised, the arms step forward so the bow fist reaches the grip                // FPP-world: the two-handed spear hold steps the arms forward
     if (AR.root.position.z !== az) { AR.root.position.z = az; AR.root.updateMatrixWorld(true); }
+    bowFpClav();                                     // BOW-FPP: the drawing shoulder pulled back so the string hand reaches the cheek
     if (R) fpArm('r', R[0], R[1], R[2], R[3] ?? 1); else fpArm('r', new THREE.Vector3(0.25, -0.75, 0.1), fpHandBasis('r', 0, -1, 0, -1, 0, 0), 1, 0);
     if (L) fpArm('l', L[0], L[1], L[2], L[3] ?? 1); else fpArm('l', new THREE.Vector3(-0.25, -0.75, 0.1), fpHandBasis('l', 0, -1, 0, 1, 0, 0), 1, 0);
     if (!vmOn) {                                         // WPN has nothing to draw: light and size the viewmodel scene here
@@ -11834,9 +12148,10 @@ vmBow.visible = vmNockA.visible = false; vmScene.add(vmBow, vmNockA);
 const BOWFP = { on: false, sx: 0, sy: 0, yaw: 0, pitch: 0,
   low: { g: new THREE.Vector3(-0.15, -0.2, -0.45), cant: 0.65, fwd: new THREE.Vector3(0.3, -0.25, -1) },   // ready: carried low at the left, limbs leaning
   cant: -0.32,                                                              // raised: the top limb leans right, away from the crosshair
-  nock: new THREE.Vector3(0.1, -0.105, -0.42),                              // full draw: the string fingers toward the cheek, low right in view
+  nock: new THREE.Vector3(0.08, -0.08, -0.18),                              // full draw: the string fingers at the cheek (the hand fills the lower right corner)
   tip: [-0.012, -0.075],                                                    // where the flint point sits on screen (NDC): just under the crosshair
-  draw: 0.48, arm: 0.3,                                                     // nock to the arrow rest at full draw; the arms' step forward when raised
+  clavR: new THREE.Vector3(0.02, 0.04, 0.3),                               // the drawing shoulder, back while raised
+  draw: 0.6, arm: 0.3,                                                       // nock to the arrow rest at full draw; the arms' step forward when raised
   shL: new THREE.Vector3(-0.2, -0.3, 0.12) };                               // where the bow arm comes from
 const _bv = [0, 1, 2, 3, 4, 5, 6, 7, 8].map(() => new THREE.Vector3()), _bvq = new THREE.Quaternion();
 // The arrow's line at full draw: from the nock n toward the screen point BOWFP.tip, one arrow length long.
@@ -11902,6 +12217,20 @@ function bowFpp(dt) {
     }
   }
   return [R, L];
+}
+// BOW-FPP: raised, the arms rig steps forward (BOWFP.arm) so the bow fist reaches the grip at arm's length; the drawing
+// arm's shoulder goes back by BOWFP.clavR (view space), so at full draw the string hand comes right back to the cheek.
+const _bvc = new THREE.Vector3(), _bvcq = new THREE.Quaternion();
+function bowFpClav() {
+  const c = AR.bones.clavicle_r; if (!c) return;
+  c.userData.p0 ??= c.position.clone();
+  c.position.copy(c.userData.p0);
+  const k = BOWFP.on ? BOWFP.a : 0;
+  if (k > 0) {
+    c.parent.updateWorldMatrix(true, false); c.parent.getWorldQuaternion(_bvcq);
+    c.position.add(_bvc.copy(BOWFP.clavR).multiplyScalar(k / c.parent.getWorldScale(_h2).x).applyQuaternion(_bvcq.invert()));
+  }
+  c.updateMatrixWorld(true);
 }
 function fppPost() {
   for (const o of FP.held) o.visible = true; FP.held.length = 0;
@@ -12000,6 +12329,7 @@ function start(loadSave, diffChoice) {             // MAT: diffChoice {mode, cus
   drawInv(); applyQuality();
   wpnLoad();                                         // WPN weapons into their sockets, the spear lying out
   matStart();                                        // MAT: game clock, Hardcore UI, herd scarcity
+  if (loadSave) matFightResume(found?.data); else matFightClear();   // MAT-SV r2: a Hardcore fight left by a reload or a closed tab is put back
   if (loadSave) rstResume();                         // SAVE-PERF: the night a closed page interrupted
   warmShaders();                                     // SAVE-PERF: the saved structures, kids, villagers and the horse
   if (settings.fullscreen) fullscreen(true);
@@ -12018,6 +12348,9 @@ function toggleHelp(on = $('help').classList.contains('min')) {
 function helpNudge() { const el = $('help'); el.classList.remove('nudge'); void el.offsetWidth; el.classList.add('nudge'); }
 $('btn-new').textContent = 'Begin the story';
 $('btn-new').onclick = (ev) => matNewGame(ev);      // MAT: the 21+ notice, then the difficulty modal
+// MAT-GATE: a disabled button ignores click(); older scripted harnesses (epi/ford/bow/shots.json) still call it while the notice
+// is up, so a script's click() reaches matNewGame (which starts Survivor for an untrusted click). A person's click never does.
+$('btn-new').click = function () { if (this.disabled) matNewGame(null); else HTMLButtonElement.prototype.click.call(this); };
 // SAVE-PERF: the title's save line. If the server has not answered yet (slow first request, loaded machine) and this
 // browser has no copy, the title says so and keeps asking in the background; "Begin the story" asks before it could
 // replace a save it cannot see, and a late answer brings Continue back.
@@ -12116,6 +12449,7 @@ function frame(now) {
       }
     }
     updateArc(dt);                                   // ARC: story beats, NPCs, seasons, fever (spec §5.8)
+    if (D().saves === 'auto' && (MAT.markT = (MAT.markT || 0) + dt) > 2) { MAT.markT = 0; if (matHoldSave()) { MAT.saveHeld = true; matFightMark(); } }   // MAT-SV r2: keep the fight mark fresh (a crash or a killed tab sends no pagehide)
     saveT += dt; if (!busy && (saveT > 20 || (MAT.saveHeld && saveT > 2 && !matInFight()))) { saveT = 0; save(); }   // MAT-SV: a held save goes out as soon as the fight is over
   } else if (!playing) { settle(P, dt, false); settle(N, dt, false); }
   for (const o of [...animals]) updateAnimal(o, dt);
