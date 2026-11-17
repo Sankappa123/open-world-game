@@ -57,7 +57,7 @@ export function createTribe(ctx) {
       hp: 0, maxHp: 0, live: true, fled: false, state: 'live', mode: opts.mode || 'patrol', alert: opts.mode === 'combat' ? 1 : 0,
       last: new THREE.Vector3(x, 0, z), searchT: 0, seenT: 0, target: null, posture: 0, postureT: 0, stagger: 0, atk: null, cool: 1 + Math.random(),
       surrender: !!opts.surrender, noFlee: !!opts.noFlee || chief, home: { x: opts.homeX ?? x, z: opts.homeZ ?? z }, ring: 3.5, ringA: Math.random() * 6.283,
-      throwT: 2 + Math.random() * 2, hits: 0, kb: null, wpn: null, tags: opts.tags || {}, deadT: 0,
+      throwT: 2 + Math.random() * 2, hits: 0, kb: null, wpn: null, tags: opts.tags || {}, deadT: 0, band: opts.band,   // ARC: band = raid wave (morale)
     };
     f.hp = f.maxHp = (opts.hp ?? (chief ? FOE_HP.korr : FOE_HP.raider)) * ctx.D().foeHpK;
     // an animal-like adapter so hurt()/GORE listeners can treat a raider like any other victim
@@ -233,6 +233,7 @@ export function createTribe(ctx) {
   // ---------- damage taken (hurt() routes raiders here) ----------
   function hurtFoe(f, dmg, info = {}) {
     if (f.state !== 'live' || !f.live) return;
+    if ((f.mode === 'downed' || f.spared) && info.kind !== 'execution') return;   // ARC/§12: a man on his knees (or let go) dies only by the explicit choice, never a stray stone
     const e = hitEvent(f, dmg, info); if (e.cancel || !(e.dmg > 0)) return;
     const hv = e.real ?? !!info.heavy;              // a held heavy swing (e.heavy is also set for every axe blow: GORE's)
     const kind = (e.arrow ? 'arrow' : info.weapon || 'fists') + (hv ? 'H' : '');
@@ -289,8 +290,8 @@ export function createTribe(ctx) {
     ctx.sfx.death(f.pos, f.chief);
     e.kill = true; if (e.kind === 'execution') e.kind = 'finisher';   // GORE: an axe finisher takes the head (Gore High, Blood on, no child near)
     ctx.emit('foeHit', e); ctx.emit('foeDie', e);
-    const alliesDead = foes.filter((o) => o.state === 'dead').length;
-    for (const o of foes) if (o.live && o.mode !== 'downed' && !o.fled && shouldFlee(o.hp, o.maxHp, f.chief, alliesDead, o.noFlee)) flee(o);
+    const alliesDead = (o) => foes.filter((d) => d.state === 'dead' && d.band === o.band).length;   // ARC: only his own band's dead count (a second raid wave arrives fresh)
+    for (const o of foes) if (o.live && o.mode !== 'downed' && !o.fled && o.band === f.band && shouldFlee(o.hp, o.maxHp, f.chief, alliesDead(o), o.noFlee)) flee(o);
     ctx.emit('raiderDead', { f, cause: info.kind || 'hit' });
   }
   function flee(f) { if (f.mode === 'flee' || f.noFlee) return; f.mode = 'flee'; f.atk = null; ctx.say(f.name, f.chief ? 'Back! Back to the hills!' : 'Run!'); ctx.emit('raiderFlee', { f }); }
@@ -399,7 +400,7 @@ export function createTribe(ctx) {
     f.cool -= dt; f.reloadT = Math.max(0, (f.reloadT || 0) - dt);
     if (f.reloadT <= 0 && f.wpn === 'spear' && !f.h.spear.visible) f.h.spear.visible = true;
     if (f.seenT > 12 && dP > 30) { f.mode = 'search'; f.searchT = 20; f.alert = 0.3; return; }
-    if (!f.surrender && shouldFlee(f.hp, f.maxHp, foes.some((o) => o.chief && o.state === 'dead'), foes.filter((o) => o.state === 'dead').length, f.noFlee)) { flee(f); return; }
+    if (!f.surrender && shouldFlee(f.hp, f.maxHp, foes.some((o) => o.chief && o.state === 'dead' && o.band === f.band), foes.filter((o) => o.state === 'dead' && o.band === f.band).length, f.noFlee)) { flee(f); return; }
     const t = f.target = pickTarget(f), tp = tgtPos(t), dx = tp.x - f.pos.x, dz = tp.z - f.pos.z, d = Math.hypot(dx, dz);
     if (t.kind && t.group) {                          // torchbearer: run at the structure and throw
       if (d > 9) moveTo(f, tp.x, tp.z, 5.4, dt, 8); else { f.speed = 0; faceTo(f, tp.x, tp.z, dt); f.throwT -= dt; if (f.throwT <= 0) { f.h.swing('overU', 1.25); f.throwT = 99; setTimeoutLike(f, 0.45, () => throwTorch(f, t)); } }

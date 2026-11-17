@@ -2159,7 +2159,7 @@ function bowHold(dt) {
   const over = W.aim.t - 4.6;
   BOW.tire = clamp(over / 3, 0, 1);
   if (over <= 0) return;
-  S.stam = Math.max(0, S.stam - dt * 6);
+  S.stam = Math.max(0, S.stam - dt * ((P.speed < 0.5 ? 18 : 10) * (S.rested > 0 ? 1.5 : 1) + 8));   // no regen while straining, and 8/s more
   const k = (0.004 + 0.012 * BOW.tire) * (settings.reduceMotion ? 0.4 : 1);
   camYaw += Math.sin(clock * 9.3) * k * dt * 9 + (rand() - 0.5) * k * 0.5; camPitch += Math.sin(clock * 7.1 + 1) * k * dt * 9;
   if (S.stam <= 0.5) { wpnCancelAim(); toast('Your arms give out: the string comes down'); }
@@ -2184,7 +2184,7 @@ function bowLandGround(ar) {
 const BOWOB = { k: null, n: null };
 function bowStep(pos, vel, tip, ar) {
   const r = spearStep(pos, vel, tip); if (r) return r;
-  if (ar && ar.noOb > 0) { ar.noOb--; return null; }
+  if ((ar && ar.noOb > 0 && ar.noOb--) || BOW.noObst) return null;   // noObst: test switch (G.bow.BOW) for damage tests in wooded spots
   const t = tip, cell = bowCell(t.x, t.z);
   if (cell) for (const [k, n] of cell) {
     if (!n.alive) continue;
@@ -2476,7 +2476,7 @@ function wpnUpdate(dt) {
     W.aim.t += dt; W.aim.charge = Math.min(1, W.aim.t / 0.6); W.idleT = 0;
     if (W.aim.bow) bowHold(dt);                        // BOW: a long hold at full draw tires the arms
     camera.getWorldDirection(aimDir);
-    arcUpdate(W.aim.charge);
+    if (W.aim) arcUpdate(W.aim.charge);                // BOW: spent arms let the string down (W.aim cleared)
   }
   W.aimW += ((W.aim ? 1 : 0) - W.aimW) * Math.min(1, dt / 0.15 * 1.6);
   W.camK += ((W.aim ? 1 : 0) - W.camK) * (1 - Math.exp(-dt * 12));
@@ -7981,17 +7981,59 @@ async function arcReckoning() {
     await arcTalk(L.meet);
     await arcChoose('korr', 'Korr', ARC_OPTS.korr(), { def: null, note: 'His hunters are on their feet around the fire. Korr has not reached for his spear. Yet.' });
     const c = A.choices.korr;
-    if (c === 'kill') {                              // phase C: a CMB duel (typeof cmbDuel === 'function'); until then a hard cut
-      await arcFade(L.killFade, () => { arcDead(k); for (const e of ARCS.npcs) if (/^hunter/.test(e.id)) { e.mode = 'leave'; e.spd = 4; e.tx = e.pos.x + (e.pos.x - P.pos.x) * 8; e.tz = e.pos.z + (e.pos.z - P.pos.z) * 8; } }, 2600);
+    const duel = c !== 'peace' && typeof cmbDuel === 'function' && settings.matureStory !== false ? await arcKorrDuel(k, c) : null;   // phase C: a real CMB fight
+    const c2 = A.choices.korr;                       // a duel meant to spare him can still end with him dead
+    if (c2 === 'kill') {
+      if (duel === 'dead') { for (const e of ARCS.npcs) if (/^hunter/.test(e.id)) { e.mode = 'leave'; e.spd = 4; e.tx = e.pos.x + (e.pos.x - P.pos.x) * 8; e.tz = e.pos.z + (e.pos.z - P.pos.z) * 8; } await arcWait(2.5); }
+      else await arcFade(L.killFade, () => { arcDead(arcGet('korr') || k); for (const e of ARCS.npcs) if (/^hunter/.test(e.id)) { e.mode = 'leave'; e.spd = 4; e.tx = e.pos.x + (e.pos.x - P.pos.x) * 8; e.tz = e.pos.z + (e.pos.z - P.pos.z) * 8; } }, 2600);
       arcSenaSays(L.kill);
-    } else if (c === 'spare') {
-      await arcFade(L.spareFade, () => { k.mode = 'sit'; k.jy = -0.44; }, 2400);
+    } else if (c2 === 'spare') {
+      if (duel !== 'downed') await arcFade(L.spareFade, () => { const kk = arcGet('korr') || k; kk.mode = 'sit'; kk.jy = -0.44; }, 2400);
+      ARCS.focus = arcGet('korr') || k;
       await arcTalk(L.spare);
     } else { await arcTalk(L.peace); }
     if (A.horseFate === 'taken') { arcHorseBack(); arcSay([L.horseBack]); await arcSubsDone(); }
     await arcFade(L.thawFade, () => { A.thaw = true; A.season = 'spring'; if (c !== 'kill') arcAshLeave(0.01); arcFoal(); }, 3200);
     arcSay(L.foal); await arcSubsDone();
   });
+}
+// The duel (phase C): the story's Korr steps out and CMB's Korr (a chief: no flight; for "spare", he yields at 0) fights
+// Aro on the same spot, his hunters watching. Resolves 'dead' | 'downed' | 'lost' | null (no fight). Aro down: the old cut.
+async function arcKorrDuel(k, c) {
+  const A = S.arc, x = k.pos.x, z = k.pos.z, face = k.face;
+  for (const e of ARCS.npcs) if (/^hunter/.test(e.id)) { e.mode = 'stand'; e.look = 'P'; e.jy = 0; }
+  arcDrop('korr');
+  if (camShot && camShot === ARCS.shot) camShot = null; ARCS.shot = null; ARCS.focus = null;
+  ARCS.duel = true;
+  const p = cmbDuel(x, z, { chief: true, name: 'Korr', face, surrender: c === 'spare', noFlee: true });
+  const f = [...foes].reverse().find((o) => o.chief && o.state === 'live') || null;
+  if (f) { f.arcDuel = true; arcRaiderLook(f); }
+  say('Korr', c === 'spare' ? 'You want to beat me and walk away? Try.' : 'Good. No more talking.');
+  let res = null;
+  p.then((r) => { res ??= r; });
+  try {                                              // cmbDuel waits on a yielded man for a surrender choice; the story decides here instead
+    while (!res) { await arcWait(0.25); if (f?.mode === 'downed') res = 'downed'; else if (MAT.dead) res = 'lost'; }
+  } finally { ARCS.duel = false; }
+  if (res === 'lost') {                              // Aro went down: wait for him to be back on his feet, then the old hard cut
+    while ((P.downed > 0 || MAT.rescuing) && !MAT.dead) await arcWait(0.5);
+    if (MAT.dead) return res;
+    if (f) f.spared = true; arcFoeGone(f); arcNpc('korr', ARC_LOOK.korr, x, z, face, { spear: 'low' });
+    return res;
+  }
+  if (res === 'dead') {
+    if (A.choices.korr !== 'kill') {               // he was to be spared, and died: the choice is rewritten as it happened
+      A.choices.korr = 'kill'; A.tribe = 'hostile'; arcAxis('mercy', -3);
+      const m = A.memory.findLast?.((e) => e.id === 'korr'); if (m) m.text = 'You meant to spare Korr. He died under your hands.';
+    }
+    return res;
+  }
+  if (res === 'downed' && f) {                       // spared: on his knees, beaten; the story's Korr sits where he fell
+    await arcWait(1.2);
+    const px = f.pos.x, pz = f.pos.z, fa = f.face;
+    f.spared = true; arcFoeGone(f);                  // (spared: cmbDuel's own watch ends too)
+    const kk = arcNpc('korr', ARC_LOOK.korr, px, pz, fa); kk.pos.set(px, 0, pz); kk.mode = 'sit'; kk.jy = -0.44; kk.look = 'P';
+  }
+  return res;
 }
 function arcHorseTaken() {
   const A = S.arc; if (!S.horse) return;
@@ -8065,24 +8107,111 @@ async function arcDoor() {
 }
 function arcKnock() { for (let i = 0; i < 3; i++) setTimeout(() => arcSfx(160, 0.12, 0.6), i * 260); setTimeout(() => { for (let i = 0; i < 2; i++) setTimeout(() => arcSfx(150, 0.12, 0.5), i * 260); }, 1300); }
 
-// ----- the raid (phase B: narrated. Phase C: CMB waves via spawnRaider when typeof spawnRaider === 'function')
-function arcKidsIndoors(on) { ARCS.raidOn = on; for (const e of ARCS.npcs) if (e.child) e.hidden = on; for (const c of kids) c.h.root.visible = !on; }
+// ----- the raid (phase C: CMB waves via spawnRaider; narrated when fleeing, with Mature story Off, or without CMB)
+function arcKidsIndoors(on) { ARCS.raidOn = on; for (const e of ARCS.npcs) if (e.child || e.id === 'wena' || e.id === 'tamu') e.hidden = on; for (const c of kids) c.h.root.visible = !on; }   // Wena stays in with Pell; a guest Tamu stands by Sena
+// Phase C: when CMB is present (spawnRaider) and the home is defended, the raid is a real fight in two waves; fleeing,
+// Mature story Off and a missing CMB keep the narrated version. The consequences are the same either way (arcRaidAfter).
+const ARC_WAVE = { story: 3, survivor: 5, hardcore: 6, custom: 5 };
+const ARC_ROLES = [['brawler', 'thrower', 'brawler', 'brawler', 'thrower'], ['torchbearer', 'brawler', 'torchbearer', 'thrower', 'brawler']];   // wave 2 brings the torches
 function arcRaid() {
   const A = S.arc;
   if (A.raid.done || ARCS.scene) return false;
   if (R.on) endRest();
   arcScene('raid', async () => {
-    const L = ARCD.L.raid;
+    const L = ARCD.L.raid, resumed = (A.raid.wave || 0) > 0;
     arcKidsIndoors(true);                            // GUARDRAIL: children first, before anything else happens
     A.raid.wave = Math.max(1, A.raid.wave || 0);
-    banner(...L.banner);
+    if (!resumed) banner(...L.banner);
     if (!A.choices.raid) {
       arcSay(L.surprise); await arcSubsDone();
       await arcChoose('raid', 'Fire in the Night', ARC_OPTS.raid(), { timer: 10, def: 0 });
     }
-    await arcRaidNarrated();
+    if (A.choices.raid !== 'flee' && typeof spawnRaider === 'function' && settings.matureStory !== false) await arcRaidFight(resumed);
+    else await arcRaidNarrated();
   });
   return true;
+}
+// The Ash People's look on a CMB raider: grey hands to the wrist and a hide mantle (they came down out of the snow).
+function arcRaiderLook(f, i = 0) {
+  try { arcAshHands(f.h, f.chief ? 0.9 : 0.85); arcFurMantle(f.h, f.chief ? 0x4a4038 : [0x6b5a48, 0x5d5044, 0x7a6650, 0x625548][i % 4]); } catch (err) { console.error('ARC raider look', err); }
+}
+// A raider the story is done with (a spared Korr, the duel's stand-in): out of the world and out of foes[].
+function arcFoeGone(f) {
+  if (!f) return;
+  scene.remove(f.h.root); if (f.meter) scene.remove(f.meter); if (f.pbar) scene.remove(f.pbar);
+  const i = foes.indexOf(f); if (i >= 0) foes.splice(i, 1);
+}
+const arcFoeDone = (f) => f.state === 'dead' || f.fled || f.spared || f.mode === 'flee' || !foes.includes(f);
+function arcRaidSpawn(n, a0, cx, cz, wave) {
+  const first = wave === 1;
+  const A = S.arc, out = [];
+  for (let i = 0; i < n; i++) {
+    const a = a0 + (i - (n - 1) / 2) * 0.3, r = 32 + (i % 2) * 5, [x, z] = arcLand(cx + Math.sin(a) * r, cz + Math.cos(a) * r, 8);
+    const tamu = first && i === 0 && A.tamu === 'gone' && !A.choices.tamu && !A.raid.tamuSpawned;
+    const k = (A.raid.spawned = (A.raid.spawned || 0) + 1) - 1, roles = ARC_ROLES[first ? 0 : 1];
+    const f = spawnRaider(x, z, tamu ? { name: 'Tamu', role: 'brawler', surrender: true, noFlee: true, mode: 'combat', face: a + Math.PI, band: 'raid' + wave } : { role: roles[i % roles.length], mode: 'combat', face: a + Math.PI, band: 'raid' + wave });
+    if (!f) continue;
+    f.arcRaid = true; arcRaiderLook(f, k);
+    if (tamu) { f.arcTamu = true; A.raid.tamuSpawned = true; }
+    out.push(f);
+  }
+  return out;
+}
+async function arcRaidFight(resumed) {
+  const A = S.arc, L = ARCD.L.raid, RD = A.raid, h = arcHome();
+  const cx = h ? h.x : P.pos.x, cz = h ? h.z : P.pos.z, camp = arcCampPos(), a0 = Math.atan2(camp[0] - cx, camp[1] - cz);
+  const lit = arcBraziers();
+  RD.left ??= (ARC_WAVE[S.diff.mode] ?? 5) + (lit < 4 ? 1 : 0) + (A.tamu === 'gone' && !A.choices.tamu ? 1 : 0);   // the dark lets one more torch through
+  RD.lit = lit;
+  if (Math.hypot(P.pos.x - cx, P.pos.z - cz) > 45) { P.pos.set(cx + 3.2, 0, cz + 4.2); P.face = a0; }
+  if (Math.hypot(N.pos.x - P.pos.x, N.pos.z - P.pos.z) > 12) N.pos.set(P.pos.x - Math.cos(a0) * 1.6, 0, P.pos.z + Math.sin(a0) * 1.6);
+  if (P.ride) dismount();
+  ARCS.raidFight = true; ARCS.focus = null;
+  const all = [];
+  try {
+    for (let wave = RD.wave; wave <= 2 && RD.left > 0; wave++) {
+      RD.wave = wave;
+      if (wave === 2 && !A.choices.guard) {          // they split up: the stable or the house (spec "mid-fight")
+        if (S.horse && A.horseFate !== 'taken') await arcChoose('guard', 'They split up', ARC_OPTS.guard(), { timer: 10, def: 1, note: 'More torches on the hill. Two run for the stable, two for the house.' });
+        else A.choices.guard = 'house';
+      }
+      const n = wave === 1 && RD.left > 2 ? Math.ceil(RD.left / 2) : RD.left, rest = RD.left - n;   // wave 2 waits for wave 1
+      const list = arcRaidSpawn(n, a0 + (wave === 2 ? (A.choices.guard === 'stable' ? 0.5 : -0.5) : 0), cx, cz, wave);
+      all.push(...list);
+      if (!list.length) { RD.left = 0; break; }
+      if (wave === 1 && !resumed) {                  // a look up the hill at the torches coming down
+        const f0 = list[0], gy = getHeight(P.pos.x, P.pos.z);
+        if (view !== 'fpp') camShot = ARCS.shot = { pos: new THREE.Vector3(P.pos.x - Math.sin(a0) * 4, gy + 2.6, P.pos.z - Math.cos(a0) * 4), look: new THREE.Vector3(f0.pos.x, getHeight(f0.pos.x, f0.pos.z) + 1.4, f0.pos.z), t: 3.5 };
+        say('Sena', RD.lit >= 4 ? 'The braziers! I can see them coming. Aro, there!' : 'I cannot see them, Aro. Only the torches.');
+        await arcWait(3.2);
+        if (camShot === ARCS.shot) camShot = null; ARCS.shot = null;
+      }
+      RD.left = list.length + rest; save();
+      let t0 = clock;
+      for (;;) {                                     // the fight: until every raider of this wave is dead, gone or spared
+        await arcWait(0.25);
+        if (MAT.dead) return;
+        const open = list.filter((f) => !arcFoeDone(f));
+        const tm = open.find((f) => f.arcTamu && f.mode === 'downed' && !f.deciding && !A.choices.tamu);
+        if (tm && open.length === 1 && !(P.downed > 0) && !MAT.choice) TRIBE.decide(tm);   // the last one standing is Tamu on his knees: Aro must answer
+        if (MAT.choice) for (const f of open) if (f.state === 'live') f.stun = Math.max(f.stun || 0, 0.3);   // nobody strikes while a choice is open
+        if (open.length + rest !== RD.left) { RD.left = open.length + rest; save(); }   // a reload mid-raid brings back only those still fighting
+        if (!open.length) break;
+        if (clock - t0 > 300) { for (const f of open) if (f.state === 'live' && f.mode !== 'downed') TRIBE.flee(f); t0 = clock; }   // a long stand-off: the rest lose heart
+      }
+      RD.left = rest;
+    }
+  } finally { ARCS.raidFight = false; }
+  while ((P.downed > 0 || MAT.rescuing) && !MAT.dead) await arcWait(0.5);   // Aro back on his feet before the morning comes
+  if (MAT.dead) return;
+  for (const f of all) if (f.arcTamu && f.state === 'dead' && !A.choices.tamu) { A.choices.tamu = 'fell'; A.tamu = 'dead'; arcMem('tamu', 'Tamu came with the raiders, and died in the fight.'); }
+  if (A.tamu === 'dead' && A.raid.tamuSpawned) arcCairn('Tamu');
+  await arcWait(1.5);
+  // the consequences of the guard choice: the house, or the horse
+  if (A.choices.guard === 'stable') await arcFade(L.stableFade, () => arcBurn(), 2600);
+  else if (S.horse && A.horseFate !== 'taken') await arcFade(L.houseFade, () => arcHorseTaken(), 2600);
+  if (RD.lit < 4) { arcRaidStash(0.5); toast('They took half the basket in the dark. More braziers would have kept them back.'); }
+  await arcRaidAfter();
 }
 async function arcRaidNarrated() {
   const A = S.arc, L = ARCD.L.raid, stand = A.choices.raid !== 'flee', lit = arcBraziers();
@@ -8099,6 +8228,11 @@ async function arcRaidNarrated() {
   } else {
     await arcFade(L.fleeFade, () => { arcRaidStash(1); arcBurn(); if (!P.ride) arcHorseTaken(); }, 3400);
   }
+  await arcRaidAfter();
+}
+// The same in every version: Tamu's fate, Sena's spear wound (always), dawn.
+async function arcRaidAfter() {
+  const A = S.arc, L = ARCD.L.raid;
   if (arcTamuGuest()) {                              // Tamu dies shielding Sena
     A.tamu = 'dead'; arcMem('tamu', 'Tamu died shielding Sena.');
     arcSay(L.tamuDies); await arcSubsDone();
@@ -8109,15 +8243,38 @@ async function arcRaidNarrated() {
     else { arcSay(L.tamuSpare); await arcSubsDone(); }
   }
   A.senaWound = 'bleeding';
+  if (ARCS.raidFoes) ARCS.raidFoes = null;
   await arcFade('', () => {
     const h = arcHome(), hrs = ((6.5 - S.time) % 24 + 24) % 24;
     if (S.time + hrs >= 24) S.day++; skipHours(hrs);
+    for (const f of [...foes]) if (f.arcRaid && f.state !== 'dead') arcFoeGone(f);   // whoever is still out there is long gone by morning
+    arcUnscorch();
+    if (A.home.burned) arcScorch(true);
     if (h) { P.pos.set(h.x + 3.2, 0, h.z + 4.2); N.pos.set(h.x + 4.2, 0, h.z + 3.4); }
+    if (N.downed > 0) cmbSenaRevive('P');
+    S.nhp = Math.min(S.nhp, 45);
   }, 1400);
   arcSay(L.wound); await arcSubsDone();
-  A.raid.done = true; A.raid.wave = 0;
+  A.raid.done = true; A.raid.wave = 0; A.raid.left = 0;
   arcKidsIndoors(false);
 }
+// CMB torch scorch marks on the buildings fade into the morning's repair (the house keeps ARC's own scorch if it burned).
+function arcUnscorch() {
+  for (const s of structs) {
+    if (!s.scorch) continue;
+    s.scorch = 0;
+    s.group?.traverse((o) => { if (o.isMesh && o.userData.cmbBase) o.material.color.copy(o.userData.cmbBase); });
+  }
+}
+// Tamu on his knees in the fight (CMB's surrender choice, E beside him): ARC records it as the story's choice.
+on('surrender', (e) => {
+  if (!e.f?.arcTamu || S.arc.choices.tamu) return;
+  ARCS.defs.tamu = { opts: ARC_OPTS.tamu(), title: 'Tamu' };
+  arcApply('tamu', e.choice === 'kill' ? 1 : 0);
+  if (e.choice !== 'kill') setTimeout(() => arcSay(ARCD.L.raid.tamuSpare), 1800);
+}, 50);
+// GUARDRAIL (spec: "Sena takes a spear wound, not killable here"): through the raid her health never drops below 12.
+on('playerHitPre', (e) => { if ((ARCS.raidFight || ARCS.duel) && e.who === 'N' && e.dmg > 0) e.dmg = Math.min(e.dmg, Math.max(0, S.nhp - 12)); }, 25);
 function arcRaidStash(frac) { for (const k in S.stash) S.stash[k] = Math.floor((S.stash[k] | 0) * (1 - frac)); }
 function arcBurn() { const A = S.arc; A.home.burned = true; A.home.scorched = true; arcScorch(true); }
 // The scorched house (or hut): its materials darkened until repaired (cloned once, so other buildings keep theirs).
@@ -8170,7 +8327,7 @@ function arcFeverSet(v) {
 function arcRemedy(k, item) {
   const A = S.arc, F = ARCD.FEVER, L = ARCD.L.fever;
   A.rem ||= {};
-  S.inv[item] -= k === 'bled' ? 1 : ARC_HERB[k].n; A.rem[k] = true;
+  S.inv[item] -= k === 'bled' || item !== k ? 1 : ARC_HERB[k].n; A.rem[k] = true;
   A.fever = Math.max(F.floor, (A.fever || 0) - (k === 'bled' ? F.bleed : F.remedy));
   if (k === 'bled') { A.senaWound = 'fever'; arcSay(L.bled); } else arcSay([L.remedy[['willow', 'yarrow', 'moss'].indexOf(k)]]);
   P.h.swing(); arcSfx(500, 0.3, 0.25); arcBedShot();
@@ -8186,20 +8343,105 @@ function arcBedTarget() {
     return k ? { label: `Press a ${ITEMS[k].toLowerCase().replace(/s$/, '')} to Sena's wound`, key: true, act: () => arcRemedy('bled', k) } : { label: 'Her wound is bleeding: you need a poultice (Tab: berries and fibre)' };
   }
   for (const k of ['willow', 'yarrow', 'moss']) if (!r[k] && S.inv[k] >= ARC_HERB[k].n) return { label: ARC_HERB[k].give, key: true, act: () => arcRemedy(k, k) };
+  if (!r.willow && S.inv.willowtea > 0) return { label: 'Give Sena the willow-bark tea (fever −30)', key: true, act: () => arcRemedy('willow', 'willowtea') };   // SURV: a brewed tea counts
   const need = ['willow', 'yarrow', 'moss'].filter((k) => !r[k]).map((k) => `${k === 'moss' ? 'cave moss' : k === 'willow' ? 'willow bark' : 'yarrow'} ${ARC_HERB[k].where}`);
   return { label: `Fever ${Math.round(A.fever || 0)}. She needs ${need.join(', ')}` };
 }
 function arcVigil() {
-  if (typeof rstVigil === 'function') { rstVigil(arcBed()?.s, arcFeverCure); return; }   // phase C: the RST vigil (Aro on the bed edge, her hand in his)
+  if (typeof rstVigil === 'function') { rstVigil(arcBed()?.s, arcFeverCure); return; }   // an RST-owned vigil, if one ever lands
   arcScene('vigil', async () => {
-    ARCS.vigil = true;
-    const lines = ARCD.L.fever.rising.slice(0, 2).map((x) => x[1]);
-    arcBedShot(30); arcSay(lines); await arcSubsDone();
-    await arcFade(ARCD.L.fever.vigilFade, () => { const hrs = ((6.5 - S.time) % 24 + 24) % 24; if (S.time + hrs >= 24) S.day++; skipHours(hrs); bump('vigil'); }, 4200);
+    const L = ARCD.L.fever, b = arcBed();
+    ARCS.vigil = true; ARCS.vigilDone = false;
+    const sat = arcVigilSit(b);
+    if (sat) arcVigilCam(b); else arcBedShot(40);
+    // the night goes by: the sky turns over the roof while she talks, to him and to people long dead
+    const hrs = ((6.5 - S.time) % 24 + 24) % 24, steps = 24, lines = [...L.rising.map((x) => x[1]).filter((l, i, a) => a.findIndex((q) => q[1] === l[1]) === i), ...(L.vigil || [])];
+    let li = 0;
+    for (let i = 0; i < steps; i++) {
+      if (S.time + hrs / steps >= 24) S.day++;
+      skipHours(hrs / steps);
+      if (i % 5 === 1 && li < lines.length && subs.length === 0) say(...lines[li++]);
+      await arcWait(0.42);
+    }
+    bump('vigil');
+    await arcSubsDone();
+    await arcFade(L.vigilFade, () => {               // morning: the two of them just outside the door, in the first light
+      arcVigilSit(null); ARCS.vigilDone = true;
+      const h = b.s, d = h ? toWorld(h, [0, 0, h.kind === 'house' ? 4.6 : 3.8]) : null;
+      if (d) { const a = Math.atan2(d.x - h.x, d.z - h.z), rx = Math.cos(a), rz = -Math.sin(a);
+        P.pos.set(d.x - rx * 0.6, 0, d.z - rz * 0.6); N.pos.set(d.x + rx * 0.6, 0, d.z + rz * 0.6); P.face = Math.atan2(N.pos.x - P.pos.x, N.pos.z - P.pos.z); N.face = P.face + Math.PI; N.path = null; N.speed = 0; }
+    }, 3400);
     ARCS.vigil = false;
     arcFeverCure();
     await arcSubsDone();
   });
+}
+// Aro on the bed beside her, sitting up, her near hand in his (floor-sit mechanics at the mattress, a two-bone reach).
+const _avA = new THREE.Vector3(), _avB = new THREE.Vector3(), _avC = new THREE.Vector3();
+function arcVigilSit(b) {
+  if (!b) {                                          // stand him up again (also after a load or a cut)
+    if (!ARCS.vigilOn) return false;
+    ARCS.vigilOn = false; ARCS.vigilW = 0;
+    P.sit = 0; P.seat = null; P.floorSit = 0; P.hearthSeat = false; P.h.pose = null; P.fsLegs = null;
+    ARCS.doorLamp = null; if (!torchOn) { torch.light.intensity = 0; torch.light.color.setHex(0xff8f40); }
+    if (b === null && ARCS.vigilBusy) { busy = false; cine(false); ARCS.vigilBusy = false; }
+    const bb = arcBed(); if (bb) { const a = (bb.face || 0); P.pos.set(bb.x - Math.cos(a) * 1.3, 0, bb.z + Math.sin(a) * 1.3); }
+    if (typeof wpnUnSit === 'function') wpnUnSit();
+    return true;
+  }
+  if (!b.s) return false;
+  const a = b.face || 0, bp = b.s.bedPts, mid = (bp[0][0] + bp[1][0]) / 2, side = bp[1][0] - mid > 0 ? 1 : -1;   // side: her outer edge (local x), away from his half
+  if (typeof wpnStowAll === 'function') wpnStowAll('rest', true);
+  if (P.ride) dismount();
+  if (torchOn) setTorch(false);
+  const [kx, kz] = ARCS.vigilAt || [0.85, -0.5];   // measured: clear of the bed edge, hands 0.12 m apart
+  const seat = toWorld(b.s, [bp[1][0] + side * kx, 0, bp[1][2] + kz]);   // on the floor at her side of the bed, by her hip, facing the foot of the bed
+  seat.y = b.s.group.position.y + (b.s.kind === 'house' ? 0.19 : 0.04);
+  ARCS.vigilBedY = b.y;
+  P.pos.copy(seat); P.seat = seat; P.floorSit = 1; P.hearthSeat = true; P.fire = null; P.vx = P.vz = 0; P.speed = 0;   // the relaxed floor sit (one knee up)
+  P.face = a; P.h.pose = 'sit'; P.sit = 1e6; P.fsLegs = null;
+  ARCS.vigilOn = true; ARCS.vigilW = 0; ARCS.vigilSide = side; ARCS.vigilBusy = !busy;
+  const lp = toWorld(b.s, [bp[1][0] + side * 1.3, bp[1][1] + 1.1, bp[1][2] + 0.7]);   // a low fire's glow on the two of them (Aro's idle torch light)
+  torch.light.position.copy(lp); torch.light.color.setHex(0xff9a50);
+  ARCS.doorLamp = () => { if (!torchOn) torch.light.intensity = 5.5 * (0.92 + Math.sin(clock * 5) * 0.05 + Math.sin(clock * 13) * 0.03); };
+  if (ARCS.vigilBusy) { busy = true; cine(true); }
+  if (!P.arcVigilOv) { P.arcVigilOv = true; P.h.addOverride('arcVigil', 31, arcVigilOv); }
+  if (!N.arcVigilOv) { N.arcVigilOv = true; N.h.addOverride('arcVigil', 31, arcVigilOvN); }
+  return true;
+}
+// order 31 (after RST's hold at 30): their near hands meet over the edge of his lap, hers lifted off the blanket into his
+const _avM = new THREE.Vector3();
+function arcVigilMeet() {                           // a fixed spot by his hip on her side (her hand moves; a target read off it would drift)
+  P.h.bones.pelvis.getWorldPosition(_avC);
+  const a = P.face, sx = -Math.cos(a) * ARCS.vigilSide, sz = Math.sin(a) * ARCS.vigilSide, k = ARCS.vigilReach || [0.4, 0, 0.02];
+  _avM.set(_avC.x + sx * k[0] + Math.sin(a) * k[1], Math.max(_avC.y + 0.1, (ARCS.vigilBedY ?? _avC.y) + 0.06) + k[2], _avC.z + sz * k[0] + Math.cos(a) * k[1]);
+  return _avM;
+}
+function arcVigilOv(h) {
+  if (!ARCS.vigilOn) return;
+  ARCS.vigilW = Math.min(1, (ARCS.vigilW || 0) + 0.015);
+  const w = smooth01(ARCS.vigilW), sd = ARCS.vigilSide > 0 ? 'r' : 'l', m = w > 0 && arcVigilMeet();
+  if (!m) return;
+  h.bones.pelvis.getWorldPosition(_avC);
+  _avB.copy(m).lerp(_avC, 0.4); _avB.y += 0.5;
+  ik2(h, sd, m, _avB, w);
+}
+function arcVigilOvN(h) {
+  if (!ARCS.vigilOn) return;
+  const w = smooth01(ARCS.vigilW || 0), m = w > 0 && arcVigilMeet();
+  if (!m) return;
+  _avB.copy(m); _avB.y -= 0.35; _avB.lerp(N.pos, 0.3);   // her elbow stays down on the blanket
+  ik2(h, ARCS.vigilSide > 0 ? 'l' : 'r', _avB.set(m.x, m.y - 0.015, m.z), _avA.copy(m).setY(m.y - 0.4), w * 0.95);
+}
+// The two of them from the foot of the bed, a little to his side, low: her face, his hand on hers.
+function arcVigilCam(b) {
+  if (view === 'fpp') return;
+  const s = b.s;
+  if (s.bedPts) {                                    // low, from her side of the foot of the bed: both faces and the joined hands
+    const bp = s.bedPts, mid = (bp[0][0] + bp[1][0]) / 2, side = bp[1][0] - mid > 0 ? 1 : -1, z0 = bp[1][2], [cx, cy, cz] = ARCS.vigilCam || [0.5, -0.25, -0.35], cp = s.camPt || [0, 1.45, 2.4];
+    camShot = ARCS.shot = { pos: toWorld(s, [cp[0] + side * cx, cp[1] + cy, cp[2] + cz]), look: toWorld(s, [bp[1][0] + side * 0.25, bp[1][1] + 0.2, z0 - 0.55]), t: 60 }; return;
+  }
+  arcBedShot(60);
 }
 function arcFeverCure() {
   const A = S.arc;
@@ -8217,7 +8459,7 @@ function arcFeverCure() {
 // ----- scripted Sena (updateSena, after MAT's rescue): sick in bed, at the lake, at the fire with Tamu, in scenes
 function arcSena(dt) {
   const A = S.arc, id = CH[S.ch].id;
-  if (id === 'fever' && !A.feverDone && A.senaWound !== 'dead' && !R.on) {
+  if (id === 'fever' && !A.feverDone && A.senaWound !== 'dead' && !R.on && !ARCS.vigilDone) {
     const b = arcBed(); if (!b) return false;
     if (R.nOut) { R.nOut = null; N.path = null; }
     N.rest = 0; N.sit = 0; N.node = null; N.speed = 0; N.ride = false; N.h.pose = null; N.h.straddle = false;
@@ -8502,6 +8744,7 @@ function arcHooks(G) {
       target: () => arcTarget(P.pos), sync: () => { ARCS.ch = -1; }, npc: (id) => arcGet(id),   // tests: the live arc NPC (e.g. Pell for a portrait)
       skip: () => { subs.length = 0; subT = 0; $('sub').classList.remove('on'); for (const w of ARCS.waits) if (!w.subs) w.t = clock; },   // tests: fast-forward lines and waits
       season: () => { ARCS.season.snap = true; },    // tests: jump the season tint instead of easing it
+      vigil: (o) => Object.assign(ARCS, o),          // tests: tune the vigil seat (vigilAt: [lateral k, along])
       beats: () => arcBeats(CH[S.ch].id), memTab: () => { $('maptabs').querySelector('[data-mt="mem"]').click(); },
     },
   });
