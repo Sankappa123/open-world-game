@@ -1,0 +1,145 @@
+[
+{
+"until": "!!(window.G && document.getElementById('btn-new').onclick)",
+"timeout": 90000
+},
+{
+"js": "document.getElementById('btn-new').click(); 1",
+"wait": 3500
+},
+{
+"js": "document.getElementById('gate-ok')?.click(); if (document.getElementById('pause').classList.contains('on')) G.pause(false); 1",
+"wait": 800
+},
+{
+"js": "window.UP=()=>{ if (document.getElementById('pause').classList.contains('on')) G.pause(false); }; setInterval(UP, 250); window.LOOK=async(x,y,z)=>{const c=G.camera,d=new c.position.constructor(),f=()=>new Promise(r=>requestAnimationFrame(r));let p=0;for(let i=0;i<6;i++){G.yaw=Math.atan2(-(x-c.position.x),-(z-c.position.z));G.pitch=p;await f();await f();await f();c.getWorldDirection(d);const w=new c.position.constructor(x,y,z).sub(c.position).normalize();p+=(Math.asin(d.y)-Math.asin(w.y))*0.9;}return [G.yaw,p];}; 1"
+},
+{
+"expect": "!G.bow.quest()",
+"name": "no side quest before the cave"
+},
+{
+"js": "G.setCh('herd'); G.time(11); 1",
+"wait": 500
+},
+{
+"until": "G.S.c.bowOffer",
+"timeout": 60000
+},
+{
+"expect": "G.S.c.bowOffer && /Hunter's Bow/.test(G.bow.quest())",
+"name": "Sena offers the bow after the cave; quest shows"
+},
+{
+"js": "for (const [k,n] of [['wood',2],['fiber',8],['hide',2],['stick',2],['flint',2]]) G.give(k,n); const R=(id)=>G.RECIPES.find(r=>r.id===id); G.craft(R('bow')); G.craft(R('quiver')); G.craft(R('arrows')); G.craft(R('arrows')); [G.S.tools.bow, G.S.tools.quiver, G.S.inv.arrow, G.cnt('arrow_made')]"
+},
+{
+"expect": "G.S.tools.bow && G.S.tools.quiver && G.S.inv.arrow===6 && G.cnt('arrow_made')===6",
+"name": "crafted bow, quiver, 6 arrows"
+},
+{
+"js": "UP(); G.tp(40,30); G.N.pos.set(20,0,10); for (const a of G.animals.slice()) if (!a.tame && !a.horse && Math.hypot(a.root.position.x-40,a.root.position.z-30)<80) G.remove(a); 1",
+"wait": 600
+},
+{
+"js": "UP(); 1"
+},
+{
+"key": "Digit5",
+"wait": 400
+},
+{
+"expect": "G.bow.on",
+"name": "key 5 readies the bow"
+},
+{
+"js": "UP(); G.bow.view('fpp'); 1",
+"wait": 600
+},
+{
+"expect": "G.bow.fp().on && G.bow.fp().bow && G.bow.fp().arms",
+"name": "first person: the bow view model shows"
+},
+{
+"js": "UP(); G.bow.aim(); 1",
+"wait": 900
+},
+{
+"expect": "(()=>{const f=G.bow.fp(); return f.nock && f.tip && Math.hypot(f.tip[0], f.tip[1]) > 0.08 && f.grip[0] < -0.03 ? JSON.stringify(f) : 0;})()",
+"name": "first person full draw: arrow nocked, grip and point clear of the crosshair"
+},
+{
+"shot": "bow_fp_draw.png"
+},
+{
+"js": "G.wpn.cancel(); G.bow.view('tpp'); 1",
+"wait": 400
+},
+{
+"js": "UP(); window.DEER=G.spawn('deer', G.P.pos.x, G.P.pos.z+17); DEER.stun=1e6; 1",
+"wait": 500
+},
+{
+"js": "(async()=>{ const o=DEER, log=[]; for (let i=0;i<6 && o.state==='live';i++){ UP(); const p=o.root.position; await LOOK(p.x, p.y+0.75*(o.root.scale.x||1), p.z); const ar=await G.bow.shoot(1); const t0=performance.now(); while(ar && ar.st==='air' && performance.now()-t0<3000) await new Promise(r=>setTimeout(r,50)); log.push(G.bow.st(ar)); } return JSON.stringify({log, state:o.state, far:G.cnt('arrow_far'), deer:G.cnt('arrow_deer')}); })()",
+"wait": 500
+},
+{
+"expect": "DEER.state!=='live' && G.cnt('arrow_deer')>=1 && G.cnt('arrow_far')>=1",
+"name": "a deer brought down by arrows from 17 m"
+},
+{
+"shot": "bow_deer.png"
+},
+{
+"js": "{ const p=G.P.pos, V=p.constructor; for (let i=0;i<3;i++){ const x=p.x+1+i*0.3, z=p.z+1.2, y=G.h(x,z); G.gore.arrow(new V(x,y+3,z-6), new V(x,y,z)); } } 1",
+"wait": 1500
+},
+{
+"js": "UP(); [G.bow.near(), G.findTarget()?.label]"
+},
+{
+"js": "UP(); 1"
+},
+{
+"key": "KeyE",
+"wait": 800
+},
+{
+"expect": "G.cnt('arrow_pick')>=3",
+"name": "E picks up the arrows (3)"
+},
+{
+"until": "G.S.c.bowQDone",
+"timeout": 15000
+},
+{
+"expect": "G.S.c.bowQDone && !G.bow.quest()",
+"name": "side quest complete"
+},
+{
+"js": "{ const p=G.P.pos, V=p.constructor; window.N0=G.S.inv.arrow; for (let i=0;i<2;i++){ const x=p.x-4-i*0.4, z=p.z-3, y=G.h(x,z); G.gore.arrow(new V(x,y+3,z-6), new V(x,y,z)); } } 1",
+"wait": 1500
+},
+{
+"js": "window.NG=G.bow.arrows.filter(s=>s==='ground').length; localStorage.setItem('bowtest', JSON.stringify([NG, G.S.inv.arrow])); G.save(); [NG, G.S.inv.arrow]",
+"wait": 1000
+},
+{
+"reload": true
+},
+{
+"js": "document.getElementById('btn-continue').click(); 1",
+"wait": 6000
+},
+{
+"js": "document.getElementById('gate-ok')?.click(); if (document.getElementById('pause').classList.contains('on')) G.pause(false); [G.bow.arrows.length, G.S.inv.arrow, localStorage.getItem('bowtest')]",
+"wait": 500
+},
+{
+"expect": "(()=>{ const [ng, inv]=JSON.parse(localStorage.getItem('bowtest')); return ng>=2 && G.bow.arrows.filter(s=>s==='ground').length===ng && G.S.inv.arrow===inv && G.S.tools.bow && G.S.c.bowQDone; })()",
+"name": "save and reload: loose arrows, stock, bow and quest kept"
+},
+{
+"shot": "bow_reload.png"
+}
+]

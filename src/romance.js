@@ -31,13 +31,13 @@ export function tierOf(close) { let t = TIERS[0]; for (const x of TIERS) if (clo
 export const HEARTS = [20, 40, 60, 80, 100];
 export const GATE = { hand: 25, embrace: 40, bench: 40, peck: 40, kiss: 60, night: 70, beloved: 80 };
 
-// ----- the Sena menu. s: a snapshot {close, firstKiss, romance:'full'|'fade'|'off', rift, kidNear, gift (has any), giftToday}
+// ----- the Sena menu. s: a snapshot {close, firstKiss, romance:'full'|'fade'|'off', rift, kidNear, gift (has any), giftToday, holding, arms}
 // Returns [{id, ok, hint}] in menu order; 'when' filtering (hidden) vs req (greyed with a hint) as the spec says.
 export function menuRules(s) {
   const out = [{ id: 'talk', ok: true }];
   if (s.romance !== 'off') {
     if (s.holding) out.push({ id: 'letgo', ok: true });
-    else if (s.close >= GATE.hand) out.push({ id: 'hand', ok: true });
+    else if (s.close >= GATE.hand && !s.arms) out.push({ id: 'hand', ok: true });   // arms: Sena is carrying the newborn
     if (s.close >= GATE.embrace) out.push({ id: 'embrace', ok: !s.kidNear, hint: s.kidNear ? 'Not with the little one so close' : '' });
     if (s.close >= GATE.kiss && s.firstKiss != null) out.push({ id: 'kiss', ok: !s.kidNear, hint: s.kidNear ? 'Not with the little one so close' : '' });
   }

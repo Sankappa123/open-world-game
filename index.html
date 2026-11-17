@@ -181,6 +181,7 @@
   #card #card-recap { display: block; max-width: min(620px, 86vw); margin: 14px auto 0; color: var(--ink); opacity: 0.85; font-size: 16px; line-height: 1.45; }
   #card #card-recap:empty, #card #card-season:empty { display: none; }
   #sub b.spk-korr { color: #b9b4ad; } #sub b.spk-tamu { color: #cdb894; } #sub b.spk-wena { color: #d8a89c; } #sub b.spk-pell { color: #a9c6d6; }
+  body:has(#map.on) #card { visibility: hidden; }   /* ARC: the chapter card never lies over the map or the Memories tab */
   #maptabs { display: flex; gap: 6px; justify-content: center; margin: -2px 0 8px; }
   #maptabs button { font: 13px Georgia, serif; letter-spacing: 0.08em; color: var(--dim); background: rgba(255, 255, 255, 0.05); border: 1px solid var(--line); border-radius: 4px; padding: 4px 14px; cursor: pointer; }
   #maptabs button.on { color: #1c140a; background: var(--gold); border-color: var(--gold); }
@@ -349,7 +350,7 @@
   </div>
   <div id="inv" class="panel"></div>
   <div id="bag" class="panel" title="Bag: hold B"><svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path d="M9 6c0-1.8 1.3-3.2 3-3.2s3 1.4 3 3.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M5.2 8.4h13.6l-1.1 11.5c-.1 1.1-1 1.9-2.1 1.9H8.4c-1.1 0-2-.8-2.1-1.9L5.2 8.4z" fill="currentColor" opacity=".85"/><path d="M8.4 8.6c.3 1.9 1.8 3.2 3.6 3.2s3.3-1.3 3.6-3.2" fill="none" stroke="#2a1d12" stroke-width="1.3"/></svg><kbd>B</kbd><span id="bag-ar"></span></div>   <!-- BOW-UI: the pack lives in the bag: hold B -->
-  <div id="wpn" class="panel" style="display:none"><div class="slots"><span data-k="fists"><kbd>1</kbd><i>Fists</i></span><span data-k="axe"><kbd>2</kbd><i>Axe</i></span><span data-k="spear"><kbd>3</kbd><i>Spear</i></span></div><small>hold <kbd>Q</kbd> draw / sheathe · tap <kbd>Q</kbd> swap</small></div>
+  <div id="wpn" class="panel" style="display:none"><div class="slots"><span data-k="fists"><kbd>1</kbd><i>Fists</i></span><span data-k="axe"><kbd>2</kbd><i>Axe</i></span><span data-k="spear"><kbd>3</kbd><i>Spear</i></span><span data-k="bow" style="display:none"><kbd>5</kbd><i>Bow</i></span></div><small>hold <kbd>Q</kbd> draw / sheathe · tap <kbd>Q</kbd> swap</small></div>
   <div id="help" class="panel min">
     <div class="hh"><kbd>F1</kbd> controls</div><div class="hb"><span class="hx"><kbd>F1</kbd> close</span>
     <kbd>W A S D</kbd> move &nbsp;<kbd>Shift</kbd> sprint &nbsp;<kbd>Space</kbd> jump<br />

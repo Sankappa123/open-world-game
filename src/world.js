@@ -296,9 +296,11 @@ export function createWorld(scene, renderer, quality = 'medium') {
   for (const f of woods) for (const n of f.nodes) { n.hp = 4; n.col = addCollider({ x: n.x, z: n.z, r: 0.42 * n.s }); n.y -= 0.12; f.write(n); }
   for (const f of woods) if (/^pine_/.test(f.nat || '')) for (const n of f.nodes) n.col.can = PINE_CAN * n.s;   // WH: boughs down to the ground
 
+  const boulders = [];                                    // BOW
   split(scatter(180, (x, z, h, ny, d) => h > 0.2 && d > 14 && (ny < 0.9 || R() < 0.08), LIMIT + 25, 0.3, 1.3), 3).forEach((nodes, i) => {
     new Field(scene, 'boulder', NAT['rock_medium_' + (i + 1)], nodes, { tint: 0.1, cell: 160 });
     for (const n of nodes) addCollider({ x: n.x, z: n.z, r: 1.25 * n.s });
+    boulders.push(...nodes);                              // BOW: arrows clack off (and sometimes break on) the boulders
   });
 
   const nearTree = (x, z) => treeNodes.some((t) => Math.abs(t.x - x) < 5 && Math.abs(t.z - z) < 5);
@@ -650,5 +652,5 @@ export function createWorld(scene, renderer, quality = 'medium') {
     const dd = Q.decor * Q.decor;                   // SAVE-PERF: squared distances in the per-frame cell loop
     for (const c of decorCells) { const dx = c.x - px, dz = c.z - pz, on = dx * dx + dz * dz < dd; for (const m of c.meshes) m.visible = on; }
   }
-  return { fields, decor: bushBodies, env, setTime, update, clear, setQuality, river, atmosphere, water: river.mesh, caves, landmarks, lake };
+  return { boulders, fields, decor: bushBodies, env, setTime, update, clear, setQuality, river, atmosphere, water: river.mesh, caves, landmarks, lake };
 }

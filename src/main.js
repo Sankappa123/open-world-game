@@ -4,7 +4,7 @@ import { loadNature, NAT, DEBUG } from './nature.js';
 import { loadAnimals, makeAnimal } from './animals.js';
 import { makeSpear, makeAxe, makeTorch, makeStructure, glowM, BUILD, makeScaffold, makeCarryBasket, windowLight } from './entities.js';
 import { makeBlanket, makeBedroll } from './entities.js';   // RST bed props
-import { makeBow, makeArrow, makeQuiver, ARROW_LEN } from './bow.js';   // BOW
+import { makeBow, makeArrow, makeQuiver, ARROW_LEN, BOW_TIPZ } from './bow.js';   // BOW
 import { loadPeople, makeHuman, samplePose, applyPose, clipDuration, BONESETS, ik2, ikLeg, FIT } from './people.js';   // WH ikLeg: riders' legs
 import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';   // WPN viewmodel fists
 import { clamp, lerp, mat } from './util.js';
@@ -341,7 +341,7 @@ function drawInv() {
   if (S.tools.cloak) h += '<span class="tool">Fur cloak</span>';
   if (S.tools.waterskin) h += `<span class="tool">Waterskin<b>${S.skin}/3</b>${survSkinTag()}</span>`;   // SURV: where the water came from
   h += matToolsHud();                                // MAT: the mature packages' tools (boil bag, pot, mantle, bear cloak)
-  for (const k in ITEMS) if (S.inv[k] > 0) h += `<span>${ITEMS[k]}<b>${S.inv[k]}</b></span>`;
+  for (const k in ITEMS) if (S.inv[k] > 0 && !(k === 'arrow' && S.tools.bow)) h += `<span>${ITEMS[k]}<b>${S.inv[k]}</b></span>`;   // BOW: with a bow the arrows show on its chip only
   $('inv').innerHTML = h || '<span>Nothing carried</span>';   // FPP-world: describes the pack, not the hands (fists may be raised)
   const sig = h.replace(/<b>[^<]*<\/b>/g, '').replace(/lit \d+s/, 'lit');   // FHW-r4: an entry appearing or running out shows the stowed first-person pack (counts already toast, e.g. Sena's gathering)
   if (sig !== FPH.sig) { FPH.sig = sig; FPH.until = clock + 4; const bg = $('bag'); bg.classList.remove('pulse'); void bg.offsetWidth; bg.classList.add('pulse'); }   // BOW-UI: a new kind of thing in the bag pulses the icon
@@ -1926,10 +1926,11 @@ function arcUpdate(charge) {
   let n = 0, hit = null, len = 0;
   const push = (p) => { if (n) len += _w3.set(arcPos[n * 3 - 3], arcPos[n * 3 - 2], arcPos[n * 3 - 1]).distanceTo(p); arcPos[n * 3] = p.x; arcPos[n * 3 + 1] = p.y; arcPos[n * 3 + 2] = p.z; arcLen[n++] = len; };
   push(_ap);
-  for (let i = 0; i < 180 && !hit; i++) { hit = spearStep(_ap, _av, _at); if (!hit) push(_ap); }
+  for (let i = 0; i < 180 && !hit; i++) { hit = W.aim?.bow ? bowStep(_ap, _av, _at) : spearStep(_ap, _av, _at); if (!hit) push(_ap); }   // BOW: trees, boulders, walls stop the arrow's arc
   if (hit === 'ground') tipToGround(_ap, _av, _at);
   if (hit) push(_at);
-  ARC.n = n; ARC.hit = hit ? (hit === 'ground' ? 'ground' : 'animal') : null; ARC.end.copy(hit && hit !== 'ground' ? hit.root.position : _at);
+  const obst = hit === 'obst';                        // BOW
+  ARC.n = n; ARC.hit = hit ? (hit === 'ground' || obst ? 'ground' : 'animal') : null; ARC.end.copy(hit && hit !== 'ground' && !obst ? hit.root.position : _at);
   arcGeo.setDrawRange(0, n); arcGeo.attributes.position.needsUpdate = true; arcGeo.attributes.lineDistance.needsUpdate = true;
   const mode = settings.arc ?? 'on', op = mode === 'off' ? 0 : mode === 'fade' ? 1 - THREE.MathUtils.clamp((charge - 0.7) / 0.3, 0, 1) : 1;
   const ok = !P.ride || Math.abs(wrapA(camFace() - P.face)) <= 2.1;
@@ -1939,6 +1940,7 @@ function arcUpdate(charge) {
   arcRing.material.color.set(ARC.hit === 'animal' ? 0xff5a4a : 0xffd27a);       // WH: warm amber on the ground, red on game
   arcRing.scale.setScalar(1 + 0.12 * Math.sin(clock * 7));                       // a slow pulse draws the eye to the landing
   arcRing.position.set(ARC.end.x, getHeight(ARC.end.x, ARC.end.z) + 0.04, ARC.end.z);
+  if (obst) { arcRing.position.copy(ARC.end); arcRing.lookAt(_ap.copy(ARC.end).sub(_av)); } else arcRing.rotation.set(-Math.PI / 2, 0, 0);   // BOW: the mark stands on the trunk or stone it will strike
 }
 function wpnAimStart() {
   if (!hasSpear() || W.spearOut || P.swim || P.sit > 0 || (wBusy() && !P.ride) || P.taming || busy) return false;
@@ -2131,6 +2133,7 @@ function bowToggle() {
 }
 function bowOff() { if (BOW.on) { BOW.on = false; if (W.aim) wpnCancelAim(); drawInv(); } }
 function bowAimStart() {
+  BOW.tire = 0;
   if (P.swim || P.ride || P.sit > 0 || wBusy() || busy) return;
   if (!(S.inv.arrow > 0)) { toast('No arrows'); A.hit(300, 0.05, 0.05); return; }
   W.aim = { t: 0, charge: 0, bow: true }; W.rmb = true; W.idleT = 0;
@@ -2140,13 +2143,26 @@ function bowLoose() {
   const a = W.aim; if (!a) return;
   if (a.charge < 0.12) { wpnCancelAim(); return; }   // a twitch lets the string down, no arrow spent
   const ar = { m: makeArrow(), pos: new THREE.Vector3(), vel: new THREE.Vector3(), tip: new THREE.Vector3(), st: 'air', acc: 0, steps: 0, o: null, from: P.pos.clone() };
-  const v = aimSolve(a.charge, ar.pos, ar.vel); ar.vel.multiplyScalar(v);
+  const v = aimSolve(a.charge, ar.pos, ar.vel);
+  const wob = 0.045 * (1 - a.charge) ** 1.5 + 0.02 * (BOW.tire || 0);   // a quick or a shaking shot strays
+  ar.vel.x += (rand() - 0.5) * 2 * wob; ar.vel.y += (rand() - 0.5) * 2 * wob; ar.vel.z += (rand() - 0.5) * 2 * wob; ar.vel.normalize().multiplyScalar(v);
   ar.dmg = Math.round(4 + 10 * a.charge);
+  BOW.relT = clock; BOW.relCh = a.charge;            // BOW-FPP: the release follow-through
   scene.add(ar.m); BOW.arrows.push(ar); bowPoseArrow(ar);
   S.inv.arrow--;
   wpnCancelAim(); P.cool = 0.35; W.punch = 0.08;
   A.hit(220, 0.08, 0.3); A.hit(1400, 0.05, 0.12);   // twang and the whoosh
   bowTrim(); drawInv();
+}
+// Full draw held past ~4 s: stamina drains, the aim starts to shake (and the shot strays); spent, the string comes down.
+function bowHold(dt) {
+  const over = W.aim.t - 4.6;
+  BOW.tire = clamp(over / 3, 0, 1);
+  if (over <= 0) return;
+  S.stam = Math.max(0, S.stam - dt * 6);
+  const k = (0.004 + 0.012 * BOW.tire) * (settings.reduceMotion ? 0.4 : 1);
+  camYaw += Math.sin(clock * 9.3) * k * dt * 9 + (rand() - 0.5) * k * 0.5; camPitch += Math.sin(clock * 7.1 + 1) * k * dt * 9;
+  if (S.stam <= 0.5) { wpnCancelAim(); toast('Your arms give out: the string comes down'); }
 }
 function bowPoseArrow(ar) { ar.m.position.copy(ar.tip.lengthSq() ? ar.tip : ar.pos); ar.m.lookAt(_bA.copy(ar.m.position).add(ar.vel)); }
 function bowTrim() {                                  // at most 40 loose arrows in the world: the oldest go
@@ -2157,10 +2173,89 @@ function bowRemove(ar) { ar.m.removeFromParent(); const i = BOW.arrows.indexOf(a
 function bowLandGround(ar) {
   const gy = tipToGround(ar.pos, ar.vel, ar.tip);
   if (gy < -0.25) { A.hit(1800, 0.25, 0.25); wpnPuff(ar.tip.x, 0, ar.tip.z, 0x9ab0b8); bowRemove(ar); return; }   // lost in the water
-  if (rand() < 0.12) { A.hit(2600, 0.06, 0.12); wpnPuff(ar.tip.x, gy + 0.1, ar.tip.z, 0x8a7458); bowRemove(ar); return; }   // snapped
+  if (ar.bounced) { bowLie(ar, ar.tip.x, ar.tip.z); return; }   // after a ricochet it falls flat
+  if (bowRocky(ar.tip.x, ar.tip.z)) { _bD.set(0, 1, 0); bowRock(ar, _bD); return; }   // stone under the grass: clack, 30% it breaks
   _bA.copy(ar.vel).normalize(); ar.m.position.copy(ar.tip).addScaledVector(_bA, 0.12); ar.m.lookAt(_bB.copy(ar.m.position).add(_bA));
   ar.st = 'ground'; A.hit(480, 0.08, 0.25); wpnPuff(ar.tip.x, gy + 0.08, ar.tip.z, 0x8a7458);
   bowRecord();
+}
+// The arrow's own step: the spear's (game, raiders, ground), then tree trunks, boulders and buildings. The arc preview
+// uses it too while the bow is drawn, so the arc stops where the arrow will.
+const BOWOB = { k: null, n: null };
+function bowStep(pos, vel, tip, ar) {
+  const r = spearStep(pos, vel, tip); if (r) return r;
+  if (ar && ar.noOb > 0) { ar.noOb--; return null; }
+  const t = tip, cell = bowCell(t.x, t.z);
+  if (cell) for (const [k, n] of cell) {
+    if (!n.alive) continue;
+    const dx = t.x - n.x, dz = t.z - n.z;
+    if (k === 'rock') {
+      const rr = 1.15 * n.s, dy = (t.y - n.y) / (1.05 * n.s);
+      if (dy < 1 && (dx * dx + dz * dz) / (rr * rr) + Math.max(0, dy) ** 2 < 1) { BOWOB.k = 'rock'; BOWOB.n = n; return 'obst'; }
+    } else {
+      const rr = 0.27 * n.s;
+      if (dx * dx + dz * dz < rr * rr && t.y > n.y - 0.2 && t.y < n.y + 5 * n.s) { BOWOB.k = 'tree'; BOWOB.n = n; return 'obst'; }
+    }
+  }
+  for (const st of structs) {
+    const c = st.col; if (!c || c.off) continue;
+    const dx = t.x - c.x, dz = t.z - c.z;
+    if (dx * dx + dz * dz < c.r * c.r && t.y < st.group.position.y + 2.3) { BOWOB.k = 'wood'; BOWOB.n = c; return 'obst'; }
+  }
+  return null;
+}
+// Trunks and boulders bucketed on a 6 m grid (built on first use; felled trees stay in it, skipped by n.alive), so a
+// step tests a handful of obstacles, not every tree in the valley (the arc preview runs up to 180 steps a frame).
+let bowGrid = null;
+function bowCell(x, z) {
+  if (!bowGrid) {
+    bowGrid = new Map();
+    const add = (k, n, r) => { for (let i = Math.floor((n.x - r) / 6); i <= Math.floor((n.x + r) / 6); i++) for (let j = Math.floor((n.z - r) / 6); j <= Math.floor((n.z + r) / 6); j++) { const key = i * 4096 + j; if (!bowGrid.has(key)) bowGrid.set(key, []); bowGrid.get(key).push([k, n]); } };
+    for (const b of world.boulders || []) add('rock', b, 1.2 * b.s);
+    for (const f of world.fields) if (f.kind === 'tree') for (const n of f.nodes) add('tree', n, 0.3 * n.s);
+  }
+  return bowGrid.get(Math.floor(x / 6) * 4096 + Math.floor(z / 6));
+}
+const bowInObst = (k, n, p) => k === 'rock' ? ((p.x - n.x) ** 2 + (p.z - n.z) ** 2) / (1.15 * n.s) ** 2 + Math.max(0, (p.y - n.y) / (1.05 * n.s)) ** 2 < 1
+  : (p.x - n.x) ** 2 + (p.z - n.z) ** 2 < (k === 'tree' ? 0.27 * n.s : n.r) ** 2;
+// Rocky ground, by the same weights the terrain shader paints rock with (steep or high), or a loose stone at the spot.
+function bowRocky(x, z) {
+  const ny = slopeY(x, z), h = getHeight(x, z);
+  if (clamp((0.86 - ny) / 0.16, 0, 1) + clamp((h - 30) / 16, 0, 1) * 0.75 > 0.5) return true;
+  for (const f of world.fields) if (f.kind === 'stone') for (const n of f.nodes) if (n.alive && Math.abs(n.x - x) < 0.3 && Math.abs(n.z - z) < 0.3) return true;
+  return false;
+}
+function bowLandObst(ar) {
+  const k = BOWOB.k, n = BOWOB.n;
+  _bA.copy(ar.vel).normalize();
+  for (let i = 0; i < 20 && bowInObst(k, n, ar.tip); i++) ar.tip.addScaledVector(_bA, -0.04);   // back to the surface it struck
+  ar.pos.copy(ar.tip).addScaledVector(_bA, -SP_TIP);
+  if (k === 'rock') {
+    _bD.set(ar.tip.x - n.x, Math.max(0.2, ar.tip.y - n.y), ar.tip.z - n.z).normalize();
+    bowRock(ar, _bD); return;
+  }
+  ar.m.position.copy(ar.tip).addScaledVector(_bA, k === 'tree' ? 0.07 : 0.05); ar.m.lookAt(_bB.copy(ar.m.position).add(_bA));
+  ar.st = 'ground'; ar.inObst = k; ar.ob = k === 'tree' ? n : null;
+  A.hit(380, 0.07, 0.32); A.hit(140, 0.09, 0.2);     // a thunk in wood
+  wpnPuff(ar.tip.x, ar.tip.y, ar.tip.z, 0x7a5a3a);
+  bowRecord();
+}
+// Stone: a clack and a spark of grit; 30% the shaft snaps, otherwise it glances off and drops.
+function bowRock(ar, nrm) {
+  A.hit(2400, 0.035, 0.3); A.hit(1650, 0.05, 0.18);
+  wpnPuff(ar.tip.x, ar.tip.y + 0.05, ar.tip.z, 0xa8a49a);
+  if (ar.bounced || rand() < 0.3) {
+    if (ar.bounced) { bowLie(ar, ar.tip.x, ar.tip.z); return; }
+    A.hit(2900, 0.05, 0.14); bowRemove(ar); BOW.broke = (BOW.broke || 0) + 1; return;   // snapped on the stone
+  }
+  const d = ar.vel.dot(nrm); ar.vel.addScaledVector(nrm, -2 * d).multiplyScalar(0.11); ar.vel.y += 1.5;   // most of its speed is lost on the stone
+  ar.bounced = true; ar.noOb = 8; ar.pos.copy(ar.tip).addScaledVector(_bA.copy(ar.vel).normalize(), -SP_TIP);
+  ar.tip.addScaledVector(nrm, 0.05); ar.pos.addScaledVector(nrm, 0.05);
+  BOW.glanced = (BOW.glanced || 0) + 1;
+}
+function bowLie(ar, x, z) {                           // flat on the ground, a little askew
+  ar.m.position.set(x, getHeight(x, z) + 0.025, z); ar.m.rotation.set(0.035, rand() * 6.28, 0.3, 'YXZ');   // the shaft (local +z) level, the point just touching
+  ar.st = 'ground'; ar.ob = null; A.hit(900, 0.04, 0.08); bowRecord();
 }
 function bowLandAnimal(ar, o) {
   _bA.copy(ar.vel).normalize();
@@ -2182,8 +2277,9 @@ function bowTick(dt) {
       ar.acc += dt;
       while (ar.acc >= SP_DT && ar.st === 'air') {
         ar.acc -= SP_DT;
-        const hit = spearStep(ar.pos, ar.vel, ar.tip);
-        if (hit === 'ground') bowLandGround(ar);
+        const hit = bowStep(ar.pos, ar.vel, ar.tip, ar);
+        if (hit === 'obst') bowLandObst(ar);
+        else if (hit === 'ground') bowLandGround(ar);
         else if (hit && ar.skip !== hit && goreArrowAim(ar, hit)) bowLandAnimal(ar, hit);   // GORE: only a line that really meets the body
         else if (hit) { ar.skip = hit; if (ar.tip.y < getHeight(ar.tip.x, ar.tip.z) + 0.05) bowLandGround(ar); }   // GORE: a near miss flies on
         else if (++ar.steps > 600) bowRemove(ar);
@@ -2193,11 +2289,9 @@ function bowTick(dt) {
       const o = ar.o;
       if (!o || !o.root.parent || !o.root.visible || o.looted) {   // the body is gone: the arrow falls at its feet
         ar.m.getWorldPosition(_bA); scene.attach(ar.m);
-        const x = _bA.x + (rand() - 0.5) * 0.6, z = _bA.z + (rand() - 0.5) * 0.6;
-        ar.m.position.set(x, getHeight(x, z) + 0.03, z); ar.m.rotation.set(-Math.PI / 2 + 0.05, 0, rand() * 6.28, 'YXZ');
-        ar.st = 'ground'; ar.o = null; bowRecord();
+        ar.o = null; bowLie(ar, _bA.x + (rand() - 0.5) * 0.6, _bA.z + (rand() - 0.5) * 0.6);   // BOW: lies flat (it used to stand point-up, buried)
       }
-    }
+    } else if (ar.ob && !ar.ob.alive) { ar.m.getWorldPosition(_bA); bowLie(ar, _bA.x, _bA.z); }   // the tree it stood in was felled
   }
   bowSideQuest();
 }
@@ -2225,13 +2319,15 @@ function bowLoad() {
     ar.m.position.set(r[0], r[1], r[2]); ar.m.quaternion.set(r[3], r[4], r[5], r[6]); scene.add(ar.m); BOW.arrows.push(ar);
   }
 }
+// The look direction from the view angles (the same as the play camera's; a story or test camera does not bend the draw)
+const bowAimDir = (v) => { const cp = Math.cos(camPitch); return v.set(-Math.sin(camYaw) * cp, -Math.sin(camPitch), -Math.cos(camYaw) * cp).normalize(); };
 // Pose (override 31, after the weapon IK): bow arm out at the grip, right hand drawing the string to the cheek.
 P.h.addOverride('bowIK', 31, (h) => {
   if (!BOW.on || W.aimW < 0.002 || P.ride || P.swim) return;
   const k = W.aimW, ch = W.aim ? W.aim.charge : 1;
   yawBone(h.bones.spine_02, -0.55 * k);              // side-on: the bow shoulder toward the mark
   h.bones.spine_02.updateWorldMatrix(false, true);
-  camera.getWorldDirection(_bD);
+  bowAimDir(_bD);
   const fx = _bD.x, fz = _bD.z, hl = Math.hypot(fx, fz) || 1, rx = -fz / hl, rz = fx / hl;
   h.bones.upperarm_l.getWorldPosition(_bA);          // left fist out along the line of sight
   _bA.addScaledVector(_bD, 0.6); _bA.x += rx * 0.04; _bA.z += rz * 0.04;
@@ -2250,6 +2346,12 @@ const wp = (b, v) => { b.updateWorldMatrix(true, false); return v.setFromMatrixP
 P.h.addOverride('bowProps', 99, (h) => {
   const body = h.root.visible && !(P.rest > 0);
   bowMesh.visible = !!S.tools.bow && body; quiverMesh.visible = !!S.tools.quiver && body; nockArrow.visible = false;
+  if (P.sit > 0 && body) {                            // seated: leaning at the bench end, or (other seats) set aside like the spear
+    if (BOW.bench) { const b = BOW.bench; bowMesh.position.copy(b.bp); bowMesh.quaternion.copy(b.bq); bowMesh.userData.setNock(null); quiverMesh.position.copy(b.qp); quiverMesh.quaternion.copy(b.qq); quiverMesh.userData.setCount(S.inv.arrow || 0); }
+    else bowMesh.visible = quiverMesh.visible = false;
+    return;
+  }
+  BOW.bench = null;
   const f = P.face, fx = Math.sin(f), fz = Math.cos(f), rx = -fz, rz = fx;
   if (quiverMesh.visible) {
     wp(h.bones.pelvis, _bA);
@@ -2267,7 +2369,7 @@ P.h.addOverride('bowProps', 99, (h) => {
   if (inHand) {
     wp(h.bones.hand_l, _bA);
     const drawn = W.aimW > 0.3;
-    if (drawn) camera.getWorldDirection(zx).normalize(); else zx.set(fx, 0, fz);
+    if (drawn) bowAimDir(zx); else zx.set(fx, 0, fz);
     up.set(0, 1, 0).addScaledVector(xAx.set(rx, 0, rz), drawn ? -0.18 : 0.5).normalize();   // a slight cant when drawn; carried low when not
     xAx.crossVectors(up, zx).normalize(); up.crossVectors(zx, xAx).normalize();
     _bM.makeBasis(xAx, up, zx); bowMesh.quaternion.setFromRotationMatrix(_bM); bowMesh.position.copy(_bA);
@@ -2285,6 +2387,20 @@ P.h.addOverride('bowProps', 99, (h) => {
     bowMesh.position.set(_bA.x - fx * 0.15 - rx * 0.03, _bA.y - 0.08, _bA.z - fz * 0.15 - rz * 0.03); bowMesh.userData.setNock(null);   // snug on the shoulder blades
   }
 });
+// Sitting on a fire's bench: the bow stands upright at the far end of the log (the spear is planted at the near end),
+// tipped 12 degrees away from the fire, and the quiver leans against it, mouth up.
+function bowBench(s) {
+  if (!S.tools.bow && !S.tools.quiver) return;
+  const c = Math.cos(s.rot || 0), sn = Math.sin(s.rot || 0), lx = sn, lz = c;
+  const ox = P.pos.x - s.x, oz = P.pos.z - s.z, od = Math.hypot(ox, oz) || 1, ax = ox / od, az = oz / od;
+  const x = P.pos.x - lx * 0.72 + ax * 0.3, z = P.pos.z - lz * 0.72 + az * 0.3, y = getHeight(x, z);
+  const up = new THREE.Vector3(ax * Math.sin(0.21), Math.cos(0.21), az * Math.sin(0.21)), back = new THREE.Vector3(ax, 0, az), side = new THREE.Vector3().crossVectors(up, back).normalize();
+  const bq = new THREE.Quaternion().setFromRotationMatrix(new THREE.Matrix4().makeBasis(side, up, new THREE.Vector3().crossVectors(side, up)));   // the limbs upright, the string toward the fire
+  const bp = new THREE.Vector3(x, y + 0.7, z);
+  const qp = new THREE.Vector3(x - lx * 0.16 + ax * 0.06, y + 0.29, z - lz * 0.16 + az * 0.06);
+  const qq = new THREE.Quaternion().setFromAxisAngle(side, 0.0).multiply(new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 1, 0), new THREE.Vector3(ax * 0.25 + lx * 0.1, 1, az * 0.25 + lz * 0.1).normalize()));
+  BOW.bench = { bp, bq, qp, qq };
+}
 // Side quest "The Hunter's Bow": offered by Sena after the cave, shown under the chapter goals.
 const BOWQ = () => [
   ['Craft a bow', () => !!S.tools.bow], ['Craft a quiver', () => !!S.tools.quiver], ['Make 6 flint arrows', () => cnt('arrow_made') >= 6],
@@ -2296,7 +2412,7 @@ function bowQuestHtml() {
 }
 function bowSideQuest() {
   if (!playing || busy || !bowUnlocked() || S.c.bowQDone) return;
-  if (!S.c.bowOffer && subT <= 0) {
+  if (!S.c.bowOffer && subT <= 0 && !arcHold() && !MAT.choice && !(CH[S.ch].id === 'fever' && !S.arc.feverDone)) {   // ARC: never over a story scene or a choice, nor while Sena lies in fever
     S.c.bowOffer = 1;
     say('Sena', 'The flint we chipped in the hollow... bind a point to a straight shaft and you could take a deer from twice a spear\'s throw. Let me show you how to string a bow.');
     toast('New side quest: The Hunter\'s Bow'); drawQuest();
@@ -2358,6 +2474,7 @@ function wpnUpdate(dt) {
   // aim
   if (W.aim) {
     W.aim.t += dt; W.aim.charge = Math.min(1, W.aim.t / 0.6); W.idleT = 0;
+    if (W.aim.bow) bowHold(dt);                        // BOW: a long hold at full draw tires the arms
     camera.getWorldDirection(aimDir);
     arcUpdate(W.aim.charge);
   }
@@ -2448,6 +2565,7 @@ function wpnSnapDrawn() {
 // Sitting by the fire: the spear is planted in the ground at the end of Aro's bench (wpnUnSit takes it back).
 function wpnBench(s) {
   wpnStowAll('sit', true);
+  bowBench(s);                                       // BOW: the bow and quiver lean at the other end of the bench
   if (!hasSpear() || W.spearOut) return;
   const c = Math.cos(s.rot || 0), sn = Math.sin(s.rot || 0), lx = sn, lz = c;               // the log runs along the fire's local Z
   const ox = P.pos.x - s.x, oz = P.pos.z - s.z, od = Math.hypot(ox, oz) || 1;
@@ -2512,16 +2630,18 @@ function wpnQUp() {
 // HUD chip (state changes only)
 function wpnHud() {
   const el = $('wpn'); if (!el) return;
-  const out = W.spearOut, key = [W.sel, W.st === 'drawn' || W.st === 'drawing', hasAxe(), hasSpear(), out, !!S.tools.flintaxe, !!S.tools.flintspear, out && spearWhere()].join();
+  const out = W.spearOut, key = [W.sel, W.st === 'drawn' || W.st === 'drawing', hasAxe(), hasSpear(), out, !!S.tools.flintaxe, !!S.tools.flintspear, out && spearWhere(), !!S.tools.bow, BOW.on, S.inv.arrow > 0].join();   // BOW
   if (el.dataset.k === key) return; el.dataset.k = key;
   for (const s of el.querySelectorAll('[data-k]')) {
-    const k = s.dataset.k;
-    s.classList.toggle('cur', k === W.sel); s.classList.toggle('off', !owns(k) || (k === 'spear' && out));
+    const k = s.dataset.k; if (k === 'bow') continue;   // BOW: set below
+    s.classList.toggle('cur', k === W.sel && !BOW.on); s.classList.toggle('off', !owns(k) || (k === 'spear' && out));
     s.classList.toggle('drawn', k === W.sel && (W.st === 'drawn' || W.st === 'drawing'));
     const n = s.querySelector('i');
     if (n) n.textContent = k === 'spear' ? (out ? 'Spear' + (spearWhere() ? ' — ' + spearWhere() : ' — thrown') : S.tools.flintspear ? 'Flint spear' : 'Spear') : k === 'axe' ? (S.tools.flintaxe ? 'Flint axe' : 'Axe') : 'Fists';
   }
-  el.style.display = hasAxe() || hasSpear() ? '' : 'none';
+  const bs = el.querySelector('[data-k="bow"]');      // BOW: the bow's slot (key 5), lit while it is out
+  if (bs) { bs.style.display = S.tools.bow ? '' : 'none'; bs.classList.toggle('cur', BOW.on); bs.classList.toggle('drawn', BOW.on); bs.classList.toggle('off', !(S.inv.arrow > 0)); }
+  el.style.display = hasAxe() || hasSpear() || S.tools.bow ? '' : 'none';
 }
 
 // ----- first-person viewmodel: its own scene and camera, drawn over the world after a depth clear
@@ -5693,7 +5813,7 @@ function romTarget(p) {
 }
 function romSnap() {
   const has = ['beads', 'carving', 'meat'].some((k) => S.inv[k] > 0);
-  return { close: S.close, firstKiss: S.rom.firstKiss, romance: romSetting(), rift: S.arc?.rift || 0, kidNear: romKidNear(), gift: has, giftToday: S.rom.dayCaps.gift === S.day, holding: !!ROM.hand };
+  return { close: S.close, firstKiss: S.rom.firstKiss, romance: romSetting(), rift: S.arc?.rift || 0, kidNear: romKidNear(), gift: has, giftToday: S.rom.dayCaps.gift === S.day, holding: !!ROM.hand, arms: !!kidHeld };
 }
 const ROM_LABEL = { talk: 'Talk', hand: 'Hold her hand', letgo: 'Let go of her hand', embrace: 'Embrace her', kiss: 'Kiss her', gift: 'Give a gift…' };
 const ROM_ACT = { talk: () => romTalk(), hand: () => romHand(true), letgo: () => romHand(false), embrace: () => romEmbrace(), kiss: () => romKiss(), gift: () => romGiftMenu() };
@@ -5748,6 +5868,7 @@ function romTalkTick(dt) {
 function romCanHand() {
   if (romSetting() === 'off') return 'off';
   if (P.swim || P.ride || N.ride || P.sit > 0 || P.rest > 0 || senaLit || W.st === 'drawn' || W.aim || hostileNear(20) || N.downed || P.downed > 0) return 'busy';
+  if (kidHeld) return 'busy';                        // the newborn is in both her arms
   return null;
 }
 function romHand(on = true, force = false) {
@@ -5764,10 +5885,11 @@ function romHand(on = true, force = false) {
   return 'ok';
 }
 function romHandOff() { ROM.hand = null; }
+function romSpeed(sp) { return ROM.hand && !ROM.scene && !P.swim ? Math.min(sp, 1.9) : sp; }
 function romHandTick(dt) {
   const H = ROM.hand;
   const sprint = (keys.ShiftLeft || keys.ShiftRight || P.auto) && P.speed > 0.5;
-  if (sprint || P.air || romCanHand() || romDist() > 3.5 || busy) { romHandOff(); return false; }
+  if (!H.rite && (sprint || P.air || romCanHand() || romDist() > 3.5 || busy)) { romHandOff(); return false; }
   H.t += dt;
   const fx = Math.sin(P.face), fz = Math.cos(P.face), rx = -fz, rz = fx;   // Aro's right
   const tx = P.pos.x + rx * 0.55, tz = P.pos.z + rz * 0.55;
@@ -6065,6 +6187,7 @@ async function romNight(s) {
   $('restdip').classList.add('on'); cine(true);
   await romSleep(380);
   if (s.col) s.col.off = true;
+  ROM.nightFloor = s.group.position.y + 0.19;                                              // both on the planks (the house can sit on a slope)
   const hx = s.hearthPt || [1.9, 0.7, -1.2];
   N.pos.copy(W3([hx[0] - 0.75, 0, hx[2] + 0.62])); P.pos.copy(W3([hx[0] - 1.55, 0, hx[2] + 1.45]));
   N.face = Math.atan2(W3(hx).x - N.pos.x, W3(hx).z - N.pos.z); P.face = Math.atan2(N.pos.x - P.pos.x, N.pos.z - P.pos.z);
@@ -6086,13 +6209,18 @@ async function romNight(s) {
   busy = false;                                                                            // the scene takes busy itself
   S.rom.kisses = (S.rom.kisses || 0) + 1;
   const mid = new THREE.Vector3().addVectors(P.pos, N.pos).multiplyScalar(0.5);
-  const scP = romSceneStart('kiss', { mid, keepCam: true, fade: false, camPos: W3([hx[0] - 2.6, 1.45, hx[2] + 0.55]), dur: 3.6 });
+  // side-on two-shot at 1.5 m, on whichever side of the couple stays inside the room (a fixed spot ended up behind Aro)
+  const ux = N.pos.x - P.pos.x, uz = N.pos.z - P.pos.z, ul = Math.hypot(ux, uz) || 1, room = (q) => { const [x, z] = rstLocal(s, q); return Math.min(2.5 - Math.abs(x), 1.9 - Math.abs(z)); };
+  const sides = [1, -1].map((sg) => new THREE.Vector3(mid.x + (uz / ul) * sg * 1.5, ROM.nightFloor + 1.45, mid.z - (ux / ul) * sg * 1.5));
+  const kissCam = room(sides[0]) >= room(sides[1]) ? sides[0] : sides[1];
+  const scP = romSceneStart('kiss', { mid, keepCam: true, fade: false, camPos: kissCam, camLook: new THREE.Vector3(mid.x, ROM.nightFloor + 1.5, mid.z), dur: 3.6 });
   // the kiss is cut short by the fade: black over the embrace, then the card
   await romSleep(2300);
   $('fade-text').textContent = S.arc?.season === 'winter' ? ROMD.L.nightCardWinter : ROMD.L.nightCard; $('fade').classList.add('on');
   await scP;
   await romSleep(1300);
   busy = false;
+  ROM.nightFloor = null; N.jy = 0; P.jy = 0;
   const ok = romBedNow(s);
   for (const c of kids) c.h.root.visible = true;
   if (ok) {
@@ -6118,6 +6246,8 @@ function romBedNow(s) {
 }
 on('rested', (e) => {
   if (e.together) romShared();
+  // a heart event that was waiting for a quiet moment: the morning after a rest together (the fire sit is the other one)
+  if (e.together && !ROM.nightPending) { const n = romHeartDue(false); if (n) setTimeout(() => { if (!busy && !ROM.scene && !R.on && playing && romDist() < 6 && !hostileNear(20) && romHeartDue(false) === n) romHeart(n); }, 5000); }
   if (!ROM.nightPending) return;
   ROM.nightPending = false;
   S.rom.contentUntil = S.gh + 16;
@@ -6140,23 +6270,42 @@ function romOchre(on) {
     }
   }
 }
+// the cord: two loops of ochre-red braid around both joined wrists (a straight rod between the hands vanished when they touched)
+function romCordMake() {
+  const g = new THREE.Group(), m = new THREE.MeshStandardMaterial({ color: 0xa8341c, roughness: 0.85 });
+  for (const o of [-0.42, 0.42]) { const t = new THREE.Mesh(new THREE.TorusGeometry(1, 0.14, 6, 18), m); t.position.z = o; t.rotation.z = o; g.add(t); }   // unit size: scaled to the wrists
+  const tail = new THREE.Mesh(new THREE.CylinderGeometry(0.12, 0.08, 3, 5), m); tail.position.set(0.3, -1.9, 0.2); tail.rotation.z = 0.25; g.add(tail);   // the loose end
+  return g;
+}
 function romCordTick() {
-  if (!ROM.cord) return;
+  if (!ROM.cord || !ROM.cord.visible) return;
   const a = P.h.bones.hand_r.getWorldPosition(_rv), b = N.h.bones.hand_l.getWorldPosition(_rv2);
-  ROM.cord.position.addVectors(a, b).multiplyScalar(0.5);
-  ROM.cord.lookAt(b); ROM.cord.scale.set(1, 1, Math.max(0.05, a.distanceTo(b) + 0.06));
+  const r = Math.max(0.045, a.distanceTo(b) / 2 + 0.035);
+  P.h.bones.lowerarm_r.getWorldPosition(_rv3);
+  ROM.cord.position.addVectors(a, b).multiplyScalar(0.5).addScaledVector(_rv3.sub(a).normalize(), 0.035);   // just above the wrists
+  ROM.cord.lookAt(_rv3.multiplyScalar(-1).add(ROM.cord.position));                                         // loops round the forearms
+  ROM.cord.scale.setScalar(r);
 }
 async function romScene(kind = 'handfast', o = {}) {
   if (kind !== 'handfast' || ROM.scene) return null;
   ROM.music = true;
   try {
-    const st = o.at || LMK?.stones || null;
+    const st = o.at || LMK?.stones || null, joined = romSetting() !== 'off';
     if (st && Math.hypot(st.x - P.pos.x, st.z - P.pos.z) < 60) { P.pos.set(st.x + 2.2, 0, st.z + 1.2); }
-    N.pos.set(P.pos.x + Math.sin(P.face) * 0.9, 0, P.pos.z + Math.cos(P.face) * 0.9);
+    if (ROM.talk) { ROM.talk = null; if (N.h.pose === 'talk') N.h.pose = null; }
+    if (typeof wpnStowAll === 'function') wpnStowAll('rom', true);
+    for (const e of [P, N]) { if (e.sit > 0) endSit(e); e.h.pose = null; e.vx = e.vz = 0; e.speed = 0; e.node = null; }
+    if (st) P.face = Math.atan2(st.x - P.pos.x, st.z - P.pos.z);                         // side by side, facing the stones
+    const fx = Math.sin(P.face), fz = Math.cos(P.face), rx = -fz, rz = fx;
+    N.pos.set(P.pos.x + rx * 0.55, 0, P.pos.z + rz * 0.55); N.face = P.face;
     romOchre(true);
-    if (!ROM.cord) { ROM.cord = new THREE.Mesh(new THREE.CylinderGeometry(0.012, 0.012, 1, 6).rotateX(Math.PI / 2), new THREE.MeshStandardMaterial({ color: 0xa03a22, roughness: 0.9 })); scene.add(ROM.cord); }
-    ROM.cord.visible = true;
-    ROM.hand = { t: 1, walk: 0, paid: true }; ROM.handW = 1;
+    if (!ROM.cord) { ROM.cord = romCordMake(); scene.add(ROM.cord); }
+    ROM.cord.visible = joined;
+    if (joined) { ROM.hand = { t: 1, walk: 0, paid: true, rite: true }; ROM.handW = 1; }            // rite: held through the vow choice (busy)
+    // a front three-quarter two-shot: their faces, the joined hands and the cord, the stones behind them
+    const mx = P.pos.x + rx * 0.28, mz = P.pos.z + rz * 0.28, gy = getHeight(mx, mz);
+    const cp = new THREE.Vector3(mx + fx * 3.1 + rx * 1.1, gy + 1.5, mz + fz * 3.1 + rz * 1.1), cl = new THREE.Vector3(mx, gy + 1.15, mz);
+    structCam(cl, cp); R.lastLook = null; rstShot(cp, cl, 1.2); cine(true); ROM.riteCam = true;
     say('Sena', 'Here, where the old ones stood. Tie it, Aro. Both our hands.');
     await romWaitSubs(12000);
     while (busy && !MAT.choice) await romSleep(200);
@@ -6166,11 +6315,21 @@ async function romScene(kind = 'handfast', o = {}) {
     say('Sena', 'Then I will hold you to it. Every day of it.');
     await romWaitSubs(16000);
     ROM.hand = null; ROM.cord.visible = false;
-    if (romSetting() !== 'off') await romSceneStart('kiss', { lines: null });
+    if (romSetting() !== 'off') await romSceneStart('kiss', { lines: null, keepCam: true });
+    // the dance: a step apart (the clip is a solo dance), a wider shot held over it, then the camera goes home
+    { const ux = N.pos.x - P.pos.x, uz = N.pos.z - P.pos.z, ul = Math.hypot(ux, uz) || 1; N.pos.x += (ux / ul) * 0.42; N.pos.z += (uz / ul) * 0.42; P.pos.x -= (ux / ul) * 0.42; P.pos.z -= (uz / ul) * 0.42; collide(N.pos, 0.3); collide(P.pos, 0.3); }
     for (const e of [P, N]) { e.dance = 6; e.h.pose = e.h.has('dance') ? 'dance' : null; }
+    const dx = (P.pos.x + N.pos.x) / 2, dz = (P.pos.z + N.pos.z) / 2, dg = getHeight(dx, dz), da = P.face + Math.PI / 2;
+    const dp = new THREE.Vector3(dx + Math.sin(da) * 4.2, dg + 1.9, dz + Math.cos(da) * 4.2), dl = new THREE.Vector3(dx, dg + 1.0, dz);
+    structCam(dl, dp); R.lastLook = null; rstShot(dp, dl, 1.4);
     emit('romance', { kind: 'handfast', vow: i });
+    await romSleep(6000);
     return i;
-  } finally { setTimeout(() => { ROM.music = false; romOchre(false); }, 30000); }
+  } finally {
+    ROM.hand = null; if (ROM.cord) ROM.cord.visible = false;
+    if (ROM.riteCam) { ROM.riteCam = false; if (!R.on && !ROM.scene) { cine(false); if (camShot?.dolly) camShot = { release: true, from: camPos.clone(), lookFrom: (R.lastLook || look).clone(), k: 0, dur: 1.4 }; } }
+    setTimeout(() => { ROM.music = false; romOchre(false); }, 30000);
+  }
 }
 
 // ----- the per-frame tick (updateSena hook): menu hold, tier label, neglect, Beloved hand, homecoming, the peak
@@ -6237,6 +6396,7 @@ function romSena(dt) {
   if (!playing) return false;
   const wdt = romWall();
   romTick(dt);
+  if (ROM.nightFloor != null) { N.jy = ROM.nightFloor - getHeight(N.pos.x, N.pos.z); P.pos.y = ROM.nightFloor; P.h.root.position.y = P.pos.y; }   // the night scene: on the house floor
   if (ROM.scene) { romSceneTick(wdt, dt); return true; }
   if (ROM.nightCrouch) { N.speed = 0; settle(N, dt, true); return true; }
   if (ROM.nightOn) { N.speed = 0; settle(N, dt, false); return true; }
@@ -7209,20 +7369,75 @@ function arcPick(id, i = 0) {
 
 // ----- NPCs: Korr and the Ash hunters, Tamu, Wena and Pell (people.js humans; Pell is a child: never in any fight)
 const ARC_LOOK = {
-  korr: { hair: 'parted', beard: true, tint: 0x8b8680, hairColor: 0x181412, scale: 1.07 },
-  tamu: { hair: 'buzz', beard: false, tint: 0xaaa49d, hairColor: 0x2b221c },
-  wena: { female: true, hair: 'buns', tint: 0xd6ccc2, hairColor: 0x3b2a20 },
+  korr: { hair: 'parted', beard: true, tint: 0x8b8680, hairColor: 0x181412, scale: 1.07, ash: 0.9, fur: 0x4a4038 },   // a dark wolf-pelt mantle
+  tamu: { hair: 'buzz', beard: false, tint: 0xaaa49d, hairColor: 0x2b221c, ash: 0.35 },   // cast out: the ash on his hands is fading
+  wena: { female: true, hair: 'buns', tint: 0xd6ccc2, hairColor: 0x3b2a20, fur: 0x6a5a4a, furO: { wrap: true, skirt: 0x5a4636 } },   // a worn hide wrap and skirt
   pell: { child: 'boy', hair: 'buzz', tint: 0xeee4da, hairColor: 0x4a3828, scale: 0.83 },   // CHILD: a boy's body and tunic (about 1.27 m)
 };
-const arcHunterLook = (i) => ({ hair: i % 2 ? 'buzz' : 'parted', beard: i !== 1, tint: [0x9d978f, 0x8e8983, 0xa49e96, 0x96918a][i % 4], hairColor: [0x2a2420, 0x1c1916, 0x3a2e26, 0x231d19][i % 4] });
+const arcHunterLook = (i) => ({ ash: 0.85, fur: [0x6b5a48, 0x5d5044, 0x7a6650, 0x625548][i % 4], hair: i % 2 ? 'buzz' : 'parted', beard: i !== 1, tint: [0x9d978f, 0x8e8983, 0xa49e96, 0x96918a][i % 4], hairColor: [0x2a2420, 0x1c1916, 0x3a2e26, 0x231d19][i % 4] });
 const arcGet = (id) => ARCS.npcs.find((n) => n.id === id) || null;
 function arcNpc(id, look, x, z, face = 0, o = {}) {
   const old = arcGet(id); if (old) return old;
   const h = makeHuman(look);
   const e = { id, h, pos: new THREE.Vector3(x, 0, z), face, speed: 0, mode: 'stand', jy: 0, look: null, ...o };
   if (o.spear) { h.spear.visible = true; h.place(h.spear, o.spear); }
+  if (look.ash) arcAshHands(h, look.ash);
+  if (look.fur) arcFurMantle(h, look.fur, look.furO);
   scene.add(h.root); ARCS.npcs.push(e);
   return e;
+}
+// The Ash People's mark: hands grey to the wrist (ash rubbed in), fading up the forearm. A per-vertex weight from the
+// skin weights of the hand and finger bones, mixed toward ash grey in the body shader (the geometry is cloned per NPC).
+const ARC_ASH_B = /^(hand|thumb|index|middle|ring|pinky)_/;
+function arcAshHands(h, k) {
+  let body = null;
+  h.root.traverse((o) => { if (o.isSkinnedMesh && (!body || o.geometry.attributes.position.count > body.geometry.attributes.position.count)) body = o; });
+  if (!body || body.userData.arcAsh) return;
+  body.userData.arcAsh = true;
+  const g = body.geometry = body.geometry.clone(), si = g.attributes.skinIndex, sw = g.attributes.skinWeight, n = si.count;
+  const names = body.skeleton.bones.map((b) => b.name), w = new Float32Array(n);
+  for (let i = 0; i < n; i++) {
+    let a = 0;
+    for (let j = 0; j < 4; j++) { const b = names[si.getComponent(i, j)] || '', v = sw.getComponent(i, j); if (ARC_ASH_B.test(b)) a += v; else if (/^lowerarm_/.test(b)) a += v * 0.45; }
+    w[i] = Math.min(1, a) * k;
+  }
+  g.setAttribute('aAsh', new THREE.BufferAttribute(w, 1));
+  const m = body.material, prev = m.onBeforeCompile;
+  m.onBeforeCompile = (sh, r) => {
+    prev?.call(m, sh, r);
+    sh.vertexShader = 'attribute float aAsh;\nvarying float vAsh;\n' + sh.vertexShader.replace('#include <begin_vertex>', '#include <begin_vertex>\n vAsh = aAsh;');
+    sh.fragmentShader = 'varying float vAsh;\n' + sh.fragmentShader.replace('#include <map_fragment>', '#include <map_fragment>\n diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.58, 0.57, 0.55), vAsh);');
+  };
+  const key0 = m.customProgramCacheKey?.() || '';
+  m.customProgramCacheKey = () => key0 + '-arcash';
+  m.needsUpdate = true;
+}
+// A shaggy hide mantle over the shoulders (the Ash People live in the cold hills): rides the upper spine
+// (spine_03 frame: x left, y up, z forward), open at the front, drawn over the upper arms.
+const ARC_FUR = {};
+// o.wrap: a long wrap closed over the chest down to the waist (Wena), with a hide skirt to the knee on the pelvis.
+function arcFurGeo(key, rTop, rBot, len, gap) {
+  if (ARC_FUR[key]) return ARC_FUR[key];
+  const g = new THREE.CylinderGeometry(rTop, rBot, len, 16, 5, true, gap / 2, 6.283 - gap), p = g.attributes.position;
+  for (let i = 0; i < p.count; i++) {                // shaggy: a ragged hem and a tufted surface
+    const y = p.getY(i), a = Math.atan2(p.getX(i), p.getZ(i)), j = 1 + 0.06 * Math.sin(a * 11 + y * 30) * (0.5 - y / len);
+    p.setX(i, p.getX(i) * j); p.setZ(i, p.getZ(i) * j);
+    if (y < -len / 2 + 0.01) p.setY(i, y - 0.05 * (0.5 + 0.5 * Math.sin(a * 7.3)));
+  }
+  g.computeVertexNormals(); g.rotateY(Math.PI);        // the opening faces forward (+z)
+  return (ARC_FUR[key] = g);
+}
+function arcFurMantle(h, col, o = {}) {
+  const mat = (c) => (ARC_FUR['m' + c] ||= new THREE.MeshStandardMaterial({ color: c, roughness: 1, side: THREE.DoubleSide, flatShading: true }));
+  const m = new THREE.Mesh(o.wrap ? arcFurGeo('wrap', 0.12, 0.25, 0.62, 0.16) : arcFurGeo('mantle', 0.13, 0.3, 0.4, 1.1), mat(col));
+  m.position.set(0, o.wrap ? -0.01 : 0.1, o.wrap ? 0.0 : -0.015); m.scale.set(1, 1, o.wrap ? 0.86 : 0.78); m.castShadow = true;
+  h.sock.back.add(m);
+  if (o.wrap) {                                      // the skirt: waist to knee, hung from the pelvis
+    const k = new THREE.Mesh(arcFurGeo('skirt', 0.17, 0.25, 0.56, 0.0), mat(o.skirt || col));
+    k.position.set(0, -0.2, 0); k.scale.set(1, 1, 0.8); k.castShadow = true;
+    h.sock.hipL.add(k);
+  }
+  return m;
 }
 function arcDrop(id) {
   const e = arcGet(id); if (!e) return;
@@ -7597,6 +7812,7 @@ function updateArc(dt) {
   arcNpcTick(dt);
   arcSeasonTick(dt);
   for (const k in ARCS.props) ARCS.props[k].update?.(dt);
+  ARCS.doorLamp?.();
   if (mapOpen && !ARCS.mapWas && !$('memories').hidden) arcDrawMemories();   // the Memories tab, fresh each time the map opens
   ARCS.mapWas = mapOpen;
   ARCS.t -= dt; if (ARCS.t > 0) return;
@@ -7831,7 +8047,10 @@ async function arcDoor() {
   w.look = p.look = 'P'; w.mode = 'talk';
   if (Math.hypot(P.pos.x - door.x, P.pos.z - door.z) > 6) { P.pos.set(door.x - Math.sin(a) * 1.0, 0, door.z - Math.cos(a) * 1.0); P.face = a; }
   if (Math.hypot(N.pos.x - P.pos.x, N.pos.z - P.pos.z) > 6) N.pos.set(P.pos.x + Math.cos(a) * 1.3, 0, P.pos.z - Math.sin(a) * 1.3);
+  const lamp = !torchOn && world.env.night > 0.3;   // night: the hearth's glow spills out of the open door onto them (Aro's idle torch light)
+  if (lamp) { torch.light.position.set(door.x - Math.sin(a) * 0.6, getHeight(door.x, door.z) + 1.7, door.z - Math.cos(a) * 0.6); torch.light.color.setHex(0xffa25a); }
   await arcScene('door', async () => {
+    if (lamp) ARCS.doorLamp = () => { if (!torchOn) torch.light.intensity = 7.5 * (0.94 + Math.sin(clock * 6) * 0.04 + Math.sin(clock * 15) * 0.02); };
     arcKnock();
     ARCS.focus = w; arcShot(w, 80);
     await arcTalk(L.door);
@@ -7842,6 +8061,7 @@ async function arcDoor() {
     if (c === 'share') { await arcFade('That night there were four by the fire.', () => { arcDrop('wena'); arcDrop('pell'); arcWenaHome(); }, 2200); }
     else { for (const e of [w, p]) { e.mode = 'leave'; e.spd = 1.2; e.tx = e.pos.x + Math.sin(a) * 80; e.tz = e.pos.z + Math.cos(a) * 80; } }
   });
+  if (ARCS.doorLamp) { ARCS.doorLamp = null; if (!torchOn) { torch.light.intensity = 0; torch.light.color.setHex(0xff8f40); } }
 }
 function arcKnock() { for (let i = 0; i < 3; i++) setTimeout(() => arcSfx(160, 0.12, 0.6), i * 260); setTimeout(() => { for (let i = 0; i < 2; i++) setTimeout(() => arcSfx(150, 0.12, 0.5), i * 260); }, 1300); }
 
@@ -8057,11 +8277,12 @@ function arcBeats(id) {
     }
     case 'clay': case 'house': arcJealousBeat(); if (id === 'house') arcLakeBeat(); break;
     case 'winter': {
+      const h = arcHome();
+      if (!c.door && h && S.day >= (A.doorDay ?? 1e9) && (S.time >= 17.5 || S.time < 5) && arcDist(p, h.x, h.z) < 22) { arcDoor(); break; }   // the knock comes first: no blizzard banner over it
+      if (!c.door && S.day >= (A.doorDay ?? 1e9)) break;   // the door night stays calm until they have been answered
       if (E.night > 0.6 && (S.day - (A.winterDay ?? S.day)) % 2 === 0 && A.stormDay !== S.day && EV.storm <= 0) {
         A.stormDay = S.day; EV.storm = 95 + rand() * 40; banner(...ARCD.L.winter.blizzard); say(...ARCD.L.winter.blizzardLine);
       }
-      const h = arcHome();
-      if (!c.door && h && S.day >= (A.doorDay ?? 1e9) && (S.time >= 17.5 || S.time < 5) && arcDist(p, h.x, h.z) < 22) arcDoor();
       break;
     }
     case 'raid': {
@@ -8080,8 +8301,8 @@ function arcBeats(id) {
     case 'reckoning': {
       if (!A.campPos) arcCampPos();
       const [x, z] = A.campPos;
-      if (!S.found.camp && arcDist(p, x, z) < 26) { S.found.camp = 1; reveal(x, z, 60); banner(...ARCD.L.reckoning.campBanner); drawQuest(); }
-      if (!c.korr && arcGet('korr') && arcDist(p, x, z) < 13) arcReckoning();
+      if (!S.found.camp && arcDist(p, x, z) < 26) { S.found.camp = 1; ARCS.campT = clock; reveal(x, z, 60); banner(...ARCD.L.reckoning.campBanner); drawQuest(); }
+      if (!c.korr && arcGet('korr') && arcDist(p, x, z) < 13 && clock - (ARCS.campT ?? -1e9) > 4.5) arcReckoning();   // let the camp's banner pass first
       if (c.korr && A.horseFate === 'taken') arcHorseBack();   // the horse comes home in every branch (direct picks too)
       if (c.korr && !A.thaw) A.thaw = true;
       break;
@@ -9975,6 +10196,7 @@ function updatePlayer(dt) {
   if (!P.swim && !P.air && P.pos.y < 0.15) sp *= 0.6;
   sp = wpnSpeed(sp, run);                            // WPN drawn: walk x0.8, run x0.9; aiming: strafe at 1.8
   sp = survSpeed(sp, run, dt);                       // SURV: sprain/fracture speed, no sprint or jump, Sena's shoulder, poison episodes
+  sp = romSpeed(sp);                                 // ROM: hand in hand they stroll (the walk loop, not the jog)
   if (moving && structs.some((s) => s.kind === 'path' && s.rise >= 1 && Math.abs(s.x - P.pos.x) < 1.2 && Math.hypot(s.x - P.pos.x, s.z - P.pos.z) < 1.2)) sp *= 1.1;   // WP2 stone path
   // Momentum: velocity eases toward where you steer, slower to change in the air.
   const acc = Math.min(1, dt * (P.air ? 2.2 : moving ? 8 : 11));
@@ -10803,6 +11025,7 @@ function fppVm(dt) {
       }
     }
   }
+  if (on) { const bv = bowFpp(dt); if (bv) { R = bv[0]; L = bv[1]; } }   // BOW-FPP: the bow in the left fist, the right hand on the string
   // Aro's own arm is hidden on the side the viewmodel draws it
   const busyArm = on && (FP.reach || (sw && /^(use|pick)/.test(sw) && P.h.shotW() > 0.05));   // the body's own Interact arm would double the reach
   fpU.hideR.value = R || busyArm ? 1 : 0; fpU.hideL.value = L || busyArm ? 1 : 0;
@@ -10853,8 +11076,73 @@ function fppVm(dt) {
       for (const m of [P.h.axe, N.h.spear, N.h.axe, P.h.spear]) if (m && m.visible && _fBox.setFromObject(m).distanceToPoint(camera.position) < 0.3) hide(m);   // RIDE-r3: + Aro's spear on Sena's back
     }
     if (L && torchOn) for (const c of torch.root.children) if (c !== torch.light) hide(c);
+    hide(bowMesh); hide(nockArrow);                  // BOW-FPP: the view model draws the bow in hand; slung, it stood past the eye like the spear
     if (fpU.hideR.value) hide(FP_WRAP.body.r); if (fpU.hideL.value) hide(FP_WRAP.body.l);   // FPP-world: the body's wrist wraps go with its hidden arms
   }
+}
+// ----- BOW-FPP: the first-person bow. Viewmodel camera space: the eye at the origin, looking down -z, +x right.
+// The left fist holds the grip low and left of the crosshair, the stave canted with its top away from the centre so
+// neither limb crosses it; the right hand draws the string from the bow to the corner of the mouth; the nocked arrow
+// runs from the string past the fist, its point below and left of the crosshair. Released, the string snaps home and
+// the drawing hand follows through back and out. Hidden riding, swimming, seated, busy or with the torch (bowProps
+// puts the bow on the back then).
+const vmBow = makeBow({ thick: true }), vmNockA = makeArrow();
+vmBow.visible = vmNockA.visible = false; vmScene.add(vmBow, vmNockA);
+const BOWFP = { on: false, sx: 0, sy: 0, yaw: 0, pitch: 0,
+  low: { g: new THREE.Vector3(-0.15, -0.2, -0.45), cant: 0.65, fwd: new THREE.Vector3(0.3, -0.25, -1) },   // ready: carried low at the left, limbs leaning
+  up: { g: new THREE.Vector3(-0.04, -0.075, -0.6), cant: 0.3 },                                           // raised: the grip just below and left of the crosshair
+  nock: new THREE.Vector3(0.06, -0.1, -0.2),                                                              // full draw: the string fingers at the jaw
+  shL: new THREE.Vector3(-0.2, -0.3, 0.12) };                                                             // where the bow arm comes from
+const _bv = [0, 1, 2, 3, 4, 5, 6].map(() => new THREE.Vector3()), _bvq = new THREE.Quaternion();
+function bowFpp(dt) {
+  const show = BOW.on && !!S.tools.bow && !P.ride && !P.swim && !(P.sit > 0) && !wBusy() && !torchOn && !camShot;
+  BOWFP.on = show; vmBow.visible = show; vmNockA.visible = false;
+  if (!show) { BOWFP.yaw = camYaw; BOWFP.pitch = camPitch; return null; }
+  const rel = clamp((clock - (BOW.relT ?? -9)) / 0.35, 0, 1), ch = W.aim ? W.aim.charge : 0;
+  const a = Math.max(smooth01(W.aimW), W.aim ? 0 : smooth01(1 - (clock - (BOW.relT ?? -9) - 0.3) / 0.4));   // after the shot the bow stays up a moment
+  // sway lags the look; a light bob with the steps (the comfort bob setting scales it)
+  const dy = wrapA(camYaw - BOWFP.yaw), dp = camPitch - BOWFP.pitch; BOWFP.yaw = camYaw; BOWFP.pitch = camPitch;
+  BOWFP.sx += (clamp(-dy * 0.9, -0.04, 0.04) - BOWFP.sx) * Math.min(1, dt * 9);
+  BOWFP.sy += (clamp(dp * 0.9, -0.03, 0.03) - BOWFP.sy) * Math.min(1, dt * 9);
+  const sk = Math.min(1, P.speed / 3) * (1 - 0.6 * a) * ((settings.fppBob ?? 0.7) / 0.7) * (settings.reduceMotion ? 0.3 : 1);
+  const bob = Math.sin(P.step * 2.7) * 0.01 * sk, bx = Math.cos(P.step * 1.35) * 0.005 * sk;
+  const shake = BOW.tire ? BOW.tire * 0.004 : 0;
+  const g = _bv[0].lerpVectors(BOWFP.low.g, BOWFP.up.g, a);
+  g.x += BOWFP.sx + bx + Math.sin(clock * 23) * shake; g.y += BOWFP.sy + bob + Math.sin(clock * 19 + 1) * shake;
+  const kick = a * Math.sin(Math.PI * rel) * (BOW.relCh || 0) * (rel < 1 ? 1 : 0);   // the bow hand pushes through the shot
+  g.z -= 0.02 * kick; g.x -= 0.01 * kick;
+  const nockFull = _bv[1].copy(BOWFP.nock); nockFull.x += BOWFP.sx * 0.4; nockFull.y += BOWFP.sy * 0.4;
+  const fwd = _bv[2].copy(_bv[3].copy(BOWFP.up.g).sub(BOWFP.nock).normalize()).lerp(_bv[3].copy(BOWFP.low.fwd).normalize(), 1 - a).normalize();
+  const cant = lerp(BOWFP.low.cant, BOWFP.up.cant, a) + 0.08 * kick;
+  const up = _bv[3].set(-Math.sin(cant), Math.cos(cant), 0), xAx = _bv[4];
+  xAx.crossVectors(up, fwd).normalize(); up.crossVectors(fwd, xAx).normalize();   // xAx: the bow's left
+  _bvq.setFromRotationMatrix(_bM.makeBasis(xAx, up, fwd));
+  vmBow.quaternion.copy(_bvq); vmBow.position.copy(g); vmBow.updateMatrixWorld(true);
+  // the left fist round the grip (palm to the right, knuckles out), its grip axis along the stave
+  const armL = _bv[5].copy(g).sub(BOWFP.shL).normalize();
+  const qL = fpHandBasis('l', armL.x, armL.y, armL.z, -xAx.x, -xAx.y, -xAx.z);
+  const ax = _fa.copy(AX_L).applyQuaternion(qL);
+  qL.premultiply(_fq2.setFromUnitVectors(ax, _fb.copy(up).multiplyScalar(ax.dot(up) < 0 ? -1 : 1)));
+  const scL = AR.bones.hand_l.getWorldScale(_h2).x;
+  const L = [g.clone().sub(_fa.copy(GRIP_L).multiplyScalar(scL).applyQuaternion(qL)), qL, 1];
+  // the string: drawn back along the arrow's line (from its rest above the fist toward the jaw) with the charge; let
+  // down or loosed, it is back on the bow at once
+  const restPt = _bv[6].copy(g).addScaledVector(up, 0.035).addScaledVector(xAx, 0.018);   // the arrow passes the stave above the fist
+  const full = restPt.distanceTo(nockFull), ad = _fc.copy(restPt).sub(nockFull).normalize();
+  const drawn = !!W.aim, k = drawn ? ch * a : 0;
+  const nock = _bv[5].copy(restPt).addScaledVector(ad, -lerp(-BOW_TIPZ + 0.01, full, k));
+  vmBow.userData.setNock(drawn ? vmBow.worldToLocal(nock.clone()) : null);
+  let R = null;
+  if (drawn || (rel < 1 && a > 0.05)) {
+    const hand = drawn ? nock.clone() : nockFull.clone().add(_fa.set(0.08 * rel, 0.03 * rel, 0.1 * rel));   // follow-through: back and out
+    const qR = fpHandBasis('r', ad.x - 0.15, ad.y, ad.z, xAx.x, xAx.y, xAx.z);   // fingers along the arrow, palm to the string
+    const scR = AR.bones.hand_r.getWorldScale(_h2).x;
+    R = [hand.sub(_fa.copy(GRIP_R).multiplyScalar(scR).applyQuaternion(qR)), qR, drawn ? 1 : a * (1 - rel), 0.55];   // fingers hooked, not a fist
+    if (drawn && a > 0.3) {                          // the nocked arrow
+      vmNockA.visible = true; vmNockA.position.copy(nock).addScaledVector(ad, ARROW_LEN); vmNockA.lookAt(_fa.copy(vmNockA.position).add(ad));
+    }
+  }
+  return [R, L];
 }
 function fppPost() {
   for (const o of FP.held) o.visible = true; FP.held.length = 0;
@@ -11263,7 +11551,12 @@ Object.assign(window.G, {
   music: {
     state: () => MUS.state, force: (s, dur = 20) => musicForce(s, dur), sting: (k) => musicSting(k), volumes: musicVolumes,
     buses: () => ({ m: A.mus ? +A.mus.gain.value.toFixed(3) : settings.music, s: A.sfx ? +A.sfx.gain.value.toFixed(3) : settings.sfx, a: A.amb ? +A.amb.gain.value.toFixed(3) : settings.amb, master: A.out ? A.out.gain.value : settings.volume }),
-    voices: () => MUS.m?.voices() ?? 0, playing: () => MUS.m?.state ?? null, log: () => MUS.m?.M.log.slice() ?? [], snap: musicSnap, why: () => MUS.why,
+    voices: () => MUS.m?.voices() ?? 0, playing: () => MUS.m?.state ?? null, duck: () => (MUS.m ? +MUS.m.duckNode.gain.value.toFixed(2) : null), log: () => MUS.m?.M.log.slice() ?? [], snap: musicSnap, why: () => MUS.why,
   },
 });
-Object.assign(window.G, { bow: { toggle: bowToggle, aim: bowAimStart, loose: bowLoose, pickup: bowPickup, near: () => bowNear(P.pos).length, get on() { return BOW.on; }, get arrows() { return BOW.arrows.map((a) => a.st); }, quest: bowQuestHtml, cam(v) { camDist = v; }, probe() { const v = (o) => { const w = new THREE.Vector3(); o.getWorldPosition(w); w.sub(P.pos); return [+w.x.toFixed(2), +w.y.toFixed(2), +w.z.toFixed(2)]; }; const d = new THREE.Vector3(); camera.getWorldDirection(d); return { face: +P.face.toFixed(2), aimW: +W.aimW.toFixed(2), aim: !!W.aim, hl: v(P.h.bones.hand_l), hr: v(P.h.bones.hand_r), head: v(P.h.bones.Head), bow: v(bowMesh), bowVis: bowMesh.visible, nock: nockArrow.visible && v(nockArrow), cam: v(camera), dir: [d.x, d.y, d.z].map((x) => +x.toFixed(2)) }; } } });   // BOW test hooks
+Object.assign(window.G, { bow: { toggle: bowToggle, aim: bowAimStart, BOW, BOWFP, rocky: bowRocky,   // BOW-FPP hooks: fp(), give(), shoot(charge, yaw, pitch), view(v)
+  fp: () => { const v = (o) => { o.updateWorldMatrix(true, false); const w = new THREE.Vector3().setFromMatrixPosition(o.matrixWorld).project(vmCam); return [+w.x.toFixed(3), +w.y.toFixed(3)]; }; return { on: BOWFP.on, bow: vmBow.visible, nock: vmNockA.visible, arms: AR.root.visible, grip: v(vmBow), tip: vmNockA.visible ? v(vmNockA) : null, hr: v(AR.bones.hand_r), hl: v(AR.bones.hand_l) }; },
+  give(n = 24) { S.tools.bow = S.tools.quiver = true; S.inv.arrow = n; drawInv(); if (!BOW.on) bowToggle(); return BOW.on; },
+  view(v) { view = v; camPitch = clamp(camPitch, pitchMin(), fppPitchMax()); return view; },
+  async shoot(ch = 1, yaw = camYaw, pitch = camPitch) { camYaw = yaw; camPitch = pitch; if (!BOW.on) bowToggle(); bowAimStart(); if (!W.aim) return null; const f = () => new Promise((r) => requestAnimationFrame(r)); await f(); await f(); W.aim.t = ch * 0.6; W.aim.charge = Math.min(1, ch); const n = BOW.arrows.length; bowLoose(); return BOW.arrows.length > n ? BOW.arrows[BOW.arrows.length - 1] : null; },
+  st: (ar) => ar && { st: ar.st, o: ar.o?.kind || null, ob: ar.inObst || null, bounced: !!ar.bounced, tip: ar.tip.toArray().map((x) => +x.toFixed(2)) }, loose: bowLoose, pickup: bowPickup, near: () => bowNear(P.pos).length, get on() { return BOW.on; }, get arrows() { return BOW.arrows.map((a) => a.st); }, quest: bowQuestHtml, cam(v) { camDist = v; }, probe() { const v = (o) => { const w = new THREE.Vector3(); o.getWorldPosition(w); w.sub(P.pos); return [+w.x.toFixed(2), +w.y.toFixed(2), +w.z.toFixed(2)]; }; const d = new THREE.Vector3(); camera.getWorldDirection(d); return { face: +P.face.toFixed(2), aimW: +W.aimW.toFixed(2), aim: !!W.aim, hl: v(P.h.bones.hand_l), hr: v(P.h.bones.hand_r), head: v(P.h.bones.Head), bow: v(bowMesh), bowVis: bowMesh.visible, nock: nockArrow.visible && v(nockArrow), cam: v(camera), dir: [d.x, d.y, d.z].map((x) => +x.toFixed(2)) }; } } });   // BOW test hooks

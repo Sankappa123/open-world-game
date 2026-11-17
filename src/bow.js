@@ -7,11 +7,15 @@ const shaftMat = new THREE.MeshStandardMaterial({ color: 0xb08a5a, roughness: 0.
 const flintMat = new THREE.MeshStandardMaterial({ color: 0x3a3a40, roughness: 0.45, metalness: 0.1 });
 const featherMat = new THREE.MeshStandardMaterial({ color: 0xe8e0d0, roughness: 1, side: THREE.DoubleSide });
 const stringMat = new THREE.LineBasicMaterial({ color: 0xe6dcc4 });
+const strMeshMat = new THREE.MeshStandardMaterial({ color: 0xcfc2a2, roughness: 0.9 });   // BOW-FPP: the view model's string
+const strGeo = new THREE.CylinderGeometry(0.0016, 0.0016, 1, 5, 1, true), UP = new THREE.Vector3(0, 1, 0);
 
 // The bow lies in its local YZ plane: grip at the origin, limbs along ±Y, the back (and the target) toward +Z,
 // the limb tips curving back toward the archer (-Z). The string runs tip-nock-tip.
 export const BOW_HALF = 0.72, BOW_TIPZ = -0.16;
-export function makeBow() {
+// opts.thick (the first-person view model): the string is two thin tubes, so it reads at arm's length instead of a
+// one-pixel line.
+export function makeBow(opts = {}) {
   const g = new THREE.Group();
   const pts = [];
   for (let i = 0; i <= 16; i++) { const t = i / 16 * 2 - 1; pts.push(new THREE.Vector3(0, t * BOW_HALF, BOW_TIPZ * t * t)); }
@@ -27,6 +31,16 @@ export function makeBow() {
   stave.geometry.computeVertexNormals();
   stave.castShadow = true; g.add(stave);
   const grip = new THREE.Mesh(new THREE.CylinderGeometry(0.027, 0.027, 0.13, 10), hide); g.add(grip);
+  if (opts.thick) {                                   // BOW-FPP
+    const seg = [0, 1].map(() => { const m = new THREE.Mesh(strGeo, strMeshMat); m.frustumCulled = false; g.add(m); return m; });
+    const tips = [new THREE.Vector3(0, BOW_HALF, BOW_TIPZ), new THREE.Vector3(0, -BOW_HALF, BOW_TIPZ)], n = new THREE.Vector3(), d = new THREE.Vector3();
+    g.userData.setNock = (v) => {
+      if (v) n.set(v.x, THREE.MathUtils.clamp(v.y, -0.1, 0.1), Math.min(BOW_TIPZ, v.z)); else n.set(0, 0, BOW_TIPZ);
+      seg.forEach((m, i) => { d.subVectors(tips[i], n); m.position.copy(n).addScaledVector(d, 0.5); m.scale.set(1, d.length(), 1); m.quaternion.setFromUnitVectors(UP, d.normalize()); });
+    };
+    g.userData.setNock(null);
+    return g;
+  }
   const sg = new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(0, BOW_HALF, BOW_TIPZ), new THREE.Vector3(0, 0, BOW_TIPZ), new THREE.Vector3(0, -BOW_HALF, BOW_TIPZ)]);
   const str = new THREE.Line(sg, stringMat); str.frustumCulled = false; g.add(str);
   // setNock(v): the string's middle point in bow-local space (null = at rest)

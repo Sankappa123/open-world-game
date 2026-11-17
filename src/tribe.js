@@ -239,14 +239,15 @@ export function createTribe(ctx) {
     // a raider in the fight may block a blow he saw coming (not a finisher, not from behind, not while winding a heavy);
     // an arrow is far harder to turn aside than an axe: a flat 12%, and it never teaches him the rhythm
     const canBlock = info.kind !== 'finisher' && info.kind !== 'execution' && f.mode === 'combat' && !(f.stagger > 0) && !(f.atk && f.atk.heavy)
-      && inFront(f.face, P.pos.x - f.pos.x, P.pos.z - f.pos.z, 120);
-    if (canBlock && Math.random() < (e.arrow ? 0.12 : raiderBlockChance(hist, kind) * (hv ? 0.5 : 1))) {
-      if (!e.arrow) { hist.push(kind); if (hist.length > 6) hist.shift(); }
-      f.blockT = 0.45; ctx.sfx.clack(f.pos); ctx.onBlocked(f, info);
+      && inFront(f.face, (e.from?.pos?.x ?? P.pos.x) - f.pos.x, (e.from?.pos?.z ?? P.pos.z) - f.pos.z, 120);   // the blow must come from where he is looking
+    const mine = e.from === P;                         // only Aro's blows teach him the rhythm; Sena's stones get a flat chance
+    if (canBlock && Math.random() < (e.arrow ? 0.12 : mine ? raiderBlockChance(hist, kind) * (hv ? 0.5 : 1) : 0.15)) {
+      if (!e.arrow && mine) { hist.push(kind); if (hist.length > 6) hist.shift(); }
+      f.blockT = 0.45; ctx.sfx.clack(f.pos); if (mine) ctx.onBlocked(f, info);   // the jolt is felt only by the one who struck
       if (postureAdd(f, e.arrow ? 6 : POSTURE.blocked * (hv ? 2 : 1), ctx.clock())) breakPosture(f);
       return;
     }
-    if (!e.arrow) { hist.push(kind); if (hist.length > 6) hist.shift(); }
+    if (!e.arrow && mine) { hist.push(kind); if (hist.length > 6) hist.shift(); }
     f.hp -= e.dmg; f.hits++;
     f.kb = { x: e.dir.x * (hv ? 3.2 : 1.8), z: e.dir.z * (hv ? 3.2 : 1.8), t: 0.25 };
     if (f.mode !== 'combat' && f.mode !== 'downed' && f.hp > 0) { f.last.copy(P.pos); enterCombat(f); }
