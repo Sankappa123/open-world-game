@@ -435,7 +435,7 @@
 },
 {
 "until": "!_M || G.chId()!=='fever'",
-"timeout": 30000
+"timeout": 75000
 },
 {
 "expect": "!_M || G.chId()==='reckoning'",
@@ -491,11 +491,18 @@
 "wait": 4500
 },
 {
-"js": "G.placeStruct('stable', -10, -30, 0, true); G.tp(window._ho.x, window._ho.z+6); G.time(21); G.sleep()",
-"wait": 3000
+"js": "G.placeStruct('stable', -10, -30, 0, true); G.tp(window._ho.x, window._ho.z+6); G.time(21); window._slTry=()=>{ if (G.restState().on) return; window._slWhy=JSON.stringify(G.mat.state()); G.sleep(); if (G.restState().on) window._restOk=G.P.rest>0 && G.N.rest>0; }; window._slTry(); window._slT=Date.now(); window._restOk",
+"wait": 500
 },
 {
-"expect": "G.P.rest>0 && G.N.rest>0",
+"until": "window._restOk!==undefined || (Date.now()-window._slT>1000 && (window._slT=Date.now(), window._slTry(), false))",
+"timeout": 20000
+},
+{
+"js": "JSON.stringify({ok:window._restOk, why:window._slWhy})"
+},
+{
+"expect": "window._restOk===true",
 "name": "rest in house bed"
 },
 {

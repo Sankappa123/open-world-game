@@ -3074,7 +3074,7 @@ function findOtherTarget(p) {
   const gt = goreTarget(p); if (gt) return gt;        // GORE: mercy kill (bedded prey), hold-E butchering (keeps MAT's respawn and loot)
   const arcT = arcTarget(p); if (arcT?.key) return arcT;   // ARC: story beats (Tamu, the bed, cairns, herbs, the scorched walls, give your share); ARC-FIX: before the meal (it masked 'Tend Tamu')
   // Share a meal with Sena, once a day.
-  if (S.c.mealDay !== S.day && !N.sit && Math.hypot(N.pos.x - p.x, N.pos.z - p.z) < 2.2) {
+  if (S.c.mealDay !== S.day && !N.sit && Math.hypot(N.pos.x - p.x, N.pos.z - p.z) < 2.2 && !svSpitAt(p)) {   // SURV-FIX: food on the spit in reach comes first (it burns)
     const k = ['cooked', 'grilled', 'bread'].find((k) => S.inv[k] > 0);
     if (k) return { label: 'Share a meal with Sena', key: true, act() { shareMeal(k); } };
   }
@@ -5111,14 +5111,15 @@ function matEndSena(dt) {                            // the mourner/fallen roles
   settle(N, dt, false);
 }
 function matEndTick(dt) {
-  const E = MAT.end; MAT.endT += dt;
-  const T0 = 1.5, T1 = T0 + 8, T2 = T1 + 1.5;        // black, the shot, black again, then the stone
+  const E = MAT.end; MAT.endT = MAT.endHold > 0 && MAT.endT >= MAT.endHold ? MAT.endT : MAT.endT + dt;   // MAT-GRIEF r3: G.mat.griefHold(t) freezes the beat at t (tests)
+  const T0 = 1.6, T1 = T0 + 10, T2 = T1 + 1.5;       // black, the shot, black again, then the stone (MAT-GRIEF r3: 10 s, the two spoken lines on the faces)
   const { fallen, mourner } = E;
   fallen.speed = 0; mourner.speed = 0;
   if (!E.placed && MAT.endT > 0.2) {                 // in the dark: lay the fallen down
     E.placed = true; $('hud').classList.add('cine'); subs.length = 0; subT = 0; $('sub').classList.remove('on');
     for (const e of [P, N]) { e.sit = 0; e.rest = 0; e.work = 0; e.dance = 0; e.seat = null; e.node = null; e.fetch = null; e.h.straddle = false; }
     for (const o of animals.filter((o) => o.kind === 'wolf' || o.hostile)) remove(o);
+    if (torchOn) setTorch(false); ARCS.doorLamp = null;   // MAT-GRIEF r3: the torch light becomes the soft key on the faces below
     if (fallen !== P) P.h.removeOverride('matLie');
     matLieStart(fallen, true); fallen.matStill = true; fallen.h.pose = null;
   }
@@ -5127,12 +5128,25 @@ function matEndTick(dt) {
     const k = matKneelSpot(fallen, mourner.pos); E.kneel = [...k];   // MAT-GRIEF r2: the shot is built on this line
     mourner.pos.set(k[0], 0, k[1]); mourner.face = Math.atan2(k[2] - k[0], k[3] - k[1]);
     mourner.h.pose = 'work';
+    // MAT-GRIEF r3: Fixing_Kneeling starts standing, kneels, works with its hands and stands up again every 5.2 s: the
+    // mourner rose to her feet mid-line. One still kneeling frame, held, with slow shaky breaths.
+    const kp = samplePose(mourner.h, 'work', 2.1);
+    mourner.h.addOverride('matKneel', 25, (h) => {
+      applyPose(h, kp, 1);
+      const b = h.bones.spine_03; if (b) { _mq.setFromAxisAngle(_mAx, 0.06 + Math.sin(clock * 1.9) * 0.025 + Math.sin(clock * 7.3) * 0.004); b.quaternion.multiply(_mq); }
+    });
     mourner.h.addOverride('matHold', 30, (h) => {    // a hand finds theirs
       const w = clamp((MAT.endT - T0) / 1.5, 0, 1); if (!(w > 0)) return;
-      const hb = fallen.h.bones.hand_r || fallen.h.bones.hand_l; if (!hb) return;
-      hb.getWorldPosition(_mPt); _mPt.y += 0.04;
-      _mDir.copy(_mPt); _mDir.y += 0.5; _mDir.x += Math.sin(mourner.face + Math.PI / 2) * 0.3; _mDir.z += Math.cos(mourner.face + Math.PI / 2) * 0.3;
-      ik2(h, 'l', _mPt, _mDir, smooth01(w));
+      // MAT-GRIEF r3: the hand on the head's side cradles their cheek. It used to stretch for their right hand, across
+      // the body, and hover over the chest.
+      const fb = fallen.h.bones; if (!fb.Head) return;
+      const a = mourner.face, rX = -Math.cos(a), rZ = Math.sin(a), mp = mourner.pos;
+      fb.Head.getWorldPosition(_mPt);
+      const cs = (_mPt.x - mp.x) * rX + (_mPt.z - mp.z) * rZ > 0 ? 'r' : 'l', sg = cs === 'r' ? 1 : -1;
+      _mPt.x += (mp.x - _mPt.x) * 0.2; _mPt.z += (mp.z - _mPt.z) * 0.2; _mPt.y += 0.07;
+      _mDir.copy(_mPt); _mDir.y += 0.5; _mDir.x += rX * sg * 0.35; _mDir.z += rZ * sg * 0.35;
+      ik2(h, cs, _mPt, _mDir, smooth01(clamp((MAT.endT - T0 - 0.4) / 1.6, 0, 1)));
+      // (the other hand stays on her knee, as the kneeling frame has it: reaching it across to a hand or shoulder folded the arm)
     });
   }
   if (fallen === P) settle(P, dt, false); else { P.h.pose = 'work'; settle(P, dt, false); }
@@ -5143,6 +5157,9 @@ function matEndTick(dt) {
   // sky. The long grass is trodden flat round the two of them and along the lens line (blades used to fill the frame).
   const hd = mourner.h.bones.Head;
   if (hd) hd.getWorldPosition(_mPt2); else _mPt2.set(mourner.pos.x, mourner.pos.y + 0.9, mourner.pos.z);
+  if (!E.hd) E.hd = _mPt2.clone(); else E.hd.lerp(_mPt2, Math.min(1, dt * 1.2));   // MAT-GRIEF r3: the kneeling loop bobs the head; the lens follows it slowly
+  if (MAT.endT < T0) E.hd.copy(_mPt2);
+  _mPt2.copy(E.hd);
   if (!E.fx && E.knelt) {
     const k = E.kneel || [mourner.pos.x, mourner.pos.z, fallen.pos.x, fallen.pos.z];
     let fx = k[2] - k[0], fz = k[3] - k[1]; const l = Math.hypot(fx, fz) || 1; fx /= l; fz /= l;   // mourner -> the chest
@@ -5153,11 +5170,21 @@ function matEndTick(dt) {
     for (let t = 1.2; t <= 3.4; t += 0.7) world.clear(k[0] + fx * t + fz * 0.36 * t * side, k[1] + fz * t - fx * 0.36 * t * side, 1.3);   // the lens line
   }
   const [fx, fz] = E.fx || [Math.sin(mourner.face), Math.cos(mourner.face)], rx = fz * (E.side || 1), rz = -fx * (E.side || 1);
-  const u1 = smooth01(clamp((MAT.endT - T0) / 4.5, 0, 1)), u2 = smooth01((MAT.endT - T0 - 4) / (T1 - T0 - 4));
-  const c = MAT.cam, d = 2.05 - u1 * 0.4 + u2 * 1.6, gy = Math.max(getHeight(_mPt2.x + fx * d, _mPt2.z + fz * d), 0.1);
-  c.pos.set(_mPt2.x + fx * d + rx * (0.72 - u1 * 0.12), Math.max(gy + 0.62, _mPt2.y - 0.22) + u2 * 2.2, _mPt2.z + fz * d + rz * (0.72 - u1 * 0.12));
-  c.look.set(_mPt2.x - fx * u2 * 16, _mPt2.y - 0.12 + u2 * 7, _mPt2.z - fz * u2 * 16);
+  // MAT-GRIEF r3: the push in holds on the faces through both spoken lines; then a slow crane up and back that keeps the
+  // two of them in frame (it used to swing the lens off to an empty sky while she was still speaking), tilting a little
+  // towards the sky only at the end. The torch light is a soft low key beside the lens so the faces read at night.
+  const u1 = smooth01(clamp((MAT.endT - T0) / 5.5, 0, 1)), u2 = smooth01(clamp((MAT.endT - T0 - 6.2) / (T1 - T0 - 6.2), 0, 1));
+  const c = MAT.cam, d = 2.05 - u1 * 0.4 + u2 * 2.6, gy = Math.max(getHeight(_mPt2.x + fx * d, _mPt2.z + fz * d), 0.1);
+  c.pos.set(_mPt2.x + fx * d + rx * (0.72 - u1 * 0.12 + u2 * 0.5), Math.max(gy + 0.62, _mPt2.y - 0.22) + u2 * 3.4, _mPt2.z + fz * d + rz * (0.72 - u1 * 0.12 + u2 * 0.5));
+  const mx = _mPt2.x + fx * 0.45 * u2, mz = _mPt2.z + fz * 0.45 * u2;   // from her face to the middle of the two of them
+  c.look.set(mx - fx * u2 * u2 * 3, _mPt2.y - 0.12 - u2 * 0.35 + u2 * u2 * 2.2, mz - fz * u2 * u2 * 3);
   c.t = 1; if (camShot !== c) { camShot = c; c.snap = undefined; }
+  if (!torchOn && E.knelt) {
+    const kw = clamp((MAT.endT - T0 + 0.6) / 1.2, 0, 1) * (1 - 0.35 * u2), nt = world.env.night ?? 0;
+    torch.light.position.set(_mPt2.x + fx * 1.15 + rx * 0.85, _mPt2.y + 0.75, _mPt2.z + fz * 1.15 + rz * 0.85);
+    torch.light.color.setHex(0xffb37a);
+    torch.light.intensity = kw * (1.1 + 2.6 * nt) * (0.95 + Math.sin(clock * 5) * 0.03 + Math.sin(clock * 13) * 0.02);   // an ember glow, not a lamp
+  }
   if (MAT.endT > T1 && !E.dark) { E.dark = true; $('fade').classList.add('on'); }
   if (MAT.endT > T2 && !E.obit) { E.obit = true; matShowObit(E.entry); }
 }
@@ -5517,7 +5544,7 @@ on('animalHit', (e) => {
       if ((e.heavy || e.kill) && !kid) goreWallDecal(e.point, e.dir);
       goreSfx('spatter', 0.8, e.point);
     }
-    const r = (e.arrow ? 0.045 : e.kind === 'blunt' ? 0.05 : e.weapon === 'axe' ? 0.085 : 0.06) * small * (e.kill ? 1.25 : 1) * (o.kind === 'bear' || o.kind === 'aurochs' ? 1.5 : 1);   // GORE-FIX: a big body takes a big wound (read at 5 m on dark fur)
+    const r = (e.arrow ? 0.045 : e.kind === 'blunt' ? 0.05 : e.weapon === 'axe' ? 0.085 : 0.06) * small * (e.kill ? 1.25 : 1) * (o.kind === 'bear' || o.kind === 'aurochs' ? 1.8 : 1);   // GORE-FIX: a big body takes a big wound (read at 5 m on dark fur) · GORE-FIX5 1.5→1.8
     GR.addWound(o.a.model, e.point, r, { wet: e.kind === 'blunt' ? 0.5 : 1 });
     goreSfx('flesh', e.kill ? 1 : 0.75, e.point); if (e.heavy || e.crit || (e.weapon === 'thrown' && !e.arrow)) goreSfx('crack', e.kill ? 0.9 : 0.6, e.point);
   }
@@ -5963,26 +5990,31 @@ function goreLookAway() {
 }
 // Sena never stands inside an animal, live or dead: pushed out of its body ellipse (plus 0.3 m).
 // GORE-FIX4: a dead body (and a butchered carcass) is not the standing ellipse: a toppled bear's legs and back spread past
-// it. She keeps 0.4 m from every vertex of its posed footprint (sampled while it settles, then cached).
+// it. GORE-FIX5: she keeps 0.4 m outside the convex outline of its posed footprint (sampled while it settles, then cached);
+// inside it she is walked straight out across the nearest edge (up to 0.3 m a frame).
 function senaFootPush(f) {
-  const R = 0.4, nx0 = N.pos.x, nz0 = N.pos.z; let sx = 0, sz = 0, dmin = 9, cx = 0, cz = 0, n = 0;
-  for (let i = 0; i < f.length; i += 2) {
-    const dx = nx0 - f[i], dz = nz0 - f[i + 1]; if (Math.abs(dx) > 3 || Math.abs(dz) > 3) continue;
-    cx += f[i]; cz += f[i + 1]; n++;
-    const d = Math.hypot(dx, dz); if (d >= R) continue;
-    dmin = Math.min(dmin, d); const w = (R - d) / (d || 1e-3); sx += dx * w; sz += dz * w;
+  const R = 0.4, x = N.pos.x, z = N.pos.z, n = f.length >> 1; if (n < 3) return;
+  let inside = true, bd = 1e9, bx = 0, bz = 0, ex = 0, ez = 0;
+  for (let i = 0; i < n; i++) {
+    const ax = f[i * 2], az = f[i * 2 + 1], cx = f[((i + 1) % n) * 2], cz = f[((i + 1) % n) * 2 + 1];
+    const dx = cx - ax, dz = cz - az, L2 = dx * dx + dz * dz || 1e-9;
+    if (dx * (z - az) - dz * (x - ax) < 0) inside = false;          // counter-clockwise: the inside is on the left of every edge
+    const t = Math.max(0, Math.min(1, ((x - ax) * dx + (z - az) * dz) / L2)), px = ax + dx * t, pz = az + dz * t, d = Math.hypot(x - px, z - pz);
+    if (d < bd) { bd = d; bx = px; bz = pz; const l = Math.sqrt(L2); ex = dz / l; ez = -dx / l; }   // outward normal of that edge
   }
-  if (dmin >= R || !n) return;
-  let l = Math.hypot(sx, sz);
-  if (l < 1e-3) { sx = nx0 - cx / n; sz = nz0 - cz / n; l = Math.hypot(sx, sz) || 1; }   // deep inside: straight out from its middle
-  const k = Math.min(0.25, R - dmin + 0.02); N.pos.x += (sx / l) * k; N.pos.z += (sz / l) * k;
+  if (!inside && bd >= R) return;
+  let nx, nz;
+  if (inside || bd < 1e-4) { nx = ex; nz = ez; } else { nx = (x - bx) / bd; nz = (z - bz) / bd; }
+  const tx = bx + nx * R, tz = bz + nz * R, mx = tx - x, mz = tz - z, m = Math.hypot(mx, mz), k = Math.min(1, 0.3 / (m || 1));
+  N.pos.x += mx * k; N.pos.z += mz * k;
 }
 function senaBodyPush() {
   if (N.rest > 0 || N.sit > 0 || N.ride || N.board || N.seat || N.downed > 0 || MAT.rescuing || N.swim) return;
   for (const o of animals) {
     if (o === P.ride || o.looted || !o.root.visible || Math.hypot(o.root.position.x - N.pos.x, o.root.position.z - N.pos.z) > (o.state === 'dead' ? 5 : 4)) continue;
     if (o.state === 'dead') {                       // GORE-FIX4: the fallen body's real footprint
-      if (!o.gfoot || (o.gfootT || 0) < 6 && o.deadT - (o.gfootT || 0) > 0.4) { o.gfoot = GR.footprint(o.a.model, getHeight(o.root.position.x, o.root.position.z)); o.gfootT = o.deadT; }
+      if (!o.gfoot || (o.gfootT || 0) < 6 && o.deadT - (o.gfootT || 0) > (o.deadT < 2.5 ? 0.1 : 0.4)) {   // GORE-FIX5: often while it falls
+        o.gfoot = GR.footprint(o.a.model, getHeight(o.root.position.x, o.root.position.z)); o.gfootT = o.deadT; }
       senaFootPush(o.gfoot); continue;
     }
     o.gfoot = null; o.gfootT = 0;
@@ -7779,9 +7811,30 @@ async function arcTalk(lines, other = ARCS.focus) {
     else if ((l[0] === 'Sena' || l[0] === 'Aro') && other && other !== N) arcCloseUp(l[0] === 'Sena' ? N : P, other, 3.4, l[0] === 'Sena' ? -1 : 1);
     else if (l[0] === 'Sena' && other === N) { arcStandFace(N, P.pos); arcCloseUp(N, P, 3.2, 1); }   // ARC-FIX: she turns to him (not her back to the lens)
     else if (l[0] === 'Aro' && other === N) { arcStandFace(P, N.pos); arcCloseUp(P, N, 3.2, -1); }
+    ARCS.nGaze = l[0] === 'Sena' ? (other && other !== N ? other : P) : null;   // ARC-FIX5: she lifts her eyes to whoever she speaks to
     say(l[0], l[1]); await arcSubsDone();
   }
+  ARCS.nGaze = null;
 }
+// ARC-FIX5: Sena's head and neck turn toward ARCS.nGaze (an NPC, P, or a point), eased, clamped to a natural range
+// (seated at the fire she spoke to her hands, eyes down, with Aro standing beside her).
+const _agH = new THREE.Vector3(), _agR = new THREE.Vector3();
+function arcGazeOv(h) {
+  const g = ARCS.nGaze;
+  ARCS.nGazeW = clamp((ARCS.nGazeW || 0) + (g ? 0.04 : -0.04), 0, 1);
+  if (ARCS.nGazeW <= 0) return;
+  if (g) { const tp = g.pos || g, hy = g === P ? (P.h.bones.Head.getWorldPosition(_agR), _agR.y) : (tp.y || getHeight(tp.x, tp.z)) + (g.child ? 1.0 : 1.5); ARCS.nGazeAt = [tp.x, hy, tp.z]; }
+  const at = ARCS.nGazeAt; if (!at) return;
+  h.bones.Head.getWorldPosition(_agH);
+  const w = smooth01(ARCS.nGazeW), dx = at[0] - _agH.x, dz = at[2] - _agH.z, dh = Math.hypot(dx, dz) || 1;
+  let yaw = Math.atan2(dx, dz) - N.face; yaw = Math.atan2(Math.sin(yaw), Math.cos(yaw));
+  yaw = clamp(yaw, -1.1, 1.1) * w;
+  const pitch = clamp(Math.atan2(at[1] - _agH.y, dh), -0.3, 0.45) * w;
+  rotW(h.bones.neck_01, _V_UP, yaw * 0.45); rotW(h.bones.Head, _V_UP, yaw * 0.55);
+  const fa = N.face + yaw; _agR.set(Math.cos(fa), 0, -Math.sin(fa));   // the head's own right axis after the turn
+  rotW(h.bones.neck_01, _agR, -pitch * 0.4); rotW(h.bones.Head, _agR, -pitch * 0.6);
+}
+N.h.addOverride('arcGaze', 50, arcGazeOv);
 function arcFace(e, tp) { e.face = Math.atan2(tp.x - e.pos.x, tp.z - e.pos.z); }
 function arcStandFace(e, tp) { if (e.ride || e.sit > 0 || e.seat || e.mode === 'sit' || (e === P && (keys.KeyW || keys.KeyS || keys.KeyA || keys.KeyD))) return; arcFace(e, tp); }   // ARC-FIX: standing speakers only
 
@@ -8371,6 +8424,7 @@ function arcSling() {
   if (view !== 'fpp' && (!camShot || camShot.release)) {   // ARC-FIX: a held look at the frozen sling in the snow (ARC-FIX4: from the open side, the windbreak behind it)
     const sx = pr.x + 0.55, sz = pr.z + 0.65, gy = pr.g.position.y, a = 0.35;
     camShot = ARCS.shot = { pos: new THREE.Vector3(sx + Math.sin(a) * 2.1, Math.max(gy + 1.25, getHeight(sx + Math.sin(a) * 2.1, sz + Math.cos(a) * 2.1) + 0.8), sz + Math.cos(a) * 2.1), look: new THREE.Vector3(sx - 0.15, gy + 0.2, sz - 0.45), t: 5.5, ease: true, untilSubs: true, story: true };   // ARC-FIX4: story: the not-sitting branch of updatePlayer dropped every ease shot (sitShotOff) on its first frame
+    if (!$('hud').classList.contains('cine')) { const sh = camShot; cine(true); setTimeout(() => { if (!ARCS.scene && !ROM.scene && !ROM.fk && !R.on && !MAT.choice) cine(false); else if (camShot === sh) camShot = null; }, 5600); }   // ARC-FIX5: letterboxed, HUD away for the held look
   }
   arcMem('sling', 'You found Wena\'s sling in an empty camp.');
   save();
@@ -8797,7 +8851,7 @@ async function arcRaidAfter() {
     arcSay(L.tamuDies); await arcSubsDone();
     await arcWait(1.2);
     await arcFade(L.tamuBuried, () => { ARCS.nHold = null; N.h.pose = null; arcDrop('tamu'); arcCairn('Tamu'); }, 2600);
-    if (cineOn) cine(false);
+    if (cineOn) ARCS.dawnCine = true;               // ARC-FIX5: the letterbox stays through to the dawn (no HUD flash between the two fades)
   } else if (A.tamu === 'gone' && !A.choices.tamu) { // he came with them; he is on his knees. Only an explicit pick kills him (never the default)
     await arcChoose('tamu', 'Tamu', ARC_OPTS.tamu(), { def: 0, note: L.tamuSeen });
     if (A.choices.tamu === 'kill') { await arcFade('', () => arcSfx(140, 0.25, 0.7), 500); arcSay(L.tamuKill); await arcSubsDone(); arcCairn('Tamu'); }   // a hard cut, never shown
@@ -9056,8 +9110,9 @@ function arcVigil() {
     bump('vigil');
     await arcSubsDone();
     romShared();                                     // ARC-FIX: a night at her side is shared time (no neglect line next morning)
+    let vb = false;                                  // ARC-FIX5: the letterbox stays on from the vigil through the first kiss (no HUD flash between them)
     await arcFade(scar ? L.scarredFade : L.vigilFade, () => {               // morning: the two of them just outside the door, in the first light
-      arcVigilSit(null); ARCS.vigilDone = true;
+      vb = ARCS.vigilBusy; ARCS.vigilBusy = false; arcVigilSit(null); ARCS.vigilDone = true;
       const h = b.s, d = h ? toWorld(h, [0, 0, h.kind === 'house' ? 4.6 : 3.8]) : null;
       if (d) { const a = Math.atan2(d.x - h.x, d.z - h.z), rx = Math.cos(a), rz = -Math.sin(a);
         P.pos.set(d.x - rx * 0.6, 0, d.z - rz * 0.6); N.pos.set(d.x + rx * 0.6, 0, d.z + rz * 0.6); P.face = Math.atan2(N.pos.x - P.pos.x, N.pos.z - P.pos.z); N.face = P.face + Math.PI; N.path = null; N.speed = 0; }
@@ -9065,6 +9120,7 @@ function arcVigil() {
     ARCS.vigil = false;
     await arcFeverCure();                            // ARC-FIX4: the first kiss plays inside the vigil scene (no chapter turn under it)
     await arcSubsDone();
+    if (vb) { busy = false; cine(false); }   // ARC-FIX5
   });
 }
 // Aro on the bed beside her, sitting up, her near hand in his (floor-sit mechanics at the mattress, a two-bone reach).
@@ -10098,6 +10154,8 @@ function svSpitTake(s) {
   toast(`Off the spit: ${msg}`); A.hit(3000, 0.6, 0.25); P.h.swing('useU'); drawInv();
 }
 function svSpitWord(items) { const t = items.reduce((m, it) => Math.max(m, it.t), 0); return { raw: 'still raw', under: 'undercooked', cooked: 'cooked', well: 'well done', burnt: 'burning' }[SURV.doneness(t)]; }
+// SURV-FIX: a fire in E reach with food on its spit (findOtherTarget: "Share a meal" no longer takes E from the spit)
+function svSpitAt(p) { return structs.some((s) => s.kind === 'fire' && s.rise >= 1 && s.spit?.items?.length > 0 && Math.hypot(s.x - p.x, s.z - p.z) - s.radius < 1.6); }
 // Boiling and brewing: start at the fire, stay within a few steps (he kneels) until it is done.
 function svBoilStart(s, kind) {
   SV.boil = { s, kind, t: 0, T: kind === 'water' && !S.tools.pot ? 20 : 8 };
@@ -10986,14 +11044,16 @@ const lockHint = () => {
 };
 const lockHintPing = () => { lockHintAt = performance.now(); lockHint(); };
 document.addEventListener('pointerlockchange', () => {
-  if (locked()) { lockedAt = performance.now(); lockBroken = false; }
-  else {
+  if (locked()) { lockedAt = performance.now(); lockBroken = false; lockHad = true; }   // ARC-FIX5: lockHad
+  else if (!lockHad) { /* ARC-FIX5: a refused or doubled request (no lock was ever held): not an Esc, no pause */ }
+  else { lockHad = false;
     unlockTime = performance.now();
     // Esc released the mouse while playing: that is the pause menu. (Chrome swallows the Esc key itself.)
     if (playing && !menuOpen && !busy && !paused && performance.now() - lockedAt > 300) pause(true);
   }
   lockHint();
 });
+let lockHad = false;   // ARC-FIX5
 let lockBroken = false;                 // pointer lock refused (embedded preview, some browsers): clicks act straight away
 document.addEventListener('pointerlockerror', () => { lockBroken = true; lockHint(); });
 // In fullscreen the browser hands every key to the game, so Ctrl+W, Tab, Alt and Esc cannot hit the browser.
@@ -12608,6 +12668,7 @@ Object.assign(window.G, {
   mat: {
     D, diffK, diff: () => S.diff, setDiff, canLower, endRun, permadeath, die, grace: matGrace, stamCap: (fn) => { STAM_CAPS.push(fn); return fn; },
     downed: () => P.downed || 0, rescuing: () => MAT.rescuing, dead: () => MAT.dead, stones: () => MATD.readStones(), respawnAt: matRespawnAt, loot: matLoot,
+    griefHold: (t = 0) => { MAT.endHold = t; return MAT.endT; },   // MAT-GRIEF r3: test hook
     gate: matGate, newGame: (mode = 'survivor', custom = null) => { settings.ageOk = MATD.CONTENT_V; saveSettings(); matGate(false); start(false, { mode, custom }); },
     state: () => ({ busy, downed: P.downed || 0, hits: MAT.downHits, rescueT: MAT.rescueT, rescuing: MAT.rescuing, dead: MAT.dead, endT: MAT.endT, gh: S.gh, weak: S.weakUntil > S.gh, mode: S.diff.mode }),
     DIFF: MATD.DIFF, BUS: MATD.BUS, foes,

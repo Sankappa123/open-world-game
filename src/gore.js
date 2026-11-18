@@ -437,7 +437,7 @@ bool goreBit(float mask, float seg) { return mod(floor(mask / exp2(seg)), 2.0) >
 function newUniforms() {
   return { uW: { value: Array.from({ length: 8 }, () => new THREE.Vector4()) }, uWet: { value: new Float32Array(8) }, uWN: { value: 0 },
     uGore: G.uGore, uBloodOn: G.uBloodOn, uHands: { value: 0 }, uBS: { value: 1 }, uCut: { value: 0 }, uKeep: { value: 0 },
-    uP: { value: Array.from({ length: 4 }, () => new THREE.Vector4()) }, uPN: { value: 0 }, uPC: { value: new THREE.Color(0x8c8a84) }, uFlesh: { value: 0 }, uFY: { value: new THREE.Vector2(0, 1) },
+    uP: { value: Array.from({ length: 4 }, () => new THREE.Vector4()) }, uPN: { value: 0 }, uPC: { value: new THREE.Color(0x8c8a84) }, uFlesh: { value: 0 }, uFY: { value: new THREE.Vector2(0, 1) }, uFS: { value: 1 },
     uDown: { value: new THREE.Vector3(0, -1, 0) } };   // bind-space 'down': blood runs from a wound
 }
 function woundCompile(u, wounds) {
@@ -445,9 +445,9 @@ function woundCompile(u, wounds) {
     Object.assign(sh.uniforms, u);
     sh.vertexShader = 'attribute float aSeg;\nattribute float aHand;\nvarying vec3 vGoreBind;\nflat varying float vGoreSeg;\nvarying float vGoreHand;\n'
       + sh.vertexShader.replace('#include <begin_vertex>', '#include <begin_vertex>\n  vGoreBind = position; vGoreSeg = aSeg; vGoreHand = aHand;')
-        .replace('#include <morphtarget_vertex>', '#include <morphtarget_vertex>\n  vGoreBind = transformed;');   // FIX gore-cmb: the morph pose (the cave bear's wounds are placed on its posed surface)
+        ;   // GORE-FIX5: a morph mesh's wounds live on its rest shape (snapToSurface carries them there), so they ride every pose
     let f = 'uniform float uCut, uKeep;\nflat varying float vGoreSeg;\nvarying vec3 vGoreBind;\nvarying float vGoreHand;\n'
-      + (wounds ? 'uniform vec4 uW[8];\nuniform float uWet[8];\nuniform int uWN;\nuniform float uGore, uBloodOn, uHands, uBS, uFlesh;\nuniform vec2 uFY;\nuniform vec3 uDown;\nuniform vec4 uP[4];\nuniform int uPN;\nuniform vec3 uPC;\n' : '')
+      + (wounds ? 'uniform vec4 uW[8];\nuniform float uWet[8];\nuniform int uWN;\nuniform float uGore, uBloodOn, uHands, uBS, uFlesh, uFS;\nuniform vec2 uFY;\nuniform vec3 uDown;\nuniform vec4 uP[4];\nuniform int uPN;\nuniform vec3 uPC;\n' : '')
       + GLSL_NOISE + '\n' + sh.fragmentShader;
     f = f.replace('void main() {', `void main() {
   { float gs = floor(vGoreSeg + 0.5);
@@ -494,26 +494,34 @@ function woundCompile(u, wounds) {
     // a butchered carcass (GORE-FIX4): skinned to the knees and the neck. The hide stays on the head, the tail and the lower
     // legs (a ragged cut line); the rest is raw muscle in fibrous dark-to-bright red, a creamy fat cap and marbling, thin pale
     // fascia streaks, pale rib bands on the flank and a dark dried crust at the hide line; matte-moist, never glossy plastic.
+    // GORE-FIX5: the pattern is sized in real metres (uFS: bind units → m): fibres a few cm long, fat seams, ribs 6 cm apart.
+    // (Sized in bind units, a deer's ribs were 45 cm bands: red and white candy stripes.) Creamy fat, never white.
     if (uFlesh > 0.0) {
-      vec3 bp = vGoreBind * uBS; float gs2 = floor(vGoreSeg + 0.5);
-      float hy = clamp((vGoreBind.y - uFY.x) / max(uFY.y - uFY.x, 1e-4), 0.0, 1.0) + (goreN(bp * 16.0) - 0.5) * 0.05;
+      vec3 bp = vGoreBind * uFS; float gs2 = floor(vGoreSeg + 0.5);
+      float hy = clamp((vGoreBind.y - uFY.x) / max(uFY.y - uFY.x, 1e-4), 0.0, 1.0) + (goreN(bp * 30.0) - 0.5) * 0.05;
       float hide = max((gs2 > 0.5 && gs2 < 1.5) || gs2 > 5.5 ? 1.0 : 0.0, 1.0 - smoothstep(0.26, 0.29, hy));
-      float mf = goreN(bp * vec3(5.0, 5.0, 1.6)) * 0.7 + goreN(bp * vec3(22.0, 22.0, 5.0)) * 0.3;
-      vec3 flesh = mix(vec3(0.15, 0.012, 0.011), vec3(0.40, 0.05, 0.038), smoothstep(0.25, 0.8, mf));
-      flesh *= 0.85 + 0.3 * goreN(bp * 55.0);
-      float fatN = goreN(bp * 6.0 + 11.0) * 0.6 + goreN(bp * 17.0 + 3.0) * 0.4;
-      float fat = smoothstep(0.56, 0.68, fatN + smoothstep(0.62, 0.95, hy) * 0.12);       // more fat along the back
-      flesh = mix(flesh, vec3(0.58, 0.42, 0.28) * (0.85 + 0.25 * goreN(bp * 40.0)), fat * 0.92);
-      float fas = smoothstep(0.66, 0.8, goreN(bp * vec3(2.5, 16.0, 2.5) + 5.0)) * (1.0 - fat);
-      flesh = mix(flesh, vec3(0.46, 0.30, 0.27), fas * 0.4);
-      float rib = smoothstep(0.55, 0.9, sin(bp.z * 34.0 + goreN(bp * 6.0) * 2.0)) * smoothstep(0.42, 0.5, hy) * (1.0 - smoothstep(0.66, 0.76, hy)) * smoothstep(0.35, 0.6, goreN(bp * 3.0 + 7.0));
-      flesh = mix(flesh, vec3(0.56, 0.44, 0.36), rib * 0.75);
+      float mf = goreN(bp * vec3(16.0, 16.0, 5.0)) * 0.6 + goreN(bp * vec3(60.0, 60.0, 14.0)) * 0.4;   // muscle bundles and fibre
+      vec3 flesh = mix(vec3(0.13, 0.010, 0.010), vec3(0.36, 0.045, 0.034), smoothstep(0.2, 0.85, mf));
+      flesh *= 0.8 + 0.35 * goreN(bp * 140.0);                                                        // fine grain
+      // fat: thin wandering marbling seams (ridges of a noise field, not round spots) and a broader cap along the back
+      float seam = (1.0 - smoothstep(0.0, 0.035, abs(goreN(bp * 9.0 + 11.0) - 0.5) + (goreN(bp * 40.0) - 0.5) * 0.04)) * (0.55 + 0.45 * goreN(bp * 18.0));
+      float cap = smoothstep(0.56, 0.7, goreN(bp * 6.0 + 3.0)) * smoothstep(0.74, 0.94, hy) * 0.85;
+      float fat = clamp(max(seam * smoothstep(0.35, 0.6, goreN(bp * 3.0 + 1.0)), cap), 0.0, 1.0);
+      flesh = mix(flesh, vec3(0.40, 0.27, 0.13) * (0.8 + 0.3 * goreN(bp * 80.0)), fat * 0.8);
+      float fas = (1.0 - smoothstep(0.0, 0.03, abs(goreN(bp * 4.0 + 5.0) - 0.5))) * (1.0 - fat) * smoothstep(0.4, 0.7, goreN(bp * 12.0));   // thin pale fascia
+      flesh = mix(flesh, vec3(0.34, 0.19, 0.16), fas * 0.25);
+      // ribs on the lower flank only: low bands under the meat, the meat between them sitting deeper
+      float ribZ = smoothstep(0.4, 0.48, hy) * (1.0 - smoothstep(0.6, 0.7, hy)) * smoothstep(0.35, 0.6, goreN(bp * 4.0 + 7.0));
+      float rs = sin(bp.z * 105.0 + goreN(bp * 9.0) * 2.0);
+      float rib = smoothstep(0.7, 0.98, rs) * ribZ * (1.0 - fat);
+      flesh *= 1.0 - 0.35 * ribZ * smoothstep(0.1, -0.7, rs);
+      flesh = mix(flesh, vec3(0.30, 0.15, 0.12), rib * 0.45);
       float crust = 1.0 - smoothstep(0.0, 0.06, hy - 0.285); crust *= 1.0 - hide;
-      flesh = mix(flesh, vec3(0.09, 0.012, 0.01), crust * 0.85);
+      flesh = mix(flesh, vec3(0.08, 0.012, 0.01), crust * 0.85);
       float fl = uFlesh * (1.0 - hide);
       diffuseColor.rgb = mix(diffuseColor.rgb, flesh, fl);
-      goreFR = mix(0.78, 0.6, (1.0 - fat) * (1.0 - crust)) * step(0.001, fl) + (1.0 - step(0.001, fl)) * -1.0;
-      goreWet = max(goreWet, fl * (1.0 - fat) * 0.35);
+      goreFR = mix(0.86, 0.7, (1.0 - fat) * (1.0 - crust)) * step(0.001, fl) + (1.0 - step(0.001, fl)) * -1.0;
+      goreWet = max(goreWet, fl * (1.0 - fat) * 0.3);
     }
   }`);
       f = f.replace('#include <roughnessmap_fragment>', '#include <roughnessmap_fragment>\n  roughnessFactor = mix(roughnessFactor, mix(0.4, 0.3, goreDark), goreWet * uGore);\n  if (goreFR > 0.0) roughnessFactor = goreFR;');   // FIX gore-cmb: a wet sheen, not gloss paint · GORE-FIX4: carcass flesh matte-moist
@@ -621,6 +629,32 @@ function nearestBone(body, p) {
   }
   return bi;
 }
+// GORE-FIX5: move a bind-space (or morph-local) point onto the nearest point of the body's surface, if it is within
+// 'far'. A weapon's hit point is often a few cm inside a big body (a bear's flank): the wound sphere then only grazed
+// the skin and showed as a faint speck. Skinned bodies use the bind positions. A morph mesh (the low-poly bears) is
+// matched on its current posed surface and the point is carried to the same spot of its rest shape (barycentric), so the
+// wound stays on the skin through every pose, the death fall included (placed in posed space it slid off the body).
+const _tri = new THREE.Triangle(), _ta = new THREE.Vector3(), _tb = new THREE.Vector3(), _tc = new THREE.Vector3(), _tp = new THREE.Vector3(), _tbest = new THREE.Vector3(), _bary = new THREE.Vector3();
+function snapToSurface(body, p, far) {
+  const g = body.geometry, pos = g?.attributes.position; if (!pos) return false;
+  const morph = isMorph(body);
+  const get = (i, out) => (morph ? body.getVertexPosition(i, out) : out.fromBufferAttribute(pos, i));
+  const idx = g.index, n = idx ? idx.count : pos.count; let bd = far * far, bt = -1;
+  for (let t = 0; t + 2 < n; t += 3) {
+    const a = idx ? idx.getX(t) : t, b = idx ? idx.getX(t + 1) : t + 1, c = idx ? idx.getX(t + 2) : t + 2;
+    get(a, _ta); get(b, _tb); get(c, _tc); _tri.set(_ta, _tb, _tc).closestPointToPoint(p, _tp);
+    const d = _tp.distanceToSquared(p); if (d < bd) { bd = d; _tbest.copy(_tp); bt = t; }
+  }
+  if (bt < 0) return false;
+  if (morph) {
+    const a = idx ? idx.getX(bt) : bt, b = idx ? idx.getX(bt + 1) : bt + 1, c = idx ? idx.getX(bt + 2) : bt + 2;
+    get(a, _ta); get(b, _tb); get(c, _tc); _tri.set(_ta, _tb, _tc).getBarycoord(_tbest, _bary);
+    _ta.fromBufferAttribute(pos, a); _tb.fromBufferAttribute(pos, b); _tc.fromBufferAttribute(pos, c);
+    p.set(0, 0, 0).addScaledVector(_ta, _bary.x).addScaledVector(_tb, _bary.y).addScaledVector(_tc, _bary.z);
+  } else p.copy(_tbest);
+  return true;
+}
+const isMorph = (body) => !body.skeleton && !!body.morphTargetInfluences?.length;
 // A wound at a world point (radius in metres): converted through the nearest bone into bind space; 8 slots, FIFO.
 export function addWound(model, worldPt, rWorld = 0.08, { wet = 1, maxR = 0 } = {}) {   // FIX gore-cmb maxR: the most a wound may grow to (metres)
   const rec = REC.get(model); if (!rec) return -1;
@@ -633,6 +667,7 @@ export function addWound(model, worldPt, rWorld = 0.08, { wet = 1, maxR = 0 } = 
   const sc = _m.getMaxScaleOnAxis() || 1;
   _v.copy(worldPt).applyMatrix4(_m2.copy(_m).invert());
   const r = (rWorld * (0.8 + cfg.k.size * 0.25)) / sc;
+  snapToSurface(body, _v, isMorph(body) ? Infinity : r * 4);   // GORE-FIX5: the hit point can lie inside the body; the wound sits on the skin
   const near = rec.wounds.find((w) => w.p.distanceTo(_v) < w.r * 0.6);
   const cap = maxR > 0 ? maxR / sc : r * 2.2;
   if (near) { near.r = Math.min(near.r * 1.25, cap); near.wet = Math.max(near.wet, wet); near.t = now; }
@@ -849,6 +884,14 @@ function dropPiece(p) {
 }
 export function clearPieces() { while (pieces.length) dropPiece(pieces[0]); }
 
+// GORE-FIX5: metres per bind-space unit of a body (skinned: through its first bone, as addWound; morph: its world scale)
+function bindScaleOf(body) {
+  body.updateWorldMatrix(true, false);
+  if (!body.skeleton) return body.matrixWorld.getMaxScaleOnAxis() || 1;
+  const bone = body.skeleton.bones[0];
+  _m.multiplyMatrices(body.matrixWorld, body.bindMatrixInverse).multiply(bone.matrixWorld).multiply(body.skeleton.boneInverses[0]).multiply(body.bindMatrix);
+  return _m.getMaxScaleOnAxis() || 1;
+}
 // ----- carcass: a posed copy left where the animal was butchered, skinned flesh, 120 s, then it fades away
 export function leaveCarcass(model, { flesh = true, scale = 0.9, life = 120 } = {}) {
   if (!ready) return null;
@@ -858,6 +901,7 @@ export function leaveCarcass(model, { flesh = true, scale = 0.9, life = 120 } = 
   const u = newUniforms(); u.uFlesh.value = flesh && cfg.blood ? 0.86 : 0;
   if (rec) { u.uBS.value = rec.bs; u.uDown.value.copy(rec.u.uDown.value); u.uCut.value = rec.cut; rec.wounds.forEach((w, i) => { u.uW.value[i].set(w.p.x, w.p.y, w.p.z, w.r); u.uWet.value[i] = w.wet * 0.6; }); u.uWN.value = rec.wounds.length; }
   const bodyG = rec?.body?.geometry; if (bodyG) { bodyG.boundingBox || bodyG.computeBoundingBox(); u.uFY.value.set(bodyG.boundingBox.min.y, bodyG.boundingBox.max.y); }   // GORE-FIX4: the hide line (knees)
+  if (rec?.body) u.uFS.value = bindScaleOf(rec.body);   // GORE-FIX5: bind units → metres for the flesh pattern
   const mats = [];
   copy.traverse((o) => {
     if (o.isSkinnedMesh || (rec?.rig === 'mesh' && o.isMesh)) {
@@ -882,16 +926,30 @@ function dropCarcass(c) {
   const i = carcasses.indexOf(c); if (i >= 0) carcasses.splice(i, 1);
   c.g.parent?.remove(c.g); for (const m of c.mats) m.dispose();
 }
-// GORE-FIX4: the ground footprint of a posed body: [x, z, ...] of its vertices below 1.2 m over the ground (Sena keeps clear)
+// GORE-FIX4: the ground footprint of a posed body: the outline of its vertices below 1.2 m over the ground (Sena keeps clear)
 export function footprint(root, gy, per = 700) {
   const out = [], v = new THREE.Vector3();
   root.updateMatrixWorld(true);
   root.traverse((m) => {
     if (!m.isMesh || !m.visible || !m.geometry?.attributes.position) return;
     const pos = m.geometry.attributes.position, st = Math.max(1, Math.floor(pos.count / per));
-    for (let i = 0; i < pos.count; i += st) { v.fromBufferAttribute(pos, i); if (m.isSkinnedMesh) m.applyBoneTransform(i, v); v.applyMatrix4(m.matrixWorld); if (v.y < gy + 1.2) out.push(v.x, v.z); }
+    for (let i = 0; i < pos.count; i += st) { m.getVertexPosition(i, v); v.applyMatrix4(m.matrixWorld);   // GORE-FIX5: morphs too (the low-poly bears fall by morph: the rest shape was the standing bear)
+      if (v.y < gy + 1.2) out.push(v.x, v.z); }
   });
-  return new Float32Array(out);
+  return hull2(out);
+}
+// GORE-FIX5: the convex outline (counter-clockwise [x, z, ...]) of a point cloud. Keeping clear of single vertices failed
+// inside a low-poly body: its big triangles leave holes between vertices, and deep inside the pushes cancelled out.
+function hull2(xz) {
+  const P = []; for (let i = 0; i < xz.length; i += 2) P.push([xz[i], xz[i + 1]]);
+  if (P.length < 3) return new Float32Array(xz);
+  P.sort((a, b) => a[0] - b[0] || a[1] - b[1]);
+  const cr = (o, a, b) => (a[0] - o[0]) * (b[1] - o[1]) - (a[1] - o[1]) * (b[0] - o[0]);
+  const lo = [], up = [];
+  for (const p of P) { while (lo.length >= 2 && cr(lo[lo.length - 2], lo[lo.length - 1], p) <= 0) lo.pop(); lo.push(p); }
+  for (let i = P.length - 1; i >= 0; i--) { const p = P[i]; while (up.length >= 2 && cr(up[up.length - 2], up[up.length - 1], p) <= 0) up.pop(); up.push(p); }
+  lo.pop(); up.pop();
+  return new Float32Array(lo.concat(up).flat());
 }
 export const carcassFeet = () => carcasses.filter((c) => c.g.visible).map((c) => c.foot);
 export const carcassList = () => carcasses.map((c) => ({ visible: c.g.visible, flesh: c.u.uFlesh.value, t: c.t, opacity: c.mats[0]?.opacity ?? 1 }));
