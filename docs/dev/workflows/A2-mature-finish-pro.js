@@ -28,7 +28,11 @@ const FOCUS = '\n\nATTEMPT 4 - YOU RUN UNATTENDED INSIDE A WORKFLOW. Nobody is c
 // cached results replay; every agent not started yet (fixers, verifiers) runs on Fable.
 const OPUS_DONE = new Set(['finish M4 CMB', 'finish M5 ARC phase B', 'finish M6 ROM + MUS', 'finish BOW finish', 'M5 ARC phase C', 'QA:story-mode', 'QA:survivor-hardcore', 'QA:visual-guardrails'])
 // 2026-11-17 16:05: Fable now requires paid usage credits, so new agents go back to the session model (Opus) on the plan.
-const optsFor = (opts) => FABLE_DONE.has(opts.label) ? { ...opts, model: 'fable' } : opts
+// 2026-11-18: the user moved to the $100 plan and asked for Fable. Agents that already finished keep the opts they ran with
+// (so their cached results replay); every agent not finished yet runs on Fable.
+const DEFAULT_DONE = new Set([...OPUS_DONE, 'fix:gore-cmb', 'fix:arc-rom-mus', 'fix:mat-surv', 'fix:bow', 'verify r1:gore-cmb', 'verify r1:arc-rom-mus', 'verify r1:mat-surv', 'verify r1:bow-limits', 'vfix r2:bow-limits', 'vfix r2:gore-cmb'])
+const USE_FABLE = true   // set false to fall back to the session model (e.g. if Fable needs paid credits again)
+const optsFor = (opts) => FABLE_DONE.has(opts.label) ? { ...opts, model: 'fable' } : DEFAULT_DONE.has(opts.label) || !USE_FABLE ? opts : { ...opts, model: 'fable' }
 const run = (prompt, opts) => agent(FABLE_DONE.has(opts.label) ? prompt : prompt + FOCUS, optsFor(opts)).then(r => must(r, opts.label))
 const limited = async (thunks, cap = CAP) => { const out = []; for (let i = 0; i < thunks.length; i += cap) { const part = await parallel(thunks.slice(i, i + cap).map(t => () => t())); if (part.some(r => r === null || r === undefined)) throw new Error('STOPPED: an agent in this batch returned nothing (usage limit or crash). Resume this run after the limit resets.'); out.push(...part) } return out }
 
