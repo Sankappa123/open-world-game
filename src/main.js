@@ -1900,13 +1900,16 @@ function aimSolve(charge, spawn, dir) {             // the same numbers for the 
   survWobble(dir);                                   // SURV: hurt arms, fever and cold shake the aim
   return v;
 }
-// ----- BOW-AIM (verifier round 2). The arrow leaves the string hand, and in third person the camera sits over the
+// ----- BOW-AIM (verifier round 2). The arrow left the string hand, and in third person the camera sits over the
 // shoulder, more than half a metre from it. Aimed at a fixed point 40 m down the camera's line, the arrow crossed that
-// line only out there: at 6 m it passed 0.6 m beside the crosshair. Now the camera's line is followed out to the first
-// thing it meets (game, a raider, a trunk, a boulder, a wall, the ground; 60 m of open air otherwise), and the arrow is
-// sent through that point, with the drop over the flight paid for up to BOW_ZERO metres. Past that the shot keeps the
-// BOW_ZERO elevation and falls short, as before: the arc shows it. The arc and the shot both come through here.
-const BOW_ZERO = 40, _baO = new THREE.Vector3(), _baP = new THREE.Vector3(), _baQ = new THREE.Vector3(), _baNear = [];
+// line only out there: at 6 m it passed 0.6 m beside the crosshair. Now the arrow's flight (what the hit tests see)
+// runs on the camera's own line, from the point on it abreast of the string hand, so it passes through whatever the
+// crosshair covers at any range. The line is followed out to the first thing it meets (game, a raider, a trunk, a
+// boulder, a wall, the ground; 60 m of open air otherwise) and the drop over the flight to that point is paid for, up
+// to BOW_ZERO metres. Past that the shot keeps the BOW_ZERO elevation and falls short, as before: the arc shows it.
+// What is drawn (the arrow in the air, the arc) starts at the hand and eases onto the true line over the first
+// BOW_EASE metres (BOW.off = hand minus line at the start). The arc and the shot both come through here.
+const BOW_ZERO = 40, BOW_EASE = 10, _baO = new THREE.Vector3(), _baP = new THREE.Vector3(), _baQ = new THREE.Vector3(), _baNear = [];
 function bowSight(out) {                             // _w4 = the camera's direction (aimSolve has just set it)
   const o = _baO.copy(camera.position), d = _w4;
   const t0 = Math.max(0, (P.pos.x - o.x) * d.x + (P.pos.y + 1.3 - o.y) * d.y + (P.pos.z - o.z) * d.z) + 1.6, t1 = t0 + 60;   // from just past Aro
@@ -1931,7 +1934,10 @@ function bowSight(out) {                             // _w4 = the camera's direc
   BOWOB.k = sk; BOWOB.n = sn;                         // (bowSweep notes what it struck for the arrow that struck it)
   return out.copy(o).addScaledVector(d, hit);
 }
+const bowEase = (dist) => { const k = clamp(1 - dist / BOW_EASE, 0, 1); return k * k * (3 - 2 * k); };
 function bowAimAt(spawn, dir, v) {
+  const o = camera.position, t = (spawn.x - o.x) * _w4.x + (spawn.y - o.y) * _w4.y + (spawn.z - o.z) * _w4.z;
+  (BOW.off ||= new THREE.Vector3()).copy(spawn); spawn.copy(o).addScaledVector(_w4, t); BOW.off.sub(spawn);
   const A = bowSight(dir), L = Math.max(0.5, A.distanceTo(spawn));
   const drop = (l) => { const t = Math.max(0, l - SP_TIP) / v; return 3 * t * t + SP_TIP * 6 * t / v; };   // the point leads the grip by SP_TIP along a falling line
   A.y += L <= BOW_ZERO ? drop(L) : drop(BOW_ZERO) * L / BOW_ZERO;
@@ -1970,11 +1976,13 @@ arcRing.material.depthTest = arcRingHalo.material.depthTest = false;   // the la
 arcLine.add(arcHalo); arcHalo.renderOrder = 4; arcHalo.frustumCulled = false;
 for (const o of [arcLine, arcDots, arcRing]) { o.visible = false; o.frustumCulled = false; o.renderOrder = 5; scene.add(o); }
 const ARC = { n: 0, hit: null, end: new THREE.Vector3() };
+const _arcP = new THREE.Vector3(), _arcP0 = new THREE.Vector3();
 const _ap = new THREE.Vector3(), _av = new THREE.Vector3(), _at = new THREE.Vector3(), _ad = new THREE.Vector3();
 function arcUpdate(charge) {
   const v = aimSolve(charge, _ap, _ad); _av.copy(_ad).multiplyScalar(v);
   let n = 0, hit = null, len = 0;
-  const push = (p) => { if (n) len += _w3.set(arcPos[n * 3 - 3], arcPos[n * 3 - 2], arcPos[n * 3 - 1]).distanceTo(p); arcPos[n * 3] = p.x; arcPos[n * 3 + 1] = p.y; arcPos[n * 3 + 2] = p.z; arcLen[n++] = len; };
+  const off = W.aim?.bow && view !== 'fpp' ? BOW.off : null, p0 = off && _arcP0.copy(_ap);   // BOW-AIM: the drawn arc leaves the hand and eases onto the true line
+  const push = (q) => { const p = _arcP.copy(q); if (off) p.addScaledVector(off, bowEase(q.distanceTo(p0))); if (n) len += _w3.set(arcPos[n * 3 - 3], arcPos[n * 3 - 2], arcPos[n * 3 - 1]).distanceTo(p); arcPos[n * 3] = p.x; arcPos[n * 3 + 1] = p.y; arcPos[n * 3 + 2] = p.z; arcLen[n++] = len; };
   push(_ap);
   for (let i = 0; i < 180 && !hit; i++) { hit = W.aim?.bow ? bowStep(_ap, _av, _at) : spearStep(_ap, _av, _at); if (!hit) push(_ap); }   // BOW: trees, boulders, walls stop the arrow's arc
   if (hit === 'ground') tipToGround(_ap, _av, _at);
@@ -2204,6 +2212,7 @@ function bowLoose() {
   const wob = 0.045 * (1 - a.charge) ** 1.5 + 0.02 * (BOW.tire || 0);   // a quick or a shaking shot strays
   ar.vel.x += (rand() - 0.5) * 2 * wob; ar.vel.y += (rand() - 0.5) * 2 * wob; ar.vel.z += (rand() - 0.5) * 2 * wob; ar.vel.normalize().multiplyScalar(v);
   ar.dmg = Math.round(4 + 10 * a.charge);
+  if (BOW.off && view !== 'fpp') { ar.off = BOW.off.clone(); ar.p0 = ar.pos.clone(); }   // BOW-AIM
   BOW.relT = clock; BOW.relCh = a.charge;            // BOW-FPP: the release follow-through
   scene.add(ar.m); BOW.arrows.push(ar); bowPoseArrow(ar);
   S.inv.arrow--;
@@ -2221,7 +2230,11 @@ function bowHold(dt) {
   camYaw += Math.sin(clock * 9.3) * k * dt * 9 + (rand() - 0.5) * k * 0.5; camPitch += Math.sin(clock * 7.1 + 1) * k * dt * 9;
   if (S.stam <= 0.5) { wpnCancelAim(); toast('Your arms give out: the string comes down'); }
 }
-function bowPoseArrow(ar) { ar.m.position.copy(ar.tip.lengthSq() ? ar.tip : ar.pos); ar.m.lookAt(_bA.copy(ar.m.position).add(ar.vel)); }
+function bowPoseArrow(ar) {
+  ar.m.position.copy(ar.tip.lengthSq() ? ar.tip : ar.pos);
+  if (ar.off) { const k = bowEase(ar.m.position.distanceTo(ar.p0)); if (k > 0) ar.m.position.addScaledVector(ar.off, k); else ar.off = null; }   // BOW-AIM: seen leaving the hand
+  ar.m.lookAt(_bA.copy(ar.m.position).add(ar.vel));
+}
 function bowTrim() {                                  // at most 40 loose arrows in the world: the oldest go
   const loose = BOW.arrows.filter((a) => a.st !== 'air');
   for (let i = 0; i < loose.length - 40; i++) bowRemove(loose[i]);
