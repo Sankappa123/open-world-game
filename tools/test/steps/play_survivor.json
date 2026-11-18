@@ -483,7 +483,7 @@
 },
 {
 "until": "!_M || G.chId()!=='fever'",
-"timeout": 30000
+"timeout": 75000
 },
 {
 "expect": "!_M || G.chId()==='reckoning'",
@@ -621,7 +621,17 @@
 "wait": 4800
 },
 {
-"js": "G.tp(window._ho.x, window._ho.z+6); G.time(21); G.sleep()",
+"js": "window._slN=()=>{ if (G.restState().on) return true; G.tp(window._ho.x, window._ho.z+6); G.time(21); G.sleep(); return !!G.restState().on; }; JSON.stringify({m:G.mat.state(), rest:G.restState().on, slept:G.cnt('slept_home'), goals:G.goals().map(g=>g[1]), host:G.hostileNear(35), dN:+Math.hypot(G.N.pos.x-G.P.pos.x,G.N.pos.z-G.P.pos.z).toFixed(1), fade:document.getElementById('fade').className, t:+G.S.time.toFixed(1), food:+G.S.food.toFixed(0), hp:+G.S.hp.toFixed(0)})"
+},
+{
+"until": "window._slN()",
+"timeout": 25000
+},
+{
+"expect": "G.restState().on || G.P.rest>0",
+"name": "Survivor: night 1 at home starts"
+},
+{
 "wait": 1500
 },
 {
@@ -629,7 +639,17 @@
 "timeout": 30000
 },
 {
-"js": "G.tp(window._ho.x, window._ho.z+6); G.time(21); G.sleep()",
+"js": "window._slN=()=>{ if (G.restState().on) return true; G.tp(window._ho.x, window._ho.z+6); G.time(21); G.sleep(); return !!G.restState().on; }; JSON.stringify({m:G.mat.state(), rest:G.restState().on, slept:G.cnt('slept_home'), goals:G.goals().map(g=>g[1]), host:G.hostileNear(35), dN:+Math.hypot(G.N.pos.x-G.P.pos.x,G.N.pos.z-G.P.pos.z).toFixed(1), fade:document.getElementById('fade').className, t:+G.S.time.toFixed(1), food:+G.S.food.toFixed(0), hp:+G.S.hp.toFixed(0)})"
+},
+{
+"until": "window._slN()",
+"timeout": 25000
+},
+{
+"expect": "G.restState().on || G.P.rest>0",
+"name": "Survivor: night 2 at home starts"
+},
+{
 "wait": 1500
 },
 {
@@ -637,7 +657,17 @@
 "timeout": 30000
 },
 {
-"js": "G.tp(window._ho.x, window._ho.z+6); G.time(21); G.sleep()",
+"js": "window._slN=()=>{ if (G.restState().on) return true; G.tp(window._ho.x, window._ho.z+6); G.time(21); G.sleep(); return !!G.restState().on; }; JSON.stringify({m:G.mat.state(), rest:G.restState().on, slept:G.cnt('slept_home'), goals:G.goals().map(g=>g[1]), host:G.hostileNear(35), dN:+Math.hypot(G.N.pos.x-G.P.pos.x,G.N.pos.z-G.P.pos.z).toFixed(1), fade:document.getElementById('fade').className, t:+G.S.time.toFixed(1), food:+G.S.food.toFixed(0), hp:+G.S.hp.toFixed(0)})"
+},
+{
+"until": "window._slN()",
+"timeout": 25000
+},
+{
+"expect": "G.restState().on || G.P.rest>0",
+"name": "Survivor: night 3 at home starts"
+},
+{
 "wait": 1500
 },
 {

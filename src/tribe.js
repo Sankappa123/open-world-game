@@ -93,14 +93,40 @@ export function createTribe(ctx) {
       t.light.visible = false; f.torch = t; f.wpnMesh = t.root; h.place(t.root, 'handL'); h.gripL = 1;
     } else { h.gripR = 1; h.gripL = 1; }
   }
-  function dropWeapon(f) {                           // on the ground at his feet
-    const h = f.h, m = f.wpn === 'spear' ? h.spear : f.wpn === 'axe' ? h.axe : f.wpnMesh;
+  // GC-FIX5: a dropped weapon lies flat on the ground. The models' long axis is +z, so the old rotation.x = -90°
+  // stood them on their butt ends like planted posts. It now tumbles out of the hand (0.34 s) to rest along the slope,
+  // 0.8 m out on the weapon-hand side; the axe lies on the flat of its head.
+  const DROP_EXT = { spear: [-0.95, 1.15, 0.04], axe: [-0.1, 0.52, 0.027], torch: [-0.15, 0.53, 0.048] };
+  const drops = [], _dq = new THREE.Quaternion(), _de = new THREE.Euler(0, 0, 0, 'YXZ');
+  function dropWeapon(f, anim = true) {
+    const h = f.h, kind = f.wpn === 'spear' || f.wpn === 'axe' ? f.wpn : 'torch';
+    const m = f.wpn === 'spear' ? h.spear : f.wpn === 'axe' ? h.axe : f.wpnMesh;
     if (!m || !m.visible) return;
     scene.attach(m);
-    const a = Math.random() * 6.283, x = f.pos.x + Math.sin(a) * 0.6, z = f.pos.z + Math.cos(a) * 0.6;
-    m.position.set(x, ctx.getHeight(x, z) + 0.05, z); m.rotation.set(-Math.PI / 2, 0, a); m.updateMatrixWorld(true);
     if (f.torch) { f.torch.lit = false; }
     f.dropped = m; f.wpn = 'none';
+    const [z0, z1, lift] = DROP_EXT[kind], sc = m.scale.z, face = h.root.rotation.y;
+    const side = kind === 'torch' ? 1 : -1;          // the torch is in the left hand (root +x), the others in the right
+    const a = face + side * (Math.PI / 2 + (Math.random() - 0.5) * 0.9), dist = 0.75 + Math.random() * 0.25;
+    const x = f.pos.x + Math.sin(a) * dist, z = f.pos.z + Math.cos(a) * dist, yaw = Math.random() * 6.283, sx = Math.sin(yaw), cz = Math.cos(yaw);
+    const hA = ctx.getHeight(x + sx * z0 * sc, z + cz * z0 * sc), hB = ctx.getHeight(x + sx * z1 * sc, z + cz * z1 * sc), u0 = -z0 / (z1 - z0);
+    const zm = (z0 + z1) / 2, hM = ctx.getHeight(x + sx * zm * sc, z + cz * zm * sc), bump = Math.max(0, hM - (hA + hB) / 2);   // a rise under the middle
+    const y = hA + (hB - hA) * u0 + bump + lift * sc;
+    _de.set(-Math.atan2(hB - hA, (z1 - z0) * sc), yaw, kind === 'axe' ? (Math.random() < 0.5 ? 1 : -1) * Math.PI / 2 : Math.random() * 6.283);
+    _dq.setFromEuler(_de);
+    if (!anim) { m.position.set(x, y, z); m.quaternion.copy(_dq); m.updateMatrixWorld(true); return; }
+    drops.push({ m, f, t: 0, p0: m.position.clone(), q0: m.quaternion.clone(), p1: new THREE.Vector3(x, y, z), q1: _dq.clone() });
+  }
+  function updateDrops(dt) {
+    for (let i = drops.length - 1; i >= 0; i--) {
+      const d = drops[i], m = d.m;
+      if (d.f.dropped !== m || !m.parent) { drops.splice(i, 1); continue; }   // thrown (torch) or cleared meanwhile
+      d.t += dt; const u = Math.min(1, d.t / 0.34);
+      m.position.lerpVectors(d.p0, d.p1, u); m.position.y = d.p0.y + (d.p1.y - d.p0.y) * u * u;   // it falls, it does not glide
+      m.quaternion.slerpQuaternions(d.q0, d.q1, u * (2 - u));
+      if (u >= 1) { m.position.copy(d.p1); m.quaternion.copy(d.q1); drops.splice(i, 1); ctx.sfx.thud?.(d.p1); }
+      m.updateMatrixWorld(true);
+    }
   }
   function disposeFoe(f) {
     scene.remove(f.h.root, f.meter, f.pbar);
@@ -108,7 +134,7 @@ export function createTribe(ctx) {
   }
   function clearFoes() {
     for (const f of foes) disposeFoe(f);
-    foes.length = 0;
+    foes.length = 0; drops.length = 0;
     for (const s of spears) scene.remove(s.m);
     spears.length = 0;
   }
@@ -202,7 +228,7 @@ export function createTribe(ctx) {
   }
   // the torchbearer: a lit torch thrown onto a roof
   function throwTorch(f, s) {
-    dropWeapon(f); const m = f.dropped; f.dropped = null; if (!m) return;
+    dropWeapon(f, false); const m = f.dropped; f.dropped = null; if (!m) return;
     handPos(f, _v); m.position.copy(_v);
     const tx = s.x, tz = s.z, d = Math.hypot(tx - _v.x, tz - _v.z), tt = Math.max(0.5, d / 12);
     const vel = new THREE.Vector3((tx - _v.x) / tt, (2.5 - (_v.y - (s.group?.position.y || 0)) + 0.5 * 9.8 * tt * tt) / tt * 0.5, (tz - _v.z) / tt);
@@ -312,7 +338,7 @@ export function createTribe(ctx) {
   // ---------- the frame ----------
   const _tok = { set: new Set(), t: 0 };
   function updateFoes(dt) {
-    updateSpears(dt); updateTorches(dt);
+    updateSpears(dt); updateTorches(dt); updateDrops(dt);   // GC-FIX5
     const L = live();
     _tok.t -= dt;
     if (_tok.t <= 0) {                               // re-deal the attack tokens twice a second: the two nearest brawlers close in

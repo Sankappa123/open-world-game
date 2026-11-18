@@ -219,7 +219,7 @@ const RECIPES = [
   { id: 'hut', name: 'Thatch hut', desc: 'Shelter from the cold. Build it together, and rest there side by side.', cost: { wood: 12, fiber: 8 }, ch: 'shelter', place: true },
   { id: 'flintaxe', name: 'Flint axe', desc: 'A flint edge bites deep: trees fall in half the strokes.', cost: { flint: 3, stick: 2, fiber: 2 }, ch: 'cave' },
   { id: 'bow', name: 'Hunting bow', desc: 'An ash stave with a twisted-fibre string and a hide grip. Key 5, hold right mouse to draw, left click to loose; let go of right mouse to ease the string down.', cost: { wood: 2, fiber: 3, hide: 1 }, ch: 'herd' },   // BOW
-  { id: 'quiver', name: 'Quiver', desc: 'A hide tube at the hip: carry 24 arrows instead of 8.', cost: { hide: 1, fiber: 2 }, ch: 'herd' },   // BOW
+  { id: 'quiver', name: 'Quiver', desc: 'A hide tube slung on the back: carry 24 arrows instead of 8.', cost: { hide: 1, fiber: 2 }, ch: 'herd' },   // BOW
   { id: 'arrows', item: 'arrow', n: 3, name: 'Flint arrows ×3', desc: 'Straight shafts, flint points, fibre bindings. Arrows can be picked up again (E).', cost: { stick: 1, flint: 1, fiber: 1 }, ch: 'herd' },   // BOW
   { id: 'flintspear', name: 'Flint spear', desc: 'A flint point: your thrown spear strikes twice as hard.', cost: { flint: 2, stick: 2, fiber: 1 }, ch: 'cave' },
   { id: 'saddle', name: 'Saddle', desc: 'A hide seat bound with reed. Needed to canter and gallop.', cost: { hide: 3, fiber: 4, wood: 2 }, ch: 'herd' },
@@ -1503,7 +1503,7 @@ function updateEvents(dt) {
 }
 
 // ---------- melee ----------
-let hitT = 0, hitDmg = 0, punchSide = 0, hitReach = 2.5, hitCone = 0.2, hitKind = 'fists';
+let hitT = 0, hitDmg = 0, punchSide = 0, hitReach = 1.2, hitCone = 0.2, hitKind = 'fists';
 function attack() { wpnPrimary(); }                 // WPN: the left click, by weapon (kept as G.attack)
 function landHit() {
   const fx = Math.sin(P.face), fz = Math.cos(P.face);
@@ -1808,9 +1808,9 @@ function wpnPrimary() {
   W.idleT = W.homeT = 0;
   const k = W.held;
   if (cmbSwing(k)) return;                           // CMB combos, heavy, stamina, damage table
-  if (k === 'axe') { P.h.swing('strikeU', 1.5); P.cool = 0.75; hitT = 0.3; hitDmg = S.tools.flintaxe ? 6 : 4; hitReach = 2.5; hitCone = 0.2; }
-  else if (k === 'spear') { P.h.swing('jabU', 1.3); W.lunge = 0.3; P.cool = 0.6; hitT = 0.22; hitDmg = S.tools.flintspear ? 5 : 3; hitReach = 2.8; hitCone = 0.35; }
-  else { P.h.swing((punchSide ^= 1) ? 'jabU' : 'crossU'); P.cool = 0.48; hitT = 0.2; hitDmg = 2; hitReach = 2.2; hitCone = 0.2; }
+  if (k === 'axe') { P.h.swing('strikeU', 1.5); P.cool = 0.75; hitT = 0.3; hitDmg = S.tools.flintaxe ? 6 : 4; hitReach = 1.2; hitCone = 0.2; }
+  else if (k === 'spear') { P.h.swing('jabU', 1.3); W.lunge = 0.3; P.cool = 0.6; hitT = 0.22; hitDmg = S.tools.flintspear ? 5 : 3; hitReach = 2.1; hitCone = 0.35; }
+  else { P.h.swing((punchSide ^= 1) ? 'jabU' : 'crossU'); P.cool = 0.48; hitT = 0.2; hitDmg = 2; hitReach = 0.9; hitCone = 0.2; }
   hitKind = k; W.sw = { k: k === 'fists' ? (punchSide ? 'jab' : 'cross') : k, t: 0, dur: P.cool };
   A.hit((700 + rand() * 300) * (0.9 + rand() * 0.2), 0.12, 0.07);   // whoosh
 }
@@ -1894,9 +1894,48 @@ function wpnChop(n) {
 function aimSolve(charge, spawn, dir) {             // the same numbers for the arc and the throw, so the arc never lies
   camera.getWorldDirection(_w4);
   P.h.bones.hand_r.getWorldPosition(spawn); spawn.addScaledVector(_w4, 0.35);
-  dir.copy(camera.position).addScaledVector(_w4, 40).sub(spawn).normalize(); dir.y += 0.035; dir.normalize();
+  const v = BOW.on ? 30 + 28 * charge : 22 + 16 * charge;   // BOW: arrows fly faster and flatter
+  if (BOW.on) bowAimAt(spawn, dir, v);               // BOW-AIM: onto the thing under the crosshair, at any range
+  else { dir.copy(camera.position).addScaledVector(_w4, 40).sub(spawn).normalize(); dir.y += 0.035; dir.normalize(); }
   survWobble(dir);                                   // SURV: hurt arms, fever and cold shake the aim
-  return BOW.on ? 30 + 28 * charge : 22 + 16 * charge;   // BOW: arrows fly faster and flatter
+  return v;
+}
+// ----- BOW-AIM (verifier round 2). The arrow leaves the string hand, and in third person the camera sits over the
+// shoulder, more than half a metre from it. Aimed at a fixed point 40 m down the camera's line, the arrow crossed that
+// line only out there: at 6 m it passed 0.6 m beside the crosshair. Now the camera's line is followed out to the first
+// thing it meets (game, a raider, a trunk, a boulder, a wall, the ground; 60 m of open air otherwise), and the arrow is
+// sent through that point, with the drop over the flight paid for up to BOW_ZERO metres. Past that the shot keeps the
+// BOW_ZERO elevation and falls short, as before: the arc shows it. The arc and the shot both come through here.
+const BOW_ZERO = 40, _baO = new THREE.Vector3(), _baP = new THREE.Vector3(), _baQ = new THREE.Vector3(), _baNear = [];
+function bowSight(out) {                             // _w4 = the camera's direction (aimSolve has just set it)
+  const o = _baO.copy(camera.position), d = _w4;
+  const t0 = Math.max(0, (P.pos.x - o.x) * d.x + (P.pos.y + 1.3 - o.y) * d.y + (P.pos.z - o.z) * d.z) + 1.6, t1 = t0 + 60;   // from just past Aro
+  _baNear.length = 0;                                // bodies within 3 m of the line
+  const near = (x, y, z) => { const t = (x - o.x) * d.x + (y - o.y) * d.y + (z - o.z) * d.z; return t > t0 - 3 && t < t1 + 3 && (x - o.x - d.x * t) ** 2 + (y - o.y - d.y * t) ** 2 + (z - o.z - d.z * t) ** 2 < 9; };
+  for (const a of animals) if (a.state === 'live' && !a.horse && near(a.root.position.x, a.root.position.y + 0.6, a.root.position.z)) _baNear.push(a);
+  for (const f of foes) if (f.live && f.state === 'live' && near(f.pos.x, f.pos.y + 0.9, f.pos.z)) _baNear.push(f);
+  const sk = BOWOB.k, sn = BOWOB.n;
+  let hit = t1;
+  _baP.copy(o).addScaledVector(d, t0);
+  for (let t = t0; t < t1 && hit === t1; t += 0.25) {
+    const p = _baQ.copy(o).addScaledVector(d, t + 0.25);
+    if (p.y < getHeight(p.x, p.z)) { hit = t + 0.125; break; }
+    for (const b of _baNear) {
+      const by = b.foe ? b.pos.y : b.root.position.y, top = b.foe ? 1.8 : goreBody(b).top * b.root.scale.x;
+      if (p.y > by && p.y < by + top && goreBodyGap(b, p.x, p.z).d < 0) { hit = t + 0.125; break; }
+    }
+    if (hit !== t1) break;
+    if (!BOW.noObst) { const ob = bowSweep(_baP, p); if (ob) { hit = o.distanceTo(ob); break; } }
+    _baP.copy(p);
+  }
+  BOWOB.k = sk; BOWOB.n = sn;                         // (bowSweep notes what it struck for the arrow that struck it)
+  return out.copy(o).addScaledVector(d, hit);
+}
+function bowAimAt(spawn, dir, v) {
+  const A = bowSight(dir), L = Math.max(0.5, A.distanceTo(spawn));
+  const drop = (l) => { const t = Math.max(0, l - SP_TIP) / v; return 3 * t * t + SP_TIP * 6 * t / v; };   // the point leads the grip by SP_TIP along a falling line
+  A.y += L <= BOW_ZERO ? drop(L) : drop(BOW_ZERO) * L / BOW_ZERO;
+  dir.sub(spawn).normalize();
 }
 const SP_DT = 1 / 60, SP_TIP = 1.48;                // the projectile point is the grip; the tip leads it by 1.48 m
 function spearStep(pos, vel, tip) {                  // one fixed step, shared by updateSpear and the arc
@@ -2378,8 +2417,54 @@ function bowLoad() {
 }
 // The look direction from the view angles (the same as the play camera's; a story or test camera does not bend the draw)
 const bowAimDir = (v) => { const cp = Math.cos(camPitch); return v.set(-Math.sin(camYaw) * cp, -Math.sin(camPitch), -Math.cos(camYaw) * cp).normalize(); };
+// ----- BOW-CARRY (verifier round 2: no clipping in any pose). Three placements, each built from the body's own frames
+// so they move with it:
+//  - slung: on the torso frame (shoulder line and spine), so it leans and turns with the back. The stave touches only
+//    behind the shoulder blades; it is turned about its own length so both limb tips and the string stand off the
+//    back, and leant so the lower limb clears the seat and the kilt.
+//  - quiver: on the torso frame too, a back quiver right of the spine with its mouth past the right shoulder. (At
+//    either hip the walking arm, the kilt or the heel swept through it: a search over hip placements against the
+//    skinned body in walk, run, sneak, strafe and back-step found none that stayed clear.)
+//  - in hand, not drawn: the left arm holds the bow still at the hip (IK, not the walk cycle's swing), the stave level
+//    and fore-and-aft outside the thigh, the string turned outward, clear of the forearm.
+// All lengths in metres in the frame named; BOWC is exported on G.bow for the clearance tests.
+const BOWC = {
+  sl: { u: 0, b: 0.21, s: 0.04, roll: 0.62, lean: 0.06, twist: 0.9 },
+  qv: { u: 0, b: 0.22, s: 0.2, roll: 0.6, lean: -0.1 },
+  hand: { r: -0.36, f: 0.05, y: -0.02, pitch: 0.2, toe: 0.08, spin: 1.2 },
+};
+const _bwU = new THREE.Vector3(), _bwR = new THREE.Vector3(), _bwF = new THREE.Vector3(), _bhR = new THREE.Vector3(), _bhF = new THREE.Vector3(), _bwX = new THREE.Vector3(), _bwY = new THREE.Vector3(), _bwZ = new THREE.Vector3(), _bwQ = new THREE.Quaternion();
+function bowTorso(h) {                               // _bwU up the spine, _bwR toward the right shoulder, _bwF out of the chest
+  wp(h.bones.neck_01, _bwU).sub(wp(h.bones.spine_01, _bwF)).normalize();
+  wp(h.bones.upperarm_r, _bwR).sub(wp(h.bones.upperarm_l, _bwF)); _bwR.addScaledVector(_bwU, -_bwR.dot(_bwU)).normalize();
+  _bwF.crossVectors(_bwU, _bwR);
+}
+function bowHips(h) {                                // _bhR toward the right hip (level), _bhF forward (level)
+  wp(h.bones.thigh_r, _bhR).sub(wp(h.bones.thigh_l, _bhF)); _bhR.y = 0;
+  if (_bhR.lengthSq() < 1e-6) _bhR.set(-Math.cos(P.face), 0, Math.sin(P.face)); _bhR.normalize();
+  _bhF.set(_bhR.z, 0, -_bhR.x);                         // up x right
+}
+function bowBasis(o, y, zHint) {                     // stave along y, the bow's back as near zHint as it can be
+  _bwY.copy(y).normalize(); _bwZ.copy(zHint).addScaledVector(_bwY, -zHint.dot(_bwY)).normalize(); _bwX.crossVectors(_bwY, _bwZ);
+  _bM.makeBasis(_bwX, _bwY, _bwZ); return o.setFromRotationMatrix(_bM);
+}
+function bowCarryQuat(q) {                           // the bow's attitude carried in the hanging left hand (bowHips first)
+  const c = BOWC.hand;
+  _bA.copy(_bhF).multiplyScalar(Math.cos(c.pitch)); _bA.y = Math.sin(c.pitch); _bA.addScaledVector(_bhR, c.toe);
+  _bB.copy(_bhR).multiplyScalar(Math.sin(c.spin)); _bB.y = -Math.cos(c.spin);   // the bow's back: inward and down, so the string lies outward and up
+  return bowBasis(q, _bA, _bB);
+}
+function bowCarryArm(h, w) {
+  const c = BOWC.hand; bowHips(h);
+  wp(h.bones.pelvis, _bA).addScaledVector(_bhR, c.r).addScaledVector(_bhF, c.f); _bA.y += c.y;
+  _bB.copy(_bA).addScaledVector(_bhF, -0.5).addScaledVector(_bhR, -0.12); _bB.y += 0.3;   // the elbow a little back and out
+  ik2(h, 'l', _bA, _bB, w * (1 - smooth01(W.aimW)));
+}
 // Pose (override 31, after the weapon IK): bow arm out at the grip, right hand drawing the string to the cheek.
-P.h.addOverride('bowIK', 31, (h) => {
+P.h.addOverride('bowIK', 31, (h, dt) => {
+  const hold = BOW.on && !P.ride && !P.swim && !(P.sit > 0) && !wBusy();
+  BOW.cw = clamp((BOW.cw || 0) + (hold ? 1 : -1) * Math.min(0.1, dt || 0.016) * 6, 0, 1);
+  if (BOW.cw > 0.002 && !P.ride && !P.swim) bowCarryArm(h, smooth01(BOW.cw));   // BOW-CARRY: the bow hand rides still at the left hip
   if (!BOW.on || W.aimW < 0.002 || P.ride || P.swim) return;
   const k = W.aimW, ch = W.aim ? W.aim.charge : 1;
   yawBone(h.bones.spine_02, -0.55 * k);              // side-on: the bow shoulder toward the mark
@@ -2397,7 +2482,7 @@ P.h.addOverride('bowIK', 31, (h) => {
   _bB.copy(_bC).addScaledVector(_bD, -0.35); _bB.x += rx * 0.22; _bB.z += rz * 0.22; _bB.y += 0.08;
   ik2(h, 'r', _bC, _bB, k);
 });
-// After every other override (order 99): the bow in the left fist or across the back, the quiver at the right hip,
+// After every other override (order 99): the bow in the left fist or across the back, the quiver on the back,
 // the string pulled to the right fist and the nocked arrow along it.
 const wp = (b, v) => { b.updateWorldMatrix(true, false); return v.setFromMatrixPosition(b.matrixWorld); };
 P.h.addOverride('bowProps', 99, (h) => {
@@ -2411,9 +2496,10 @@ P.h.addOverride('bowProps', 99, (h) => {
   BOW.bench = null;
   const f = P.face, fx = Math.sin(f), fz = Math.cos(f), rx = -fz, rz = fx;
   if (quiverMesh.visible) {
-    wp(h.bones.pelvis, _bA);
-    quiverMesh.position.set(_bA.x + rx * 0.2 - fx * 0.12, _bA.y - 0.06, _bA.z + rz * 0.2 - fz * 0.12);   // behind the right hip
-    quiverMesh.rotation.set(0, f, 0); quiverMesh.rotateX(-0.5); quiverMesh.rotateZ(-0.15);   // tipped back: the fletchings ride behind the shoulder, not across the chest
+    const c = BOWC.qv; bowTorso(h);                   // BOW-CARRY: on the back, right of the spine, the mouth past the right shoulder
+    _bA.copy(_bwU).multiplyScalar(Math.cos(c.roll)).addScaledVector(_bwR, Math.sin(c.roll)).addScaledVector(_bwF, c.lean);
+    bowBasis(quiverMesh.quaternion, _bA, _bwR);
+    wp(h.bones.spine_03, _bA).addScaledVector(_bwU, c.u).addScaledVector(_bwF, -c.b).addScaledVector(_bwR, c.s); quiverMesh.position.copy(_bA);
     quiverMesh.userData.setCount(S.inv.arrow || 0);
   }
   // the spear on the back stands right in the over-the-shoulder view while drawing: hide it until the bow comes down
@@ -2424,12 +2510,14 @@ P.h.addOverride('bowProps', 99, (h) => {
   const inHand = BOW.on && !P.ride && !P.swim && !(P.sit > 0) && !wBusy();
   const zx = _bD, up = _bB, xAx = _bC;
   if (inHand) {
-    wp(h.bones.hand_l, _bA);
     const drawn = W.aimW > 0.3;
-    if (drawn) bowAimDir(zx); else zx.set(fx, 0, fz);
-    up.set(0, 1, 0).addScaledVector(xAx.set(rx, 0, rz), drawn ? -0.18 : 0.5).normalize();   // a slight cant when drawn; carried low when not
+    bowAimDir(zx);
+    up.set(0, 1, 0).addScaledVector(xAx.set(rx, 0, rz), -0.18).normalize();   // a slight cant when drawn
     xAx.crossVectors(up, zx).normalize(); up.crossVectors(zx, xAx).normalize();
-    _bM.makeBasis(xAx, up, zx); bowMesh.quaternion.setFromRotationMatrix(_bM); bowMesh.position.copy(_bA);
+    _bM.makeBasis(xAx, up, zx); bowMesh.quaternion.setFromRotationMatrix(_bM);
+    const rz01 = smooth01((W.aimW - 0.05) / 0.5);    // BOW-CARRY: carried level at the hip; it turns up into the draw as the arm rises
+    if (rz01 < 1) { bowHips(h); bowMesh.quaternion.slerp(bowCarryQuat(_bwQ), 1 - rz01); }
+    wp(h.bones.hand_l, _bA); bowMesh.position.copy(_bA);
     bowMesh.updateMatrixWorld(true);
     if (W.aim && drawn) {
       const hr = wp(h.bones.hand_r, new THREE.Vector3());
@@ -2437,11 +2525,13 @@ P.h.addOverride('bowProps', 99, (h) => {
       const dir = _bA.clone().sub(hr).normalize();     // from the string hand through the grip
       nockArrow.visible = true; nockArrow.position.copy(hr).addScaledVector(dir, ARROW_LEN); nockArrow.lookAt(_bA.copy(nockArrow.position).add(dir));
     } else bowMesh.userData.setNock(null);
-  } else {                                            // slung across the back, right shoulder to left hip
-    wp(h.bones.spine_03, _bA);
-    xAx.set(fx, 0, fz); up.set(-rx * 0.42, 1, -rz * 0.42).normalize(); zx.crossVectors(xAx, up).normalize(); up.crossVectors(zx, xAx).normalize();   // ~23° off upright: crosses the spear in a narrow X
-    _bM.makeBasis(xAx, up, zx); bowMesh.quaternion.setFromRotationMatrix(_bM);
-    bowMesh.position.set(_bA.x - fx * 0.15 - rx * 0.03, _bA.y - 0.08, _bA.z - fz * 0.15 - rz * 0.03); bowMesh.userData.setNock(null);   // snug on the shoulder blades
+  } else {                                            // slung across the back, right shoulder to left hip (BOW-CARRY)
+    const c = BOWC.sl; bowTorso(h);
+    _bA.copy(_bwU).multiplyScalar(Math.cos(c.roll)).addScaledVector(_bwR, Math.sin(c.roll)).addScaledVector(_bwF, c.lean);   // the top over the right shoulder and a little forward: the lower limb stands off the seat
+    _bB.copy(_bwR).multiplyScalar(Math.cos(c.twist)).addScaledVector(_bwF, Math.sin(c.twist));   // turned about the stave: the tips and the string ride behind it, off the back
+    bowBasis(bowMesh.quaternion, _bA, _bB);
+    wp(h.bones.spine_03, _bA).addScaledVector(_bwU, c.u).addScaledVector(_bwF, -c.b).addScaledVector(_bwR, c.s);
+    bowMesh.position.copy(_bA); bowMesh.userData.setNock(null);
   }
 });
 // Sitting on a fire's bench: the bow stands upright at the far end of the log (the spear is planted at the near end),
@@ -3080,6 +3170,7 @@ function findOtherTarget(p) {
   }
   if (arcT) return arcT;                              // ARC-FIX: a story hint (no action) still beats the rest
   { const sv = survTarget(p); if (sv) return sv; }   // SURV: bandage Sena, ask her to tend your wounds, lean on her (when ROM's menu is absent)
+  { const hp = !cnt('handprint') && S.inv.ochre >= 1 && depthAt(p.x, p.z) > 0 && wp3Target(p, 9); if (hp?.key && /handprints/.test(hp.label)) return hp; }   // MAT-SV r3: at the bare wall with ochre, the handprints (they need Sena beside him) beat her own menu (play.json flaked here)
   { const rt = romTarget(p); if (rt) return rt; }   // ROM: Sena (hold E) menu, after the shared meal and SURV
   for (const f of world.fields) for (const n of f.nodes) {
     if (!n.alive) continue;
@@ -5880,12 +5971,12 @@ function goreBodyGap(o, x, z) {
   _gbp.x = cx + fx * t; _gbp.z = cz + fz * t; _gbp.d = Math.hypot(x - _gbp.x, z - _gbp.z) - B.w * s;
   return _gbp;
 }
-// Melee: an effective distance for landHit (the body's near surface + 0.2, so a wolf-sized body keeps its old feel),
-// or Infinity when the nearest part of the body is outside the swing's cone.
+// Melee: the gap from Aro's centre to the body's near surface (GC-FIX5: the plain gap; the weapon's reach is the blade's
+// real reach now, see combat.js COMBO), or Infinity when the nearest part of the body is outside the swing's cone.
 function goreMeleeD(o, fx, fz, cone) {
   const g = goreBodyGap(o, P.pos.x, P.pos.z), dx = g.x - P.pos.x, dz = g.z - P.pos.z, d = Math.hypot(dx, dz);
   if (g.d > 0.05 && (dx * fx + dz * fz) / (d || 1) <= cone) return Infinity;
-  return Math.max(0, g.d) + 0.2;
+  return Math.max(0, g.d);
 }
 // A melee hit point on the body's real surface: the line from the attacker's chest to the placed point, first skin it meets.
 function goreSurfacePt(model, from, pt) {
@@ -7049,10 +7140,44 @@ function cmbSwing(k) {
   C.swingHeavy = heavy; C.comboT = clock;
   if (clock < C.counterUntil) C.counterUntil = 0;
   if (k === 'spear') W.lunge = heavy ? 0.45 : 0.3;
+  cmbStepIn(k, reach, cone, hitT);                   // GC-FIX5: close the gap during the wind-up
   W.sw = { k: k === 'fists' ? (clip === 'crossU' ? 'cross' : 'jab') : k, t: 0, dur: P.cool };
   cmbSpend(heavy ? CB.STAM.heavy : CB.STAM.light);
   cmbSnd(heavy ? 'heavy' : 'whoosh', null, heavy ? 1 : 0.7);
   return true;
+}
+// ----- GC-FIX5: the step in. The blade only reaches as far as it really does (COMBO reach), so a swing at something a
+// little further off carries Aro forward during the wind-up: he closes to just inside the reach, and the blow lands
+// when the blade is there. No step when the target is already in reach, or further than reach + STEP (a clean miss).
+function cmbStepIn(k, reach, cone, t) {
+  C.step = null;
+  if (P.ride || P.swim || P.air || C.fin) return;
+  const face = P.wantFace ?? P.face, fx = Math.sin(face), fz = Math.cos(face), max = CB.STEP[k] ?? 1;
+  let bd = reach + max, bx = 0, bz = 0, who = null;
+  for (const o of animals) {
+    if (o.state !== 'live' || o.horse || Math.hypot(o.root.position.x - P.pos.x, o.root.position.z - P.pos.z) > 7) continue;
+    const d = goreMeleeD(o, fx, fz, cone);
+    if (d < bd) { bd = d; who = o; bx = _gbp.x; bz = _gbp.z; }
+  }
+  for (const f of foes) {
+    if (!f.live || f.state !== 'live' || f.fled) continue;
+    const dx = f.pos.x - P.pos.x, dz = f.pos.z - P.pos.z, d = Math.hypot(dx, dz), gap = Math.max(0, d - 0.3);
+    if (gap < bd && (dx * fx + dz * fz) / (d || 1) > cone) { bd = gap; who = f; bx = f.pos.x; bz = f.pos.z; }
+  }
+  const dist = who ? CB.stepIn(bd, reach, max) : 0;
+  if (!(dist > 0.04)) return;
+  const dx = bx - P.pos.x, dz = bz - P.pos.z, l = Math.hypot(dx, dz) || 1, T = Math.max(0.12, t * 0.85);
+  C.step = { who, x: dx / l, z: dz / l, left: dist, v: dist / T, stop: reach - CB.STEP.keep };
+}
+function cmbStepTick(dt) {                           // updatePlayer hook, just before the hit lands
+  const s = C.step; if (!s) return;
+  const o = s.who, alive = o.root ? o.state === 'live' : o.live && o.state === 'live';
+  const gap = !alive ? 0 : o.root ? goreBodyGap(o, P.pos.x, P.pos.z).d : Math.hypot(o.pos.x - P.pos.x, o.pos.z - P.pos.z) - 0.3;
+  if (gap <= s.stop || P.stagger > 0 || C.knock || C.roll || P.downed > 0) { C.step = null; return; }   // it came to him, or he was hit out of it
+  const m = Math.min(s.left, s.v * dt), nx = P.pos.x + s.x * m, nz = P.pos.z + s.z * m;
+  if (Math.abs(nx) < LIMIT && Math.abs(nz) < LIMIT) { P.pos.x = nx; P.pos.z = nz; collide(P.pos, 0.35); }
+  P.speed = Math.max(P.speed, Math.min(4.5, s.v));   // the legs carry the step (settle blends the stride in)
+  if ((s.left -= m) <= 1e-4) C.step = null;
 }
 // mouse hooks: LMB press/release (light on release, heavy at 0.4 s held), RMB guard / brace
 function cmbLmbDown() {
@@ -7312,8 +7437,8 @@ on('animalDie', (e) => { const o = e.o; if (o.kind === 'wolf') PRED.wolfDied(o);
 function cmbFoeInReach(best, bd, fx, fz) {
   for (const f of foes) {
     if (!f.live || f.state !== 'live' || f.fled) continue;
-    const dx = f.pos.x - P.pos.x, dz = f.pos.z - P.pos.z, d = Math.hypot(dx, dz);
-    if (d < bd && (dx * fx + dz * fz) / (d || 1) > hitCone) { bd = d; best = f; }
+    const dx = f.pos.x - P.pos.x, dz = f.pos.z - P.pos.z, d = Math.hypot(dx, dz), gap = Math.max(0, d - 0.3);   // GC-FIX5: to his body, like the animals
+    if (gap < bd && (dx * fx + dz * fz) / (d || 1) > hitCone) { bd = gap; best = f; }
   }
   return best;
 }
@@ -7765,7 +7890,7 @@ function arcLineHits(ax, az, cx, cz, skip) {        // a person within 0.5 m of 
   }
   return false;
 }
-function arcFireCloseUp(who, f) {
+function arcFireCloseUp(who, f, tw = null) {         // ARC-FIX7: tw = who they speak to: the lens goes on that side (her eyes come toward it)
   arcFireGrass(f);
   const a = who.pos, th = Math.atan2(a.x - f.x, a.z - f.z), r = Math.hypot(a.x - f.x, a.z - f.z), rc = Math.max(1.4, r * 0.78);   // inside their ring: the face, not the back
   const gy = Math.max(getHeight(a.x, a.z), 0.2);
@@ -7775,10 +7900,12 @@ function arcFireCloseUp(who, f) {
     let sc = -Math.abs(Math.abs(d) - 0.95);
     if (arcLineHits(a.x, a.z, cx, cz, who)) sc -= 4;
     if (arcCamBlocked(a.x, a.z, cx, cz)) sc -= 6;
+    if (tw) sc -= 0.2 * Math.hypot(cx - tw.x, cz - tw.z);
     if (sc > bs) { bs = sc; best = [cx, cz]; }
   }
-  const cy = Math.max(gy + 1.2, getHeight(best[0], best[1]) + 0.9);
-  camShot = ARCS.shot = { pos: new THREE.Vector3(best[0], cy, best[1]), look: new THREE.Vector3(a.x + (f.x - a.x) * 0.06, gy + 0.98, a.z + (f.z - a.z) * 0.06), t: 60 };
+  const lo = who.jy < -0.2 ? 0.34 : 0;               // ARC-FIX7: sitting on the ground (Tamu): the lens and the aim come down to his face (he sat in the bottom third, under the subtitle)
+  const cy = Math.max(gy + 1.2 - lo, getHeight(best[0], best[1]) + 0.9 - lo);
+  camShot = ARCS.shot = { pos: new THREE.Vector3(best[0], cy, best[1]), look: new THREE.Vector3(a.x + (f.x - a.x) * 0.06, gy + 0.98 - lo * 1.25, a.z + (f.z - a.z) * 0.06), t: 60 };
 }
 // The two of them on the benches, from across the fire and a little above it (the flames low in the frame, between them).
 function arcFireTwoShot(f, e1, e2) {
@@ -8118,8 +8245,10 @@ const ARC_PROPS = {
     arcFirePit(g, false);
     for (let i = 0; i < 7; i++) arcStick(g, -1.4 + i * 0.42, 0.75, -1.1, 1.9, 0.75, 0, 0.1, 0.045);
     for (let i = 0; i < 5; i++) arcRock(g, -1.5 + i * 0.75, 0.05, -0.75 + (i % 2) * 0.2, 0.6, 0.25, 0.45, ARCM.snow);
-    const sling = new THREE.Mesh(new THREE.TorusGeometry(0.32, 0.035, 5, 18, 4.4), ARCM.strap); sling.position.set(0.55, 0.06, 0.65); sling.rotation.x = -Math.PI / 2; g.add(sling);
-    const pouch = new THREE.Mesh(new THREE.SphereGeometry(0.14, 8, 6), ARCM.hide); pouch.scale.set(1.3, 0.5, 1); pouch.position.set(0.5, 0.07, 0.38); g.add(pouch);
+    world.clear(x, z, 4.6);                          // ARC-FIX7: trodden ground: no tall grass over the dead fire and the sling (blades hid the sling in its own shot)
+    const sy = (lx, lz) => Math.max(0, getHeight(x + lx, z + lz) - g.position.y);   // on its own patch of ground (a slope buried it)
+    const sling = new THREE.Mesh(new THREE.TorusGeometry(0.32, 0.045, 6, 18, 4.4), ARCM.strap); sling.position.set(0.55, sy(0.55, 0.65) + 0.07, 0.65); sling.rotation.x = -Math.PI / 2; g.add(sling);
+    const pouch = new THREE.Mesh(new THREE.SphereGeometry(0.14, 8, 6), ARCM.hide); pouch.scale.set(1.3, 0.5, 1); pouch.position.set(0.5, sy(0.5, 0.38) + 0.08, 0.38); g.add(pouch);
     return {};
   },
   ashcamp(g) {                                       // the Ash People's winter camp: hide lean-tos with grey hands, a low fire, smoke
@@ -8422,9 +8551,17 @@ function arcSling() {
   A.slingSeen = true;
   banner(...ARCD.L.winter.slingBanner); arcSenaSays(ARCD.L.winter.sling);
   if (view !== 'fpp' && (!camShot || camShot.release)) {   // ARC-FIX: a held look at the frozen sling in the snow (ARC-FIX4: from the open side, the windbreak behind it)
-    const sx = pr.x + 0.55, sz = pr.z + 0.65, gy = pr.g.position.y, a = 0.35;
-    camShot = ARCS.shot = { pos: new THREE.Vector3(sx + Math.sin(a) * 2.1, Math.max(gy + 1.25, getHeight(sx + Math.sin(a) * 2.1, sz + Math.cos(a) * 2.1) + 0.8), sz + Math.cos(a) * 2.1), look: new THREE.Vector3(sx - 0.15, gy + 0.2, sz - 0.45), t: 5.5, ease: true, untilSubs: true, story: true };   // ARC-FIX4: story: the not-sitting branch of updatePlayer dropped every ease shot (sitShotOff) on its first frame
-    if (!$('hud').classList.contains('cine')) { const sh = camShot; cine(true); setTimeout(() => { if (!ARCS.scene && !ROM.scene && !ROM.fk && !R.on && !MAT.choice) cine(false); else if (camShot === sh) camShot = null; }, 5600); }   // ARC-FIX5: letterboxed, HUD away for the held look
+    // ARC-FIX7: close and low on the sling itself (1.7 m, knee height), the snowed windbreak behind it; the letterbox lasts as long as the shot does
+    const sx = pr.x + 0.55, sz = pr.z + 0.65, gy = Math.max(pr.g.position.y, getHeight(sx, sz)), a = 0.3, cx = sx + Math.sin(a) * 1.7, cz = sz + Math.cos(a) * 1.7;
+    camShot = ARCS.shot = { pos: new THREE.Vector3(cx, Math.max(gy, getHeight(cx, cz)) + 0.85, cz), look: new THREE.Vector3(sx - 0.03, gy + 0.1, sz - 0.14), t: 5.5, ease: true, untilSubs: true, story: true };   // ARC-FIX4: story: the not-sitting branch of updatePlayer dropped every ease shot (sitShotOff) on its first frame
+    if (!$('hud').classList.contains('cine')) {     // ARC-FIX5: letterboxed, HUD away for the held look
+      const sh = camShot, t0 = performance.now(); cine(true);
+      const iv = setInterval(() => {
+        if (camShot === sh && performance.now() - t0 < 30000) return;
+        clearInterval(iv);
+        if (!ARCS.scene && !ROM.scene && !ROM.fk && !R.on && !MAT.choice) cine(false); else if (camShot === sh) camShot = null;
+      }, 200);
+    }
   }
   arcMem('sling', 'You found Wena\'s sling in an empty camp.');
   save();
@@ -8913,6 +9050,7 @@ function arcPairSpot(x, z, bodyD = 1.1) {
 }
 // Fallen raiders on a fire or within r of a point are carried clear (they read as props through the logs and flames).
 function arcClearBodies(pts, r = 2.4) {
+  for (const f of foes) if (f.dropped && Math.hypot(f.dropped.position.x - pts[0][0], f.dropped.position.z - pts[0][1]) < 8) f.dropped.visible = false;   // ARC-FIX7: no dropped axe or spear standing in the shot
   for (const f of foes) {
     if (f.state !== 'dead') continue;
     const onFire = structs.some((q) => q.kind === 'fire' && Math.hypot(q.x - f.pos.x, q.z - f.pos.z) < 3.1);
@@ -9207,8 +9345,8 @@ function arcFeverCure() {
 // ----- scripted Sena (updateSena, after MAT's rescue): sick in bed, at the lake, at the fire with Tamu, in scenes
 function arcSena(dt) {
   const A = S.arc, id = CH[S.ch].id;
-  if (id === 'fever' && !A.feverDone && A.senaWound !== 'dead' && !R.on && !ARCS.vigilDone) {
-    const b = arcBed(); if (!b) return false;
+  const b = id === 'fever' && !A.feverDone && A.senaWound !== 'dead' && !R.on && !ARCS.vigilDone ? arcBed() : null;   // ARC-FIX7: with no bed she is not sent off gathering (the wounded rule below keeps her by him)
+  if (b) {
     if (R.nOut) { R.nOut = null; N.path = null; }
     N.rest = 0; N.sit = 0; N.node = null; N.speed = 0; N.ride = false; N.h.pose = null; N.h.straddle = false;
     N.pos.set(b.x, b.y, b.z); N.face = b.face;
@@ -9222,6 +9360,13 @@ function arcSena(dt) {
   if (ROM.scene) return false;                      // ARC-FIX: a ROM kiss or embrace moves her (the lake embrace runs inside the scene)
   if (romFkHoldTick(dt)) return true;              // ARC-FIX4: the first-kiss beat holds her face to face with him
   if (arcNHoldTick(dt)) return true;               // ARC-FIX4: kneeling at Tamu, lying wounded at dawn
+  if (A.senaWound === 'bleeding' && !A.feverDone && (id === 'fever' || (id === 'raid' && A.raid?.done)) && !N.ride && !(N.sit > 0) && !(N.rest > 0) && !R.on) {   // ARC-FIX7: wounded, she keeps by him, slowly (she went off gathering stones a breath after 'I cannot feel my hand')
+    const dP = Math.hypot(N.pos.x - P.pos.x, N.pos.z - P.pos.z);
+    N.node = null; N.act = 0; N.fetch = null; N.working = false;
+    if (dP > 2.6) walkTo(N, P.pos.x + 1.0, P.pos.z + 0.6, dP > 14 ? 3.4 : 1.5, dt, 0.5);
+    else { N.speed = 0; N.face = turn(N.face, Math.atan2(P.pos.x - N.pos.x, P.pos.z - N.pos.z), Math.min(1, dt * 3)); }
+    N.h.pose = null; settle(N, dt, false); return true;
+  }
   if (ARCS.lake) {                                   // she walks by Mirror Lake at dusk (a rift to mend)
     const [x, z] = arcSpot('lake'), d = Math.hypot(N.pos.x - x, N.pos.z - z);
     if (d > 2) { if (Math.hypot(N.pos.x - P.pos.x, N.pos.z - P.pos.z) > 45 && d > 30) N.pos.set(x + 1.5, 0, z + 1.5); else walkTo(N, x, z, 2.6, dt, 0.8); }
@@ -9392,12 +9537,33 @@ function arcJealousBeat() {
     await arcChoose('jealous', 'At the Fire', ARC_OPTS.jealous(), { def: null, note: 'Sena and Tamu are laughing together by the fire.' });
     $('choice').classList.remove('low');
     const ch = A.choices.jealous;                    // ARC-FIX: she stays on the bench through the answer, each line framed on its speaker (the shot held on an empty log)
-    if (ch === 'join') await arcTalk(L.join, t);
-    else if (ch === 'forbid') await arcTalk(L.forbid, N);
+    if (ch === 'join' || ch === 'forbid') {          // ARC-FIX7: Aro comes up to the fire for his answer, lit by it, in a medium shot (he stood small in the dark grass); Sena answers looking up at him
+      arcJealAro(f);
+      for (const l of L[ch]) {
+        const sp = l[0] === 'Aro' ? P : l[0] === 'Sena' ? N : t;
+        ARCS.nGaze = sp === N ? P : sp === P ? null : t;
+        if (sp === P) arcJealAroShot(f); else arcFireCloseUp(sp, f, P.pos);
+        say(l[0], l[1]); await arcSubsDone();
+      }
+      ARCS.nGaze = null;
+    }
     await arcSubsDone();
     } finally { if (cineOn) cine(false); }
     ARCS.jealous = false; t.talk = false;
   });
+}
+// ARC-FIX7: Aro's place for his answer: standing at the fire ring on the open side (the benches are at local x = +-1.6,
+// Tamu sits at local z = +2.45), turned to Sena; and his medium shot from her side of the fire, the flames out of frame.
+function arcJealAro(f) {
+  if (P.ride) return;
+  const w = toWorld(f, [-0.9, 0, -2.3]);
+  P.pos.set(w.x, 0, w.z); collide(P.pos, 0.3); P.vx = P.vz = 0; P.speed = 0; P.auto = false;
+  arcFace(P, N.pos);
+}
+function arcJealAroShot(f) {
+  if (view === 'fpp') return;
+  const c = toWorld(f, [1.05, 0, -2.0]), gy = Math.max(getHeight(P.pos.x, P.pos.z), 0.2);
+  camShot = ARCS.shot = { pos: new THREE.Vector3(c.x, Math.max(gy, getHeight(c.x, c.z)) + 1.5, c.z), look: new THREE.Vector3(P.pos.x, gy + 1.4, P.pos.z), t: 60 };
 }
 function arcRift(n, cause) {
   if (typeof romRift === 'function') return romRift(n, cause);   // ROM owns the rift's romance effects (0 mends it)
@@ -11331,6 +11497,7 @@ function updatePlayer(dt) {
   if (S.pin && Math.hypot(S.pin.x - P.pos.x, S.pin.z - P.pos.z) < 5) { S.pin = null; P.auto = false; toast('You have reached your pin'); A.tone(523, 0.6, 0.1); }
   P.cool = Math.max(0, P.cool - dt);
   wpnUpdate(dt);                                     // WPN draw/sheathe, aim, auto rules, carried things
+  cmbStepTick(dt);                                   // GC-FIX5: the step in toward the target
   if (hitT > 0 && (hitT -= dt) <= 0) landHit();
   settle(P, dt * hsK(P), P.sneak);                   // WPN hitstop
 
@@ -12708,7 +12875,7 @@ Object.assign(window.G, {
     voices: () => MUS.m?.voices() ?? 0, playing: () => MUS.m?.state ?? null, duck: () => (MUS.m ? +MUS.m.duckNode.gain.value.toFixed(2) : null), log: () => MUS.m?.M.log.slice() ?? [], snap: musicSnap, why: () => MUS.why,
   },
 });
-Object.assign(window.G, { bow: { toggle: bowToggle, aim: bowAimStart, BOW, BOWFP, rocky: bowRocky,   // BOW-FPP hooks: fp(), give(), shoot(charge, yaw, pitch), view(v)
+Object.assign(window.G, { bow: { toggle: bowToggle, aim: bowAimStart, BOW, BOWFP, BOWC, bowMesh, quiverMesh, rocky: bowRocky,   // BOW-FPP hooks: fp(), give(), shoot(charge, yaw, pitch), view(v)
   fp: () => { const v = (o) => { o.updateWorldMatrix(true, false); const w = new THREE.Vector3().setFromMatrixPosition(o.matrixWorld).project(vmCam); return [+w.x.toFixed(3), +w.y.toFixed(3)]; }; return { on: BOWFP.on, bow: vmBow.visible, nock: vmNockA.visible, arms: AR.root.visible, grip: v(vmBow), tip: vmNockA.visible ? v(vmNockA) : null, hr: v(AR.bones.hand_r), hl: v(AR.bones.hand_l), nockEnd: vmNockA.visible ? v(vmNockA.clone().translateZ(-ARROW_LEN)) : null, gapL: BOWFP.wantL ? +AR.bones.hand_l.getWorldPosition(new THREE.Vector3()).distanceTo(BOWFP.wantL).toFixed(3) : null, gapR: BOWFP.wantR ? +AR.bones.hand_r.getWorldPosition(new THREE.Vector3()).distanceTo(BOWFP.wantR).toFixed(3) : null }; },
   give(n = 24) { S.tools.bow = S.tools.quiver = true; S.inv.arrow = n; drawInv(); if (!BOW.on) bowToggle(); return BOW.on; },
   view(v) { view = v; camPitch = clamp(camPitch, pitchMin(), fppPitchMax()); return view; },

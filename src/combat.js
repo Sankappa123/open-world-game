@@ -15,12 +15,23 @@ export const T = {
 };
 export const POSTURE = { light: 16, heavyK: 2, parry: 50, blocked: 10, regen: 15, regenDelay: 2, stagger: 2 };
 // Combos: [upper-body clip, timeScale, cooldown s, hit delay s, reach m, cone (cos), damage multiplier]
+// GC-FIX5: reach is the gap from Aro's centre to the target's near SURFACE that the blade really covers (axe head
+// 0.9-1.07 m out at the strike, spear tip 1.85 m, a fist 0.6 m), and the hit delay is the moment the blade comes through
+// (measured per clip). The old 2.5 m / 0.2 s cut a wolf 2.2 m away while the axe was still raised. The distance the
+// player used to get for free is now a real step in (STEP: the most Aro closes during the wind-up; see cmbStepIn).
+// Light 1 is the overhead chop (Sword_Attack): Sword_Regular_A is only a 0.19 s wind-back, the blade never came forward.
 export const COMBO = {
-  axe: [['swordA', 1.15, 0.5, 0.2, 2.5, 0.2, 1], ['swordB', 1.15, 0.52, 0.2, 2.5, 0.2, 1.05], ['swordC', 1.5, 0.85, 0.42, 2.6, 0.15, 1.35]],
-  spear: [['jabU', 1.4, 0.5, 0.2, 2.8, 0.35, 1], ['jabU', 1.55, 0.5, 0.19, 2.8, 0.35, 1], ['jabU', 1.1, 0.75, 0.3, 3.1, 0.4, 1.4]],
-  fists: [['jabU', 1.7, 0.4, 0.17, 2.2, 0.2, 1], ['crossU', 1.7, 0.44, 0.19, 2.2, 0.2, 1.1], ['hookU', 1.3, 0.6, 0.25, 2.1, 0.25, 1.5]],
+  axe: [['strikeU', 1.8, 0.5, 0.26, 1.2, 0.2, 1], ['swordB', 1.15, 0.52, 0.2, 1.0, 0.2, 1.05], ['swordC', 1.5, 0.85, 0.48, 1.2, 0.15, 1.35]],
+  spear: [['jabU', 1.4, 0.5, 0.2, 2.1, 0.35, 1], ['jabU', 1.55, 0.5, 0.19, 2.1, 0.35, 1], ['jabU', 1.1, 0.75, 0.3, 2.2, 0.4, 1.4]],
+  fists: [['jabU', 1.7, 0.4, 0.17, 0.9, 0.2, 1], ['crossU', 1.7, 0.44, 0.19, 0.9, 0.2, 1.1], ['hookU', 1.3, 0.6, 0.25, 0.9, 0.25, 1.5]],
 };
-export const HEAVY = { axe: ['swordC', 1.0, 1.15, 0.55, 2.7, 0.15], spear: ['jabU', 0.9, 1.0, 0.42, 3.2, 0.4], fists: ['hookU', 1.0, 0.85, 0.36, 2.2, 0.25] };
+export const HEAVY = { axe: ['swordC', 1.0, 1.15, 0.7, 1.25, 0.15], spear: ['jabU', 0.9, 1.0, 0.42, 2.3, 0.4], fists: ['hookU', 1.0, 0.85, 0.36, 0.95, 0.25] };
+export const STEP = { axe: 1.3, spear: 0.8, fists: 1.1, keep: 0.4 };   // m; keep: how far inside the reach the step ends (the blade bites, it does not graze)
+// The step in: how far to move toward a target whose surface is `gap` m away, for a swing of `reach` (0: none needed or too far).
+export function stepIn(gap, reach, max, keep = STEP.keep) {
+  if (!(gap > reach - keep + 0.05) || gap > reach + max) return 0;
+  return Math.min(max, gap - (reach - keep));
+}
 
 // ----- pure rules
 const TAU = Math.PI * 2;

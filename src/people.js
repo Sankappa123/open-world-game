@@ -912,7 +912,7 @@ function adultDress(model, body, bones, who, color, style = null) {
   // (top on the pelvis, the lower sides partly on the thighs) so it swings with each stride and opens over a horse
   const fem = who === 'female', key = fem ? 'skirt' : 'kilt';
   let sg = cache[key];
-  const P0 = bw('pelvis'), yW = two ? P0.y + 0.015 : bw('spine_01').y - (fem ? 0.0 : 0.035), yH = Math.min(P0.y - 0.04, bw('thigh_l').y - 0.03);
+  const P0 = bw('pelvis'), yW = two ? P0.y + (bw('spine_01').y - P0.y) * SENA_WAIST : bw('spine_01').y - (fem ? 0.0 : 0.035), yH = Math.min(P0.y - 0.04, bw('thigh_l').y - 0.03);
   const yK = two ? bw('thigh_l').y - (bw('thigh_l').y - bw('calf_l').y) * 0.5 : bw('calf_l').y + (fem ? 0.02 : 0.13);   // SENA-LOOK: hip-slung, mid-thigh
   const bi = (nm) => body.skeleton.bones.indexOf(bones[nm]), iP = bi('pelvis'), iL = bi('thigh_l'), iR = bi('thigh_r');
   if (!sg) {
@@ -927,7 +927,9 @@ function adultDress(model, body, bones, who, color, style = null) {
     };
     const thY = bw('thigh_l').y, hip = ext(thY - 0.08, thY + 0.03), waist = ext(yW - 0.03, yW + 0.03);
     const fl = two ? 0.45 : fem ? 1 : 0.55, cz = hip[2];
-    const rings = two ? [[yW, hip[0] + 0.03, hip[1] + 0.035, cz], [yH, hip[0] + 0.045, hip[1] + 0.05, cz]] : [[yW, waist[0] + 0.022, waist[1] + 0.024, waist[2]], [yH, hip[0] + 0.045, hip[1] + 0.05, cz]];
+    const rings = [[yW, waist[0] + 0.022, waist[1] + 0.024, waist[2]]];
+    if (two) for (const t of [0.34, 0.67]) { const y = yW + (yH - yW) * t, e = ext(y - 0.025, y + 0.025); rings.push([y, e[0] + 0.022 + 0.023 * t, e[1] + 0.024 + 0.026 * t, e[2] + (cz - e[2]) * t]); }   // SENA-LOOK r2: the band follows the hips' own curve from the waist down
+    rings.push([yH, hip[0] + 0.045, hip[1] + 0.05, cz]);
     for (let r = 1; r <= 4; r++) { const t = r / 4; rings.push([yH + (yK - yH) * t, hip[0] + 0.045 + (0.015 + 0.075 * fl) * t, hip[1] + 0.05 + (0.025 + 0.07 * fl) * t, cz]); }
     const SEG = 36, vs = [], uv = [], ssi = [], ssw = [];
     const lSide = Math.sign(bw('thigh_l').x - P0.x) || 1;
@@ -952,6 +954,10 @@ function adultDress(model, body, bones, who, color, style = null) {
   if (two) out.parts.push(...senaTrinkets(bones));     // SENA-LOOK: bone-bead necklace and arm cords
   return out;
 }
+// SENA-LOOK r2 (verifier): the skirt's top edge, as a fraction of the way from the pelvis joint up to the first spine
+// joint. It sat 1.5 cm above the pelvis joint, below the hip bones, so the base mesh's brief showed above it all the
+// way round and it read as a skirt slipping off. On the hip bones it covers the brief; the midriff stays bare.
+const SENA_WAIST = 0.72;
 // SENA-LOOK: a strand of bone and amber beads at the throat, and braided hide cords on both upper arms.
 function senaTrinkets(bones) {
   const parts = [], bead = new THREE.SphereGeometry(0.0085, 8, 6), tooth = new THREE.ConeGeometry(0.006, 0.026, 6);

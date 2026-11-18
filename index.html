@@ -132,6 +132,7 @@
   #quest, #clock, #matchip, #buff, #toasts, #prompt, #sub, #bars, #inv, #bag, #wpn, #help, #downed > *, #savechip, #gate .box, #body .sheet, #pause .box { zoom: var(--ui, 1); }
   #savechip { position: fixed; top: 100px; right: 18px; padding: 5px 11px; font-size: 12px; opacity: 0; pointer-events: none; transition: opacity 0.4s; }
   #savechip.ok { color: #a9cf8e; } #savechip.warn { color: #e58a6f; }
+  #hud.cine #savechip, #hud.cine ~ #savechip, body:has(#hud.cine) #savechip { opacity: 0 !important; }   /* ARC-FIX7: no 'Saved' chip over a letterboxed scene */
   #fps { position: fixed; right: 18px; bottom: 150px; font-size: 11px; color: rgba(243, 234, 217, 0.45); pointer-events: none; text-shadow: 0 1px 2px #000; }
   #vignette { position: fixed; inset: 0; pointer-events: none; background: radial-gradient(ellipse at center, transparent 55%, rgba(0, 0, 0, 0.42) 100%); }
   #pause { position: fixed; inset: 0; display: none; place-content: center; background: rgba(0, 0, 0, 0.5); backdrop-filter: blur(3px); }
