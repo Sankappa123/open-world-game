@@ -66,32 +66,26 @@ The user asked for a 21+ game.
 - They tend to restart or close sessions. Commit WIP before long runs, and commit again at checkpoints.
 - Never start a new game or click "New story" without `/api/` interception. Never touch their real save except at their explicit request.
 
-## Status (updated 2026-11-16 ~17:30, ThinkPad Linux). RESUME HERE
-**BOW basic version is merged (b32f513).** The user wanted it in about 15 minutes, so the agent workflow was stopped and Claude built it directly.
-- Code: `src/bow.js` (models) and the `BOW` section of `main.js`. Key 5 readies the bow. It reuses the spear's aim (`W.aim` with `bow: true`).
-- Arrows: crafted 3 at a time; 8 can be carried, or 24 with a quiver. They stick in game and the ground, are picked up with E, and are saved in `S.arrowsAt`.
-- Side quest: one line under the chapter goals. Test hooks: `G.bow`.
-- Later fixes, at the user's request:
-  - The pack (`#inv`) no longer shows on screen. A bag icon sits bottom right; **hold B** opens the bag. Tab is crafting only now.
-  - The quiver arrows point down; the slung bow is upright and snug on the back.
-  - The back spear is hidden while the bow is drawn.
-  - The user's real save was given the bow, a quiver and 10,000 arrows at their request. Backup: `hearthborn-notes/save_backup_day21_before_bow.json`.
-- **Not done yet** (from `docs/dev/spec-bow.md`):
-  - a first-person bow view model (the bow is hidden in first person);
-  - a rock-break check (any ground hit has a 12% snap chance instead);
-  - verifying the draw pose from the side;
-  - a deer kill by arrow in a test;
-  - `tools/test/steps/bow.json`;
-  - a full `play.json` regression run.
-- **Testing tip on this ThinkPad:** use `GL="--use-angle=vulkan --enable-gpu --ignore-gpu-blocklist"`. It runs at about 26 fps, against roughly 1 fps with SwiftShader. Tests must also click `#gate-ok` (the 21+ notice), or the game stays paused.
-- The `bow` worktree at `/home/ashish/Desktop/hearthborn-bow` can be removed with `git worktree remove`.
-- After BOW, the 2 questions below still apply (A's machine; B items first or not).
-
-**Workflow A is RUNNING (started 2026-11-16 ~20:15 on the M4 MacBook Air).** The user answered the 2 questions: run A on the Air, and go straight to A (B's open items wait).
-- Script: `docs/dev/workflows/A2-mature-finish-pro.js`. It finishes the 5 mature packages plus the bow's open items, then ARC phase C, QA, fixes, and a strict independent verification.
-- It runs 2 agents at a time on Fable (the user's plan is the $25 one, so usage limits are expected). The script stops cleanly when an agent dies on a limit.
-- **On "continue": if A did not finish, relaunch that script** (with `resumeFromRunId` if the same session still exists; otherwise a fresh run, since agents read the code on disk and continue). Set ROOT and SP at the top for the machine. The questions below are answered; do not ask them again.
-- Shared notes for the agents are in `../hb-scratch/progress.md` (outside /private/tmp, so a reboot keeps them).
+## Status (updated 2026-11-18 ~07:50, M4 Air; paused so the user can switch accounts). RESUME HERE
+**Workflow A is about 90% done and PAUSED.** On "continue", relaunch it. Do not ask any questions first.
+- Script: `docs/dev/workflows/A2-mature-finish-pro.js`. In the same Claude session, use `resumeFromRunId: "wf_667b3159-507"`. In a NEW session or account, run it fresh: finished packages re-check the code on disk quickly and continue.
+- Agents run on the session model (Opus). **Fable needs paid usage credits now. Do not use Fable unless the user buys credits.**
+- Concurrency: CAP 2 for builders and QA, FAST 4 for fixers and verifiers.
+- **Done (all committed):**
+  - M2 GORE, M3 SURV, M4 CMB (bow vs predators and raiders), M5 ARC phases B and C (the full story end to end; play.json passes 45 checks), M6 ROM+MUS, BOW finish (first-person bow, rock break, tests);
+  - QA found 41 issues; the fixers fixed them;
+  - independent verification round 1: gore-cmb 34/38, mat-surv 27/31, arc-rom-mus 16/21, bow-limits 12/16;
+  - round-2 re-fixes are done for gore-cmb and bow-limits.
+- **Left:**
+  - round-2 re-fixes for arc-rom-mus (lake embrace cut by the chapter advance, Tamu dies off screen, scene cameras) and mat-surv (Hardcore reload escape, 21+ gate, play.json on Story);
+  - the round-2 re-verify for all 4 areas;
+  - at most one more fix and verify round;
+  - then the wrap-up: build, commit, push, update this file.
+- **Sena's look (USER DECISION, 2026-11-17):** a revealing hide two-piece, not the dress. It is `SENA-LOOK` in people.js and main.js: a breast-band, a hip-slung mid-thigh skirt, and a bead necklace. It stays within the content limits (no nudity, nothing sexual).
+  - Known polish item: a strip of the base-mesh underwear shows between the band and the low skirt at the hips. Raise the skirt or cover it.
+  - Never revert her to the dress.
+- Usage: the user's plan hits the 5-hour limit roughly every 2-3 hours of agent work. In a live session, an hourly cron check relaunches A after each reset (session-only; recreate it in a new session).
+- Agent notes: `../hb-scratch/progress.md`. Agents must ignore chat status questions; the `FOCUS` suffix in the script handles this.
 
 **(Answered on 2026-11-16; kept for history.)** When the user says "continue" (or "I'm back"), do NOT start anything. FIRST ask these 2 questions and wait for the answers:
 1. **Which machine runs workflow A?** The M4 MacBook Air, the Mac mini M1 (8 GB RAM, so 2 agents and a long run), or the Asus A15 (GTX 1650, 16 GB+, needs a setup test first).
