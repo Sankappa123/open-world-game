@@ -2445,6 +2445,7 @@ const BOWC = {
   sl: { u: 0, b: 0.21, s: 0.04, roll: 0.62, lean: 0.06, twist: 0.9 },
   qv: { u: 0, b: 0.22, s: 0.2, roll: 0.6, lean: -0.1 },
   hand: { r: -0.36, f: 0.05, y: -0.02, pitch: 0.2, toe: 0.08, spin: 1.2 },
+  draw: { r: 0.05, f: 0, y: -0.06 },
 };
 const _bwU = new THREE.Vector3(), _bwR = new THREE.Vector3(), _bwF = new THREE.Vector3(), _bhR = new THREE.Vector3(), _bhF = new THREE.Vector3(), _bwX = new THREE.Vector3(), _bwY = new THREE.Vector3(), _bwZ = new THREE.Vector3(), _bwQ = new THREE.Quaternion();
 function bowTorso(h) {                               // _bwU up the spine, _bwR toward the right shoulder, _bwF out of the chest
@@ -2489,7 +2490,7 @@ P.h.addOverride('bowIK', 31, (h, dt) => {
   _bB.copy(_bA); _bB.y -= 0.5; _bB.x -= rx * 0.2; _bB.z -= rz * 0.2;
   ik2(h, 'l', _bA, _bB, k);
   h.bones.Head.getWorldPosition(_bC);                // right fist: from the nocking point to the cheek with the draw
-  _bC.y -= 0.06; _bC.x += rx * 0.05; _bC.z += rz * 0.05;
+  { const c = BOWC.draw; _bC.y += c.y; _bC.x += rx * c.r + _bD.x * c.f; _bC.z += rz * c.r + _bD.z * c.f; }   // BOW-CARRY r3: the anchor at the jaw, out from the neck
   _bB.copy(_bA).addScaledVector(_bD, -0.32);
   _bC.lerp(_bB, 1 - ch);
   _bB.copy(_bC).addScaledVector(_bD, -0.35); _bB.x += rx * 0.22; _bB.z += rz * 0.22; _bB.y += 0.08;
