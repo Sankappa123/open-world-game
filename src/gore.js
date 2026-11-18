@@ -775,14 +775,14 @@ function segSamples(rec, seg) {
     const sg = m.geometry.attributes.aSeg, pos = m.geometry.attributes.position; if (!sg || !m.isSkinnedMesh) continue;
     for (let i = 0; i < pos.count; i++) if (Math.round(sg.getX(i)) === seg) all.push([m, i]);
   }
-  const st = Math.max(1, Math.floor(all.length / 72));
+  const st = Math.max(1, Math.floor(all.length / 160));   // GORE-FIX6: denser, so no vertex between samples sinks into the ground
   for (let k = 0; k < all.length; k += st) { const [m, i] = all[k]; const v = new THREE.Vector3().fromBufferAttribute(m.geometry.attributes.position, i); m.applyBoneTransform(i, v); out.push(v.applyMatrix4(m.matrixWorld)); }
   return out;
 }
 // the lowest sample of a piece above the ground (negative: below it), with the pivot at pos/quat
 function pieceLow(p) {
   let lo = 1e9; const q = p.pivot.quaternion, o = p.pivot.position;
-  for (let k = 0; k < p.loc.length; k += p.loc.length > 40 ? 2 : 1) { _v.copy(p.loc[k]).applyQuaternion(q).add(o); const d = _v.y - getH(_v.x, _v.z); if (d < lo) lo = d; }
+  for (let k = 0, st = p.rest || p.loc.length <= 40 ? 1 : 2; k < p.loc.length; k += st) { _v.copy(p.loc[k]).applyQuaternion(q).add(o); const d = _v.y - getH(_v.x, _v.z); if (d < lo) lo = d; }   // GORE-FIX6: every sample once it lands
   return lo;
 }
 // Sever a segment (1 head, 2-5 limbs, 6 tail on animals): hide it on the body (shader discard + shadow depth material),
@@ -836,6 +836,17 @@ export function sever(model, seg, { dir = null, sceneRoot = null } = {}) {
   // back of the skull, never upright on the neck like a bust
   let head = null;
   if (seg === 1 && rec.rig === 'human') { const hq = bone.getWorldQuaternion(new THREE.Quaternion()); head = { up: new THREE.Vector3(0, 1, 0).applyQuaternion(hq), fw: new THREE.Vector3(0, 0, 1).applyQuaternion(hq) }; }
+  // GORE-FIX6: an animal's head (deer, wolf...) too: its "crown" is the stump-to-snout line, its top the skull. It rests
+  // on a cheek with the neck lying along the ground, never stood on the neck stump like a mounted trophy.
+  if (seg === 1 && rec.rig === 'quad') {
+    const ax = center.clone().sub(jp); if (ax.lengthSq() < 1e-4) ax.copy(out); ax.normalize();
+    const top = new THREE.Vector3(0, 1, 0).addScaledVector(ax, -ax.y); if (top.lengthSq() < 0.02) top.set(0, 0, 1).addScaledVector(ax, -ax.z); top.normalize();
+    head = { up: ax, fw: top, cheek: true };
+    // rigid parts that ride the head (antlers) count for ground contact, so the tines prop it instead of sinking in
+    if (pb) { const tmp = new THREE.Vector3(); bone.traverse((o) => { if (!o.isMesh || o.isSkinnedMesh || !under(o, bone) || !o.geometry?.attributes?.position) return;
+      const pos = o.geometry.attributes.position, st = Math.max(1, Math.floor(pos.count / 24)); o.updateWorldMatrix(true, false);
+      for (let i = 0; i < pos.count; i += st) loc.push(tmp.fromBufferAttribute(pos, i).applyMatrix4(o.matrixWorld).sub(center).clone()); }); }
+  }
   pieces.push({ pivot, copy, u: u2, vel, spin, rest: false, t: 0, r: Math.max(0.06, len * 0.25), drip: 0, loc, axis, settle: 0, q0: null, q1: null, head });
   while (pieces.length > POOL.pieces) dropPiece(pieces[0]);
   bloodBurst(jp, out, burstCount('high', true, true) * 0.8, { heavy: true, kill: true });
@@ -849,7 +860,7 @@ function headRest(p, n) {
   const rt = new THREE.Vector3().crossVectors(up, fw).normalize();
   const h = up.clone().addScaledVector(n, -up.dot(n)); if (h.lengthSq() < 0.02) h.copy(fw).addScaledVector(n, -fw.dot(n)); if (h.lengthSq() < 0.02) h.set(1, 0, 0).addScaledVector(n, -n.x); h.normalize();
   // the side facing the ground: a cheek (right or left), else the back of the skull (face up, turned a little)
-  const sides = [rt.clone(), rt.clone().negate(), fw.clone().negate()].map((d, i) => ({ d, i, s: -d.dot(n) + (i === 2 ? -0.35 : 0) }));
+  const sides = [rt.clone(), rt.clone().negate(), fw.clone().negate()].map((d, i) => ({ d, i, s: -d.dot(n) + (i === 2 ? (p.head.cheek ? -9 : -0.35) : 0) }));   // GORE-FIX6: animals: a cheek only
   const down = sides.sort((a, b) => b.s - a.s)[0];
   // target frame: up → h, the chosen side → -n
   const ups = _m.makeBasis(new THREE.Vector3().crossVectors(p.head.up, p.head.fw).normalize(), p.head.up, p.head.fw);   // head frame in pivot space at sever (pivot unrotated then)
@@ -952,6 +963,9 @@ function hull2(xz) {
   return new Float32Array(lo.concat(up).flat());
 }
 export const carcassFeet = () => carcasses.filter((c) => c.g.visible).map((c) => c.foot);
+// GORE-FIX6: the nearest visible carcass or severed piece within r of (x, z), as {x, z, d} (children keep away from it)
+export function goreNear(x, z, r) { let best = null; const at = (px, pz) => { const d = Math.hypot(px - x, pz - z); if (d < r && (!best || d < best.d)) best = { x: px, z: pz, d }; };
+  for (const c of carcasses) if (c.g.visible) at(c.g.position.x, c.g.position.z); for (const p of pieces) at(p.pivot.position.x, p.pivot.position.z); return best; }
 export const carcassList = () => carcasses.map((c) => ({ visible: c.g.visible, flesh: c.u.uFlesh.value, t: c.t, opacity: c.mats[0]?.opacity ?? 1 }));
 
 // ----- screen blood (DOM canvas #splat, half resolution)

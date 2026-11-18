@@ -5077,8 +5077,14 @@ function matRevive() {
 function rescue(why, penalty = false) {
   MAT.rescuing = true; P.downed = 0; $('downed').classList.remove('on');
   if (!(P.matW > 0)) matLieStart(P);               // he falls where he stands; the fade covers the rest
-  fadeTo(`${why} Sena carries you back to camp and tends you until morning.${penalty ? ' The food you carried is gone.' : ''}`, () => {
+  const nDown = N.downed > 0;                        // MAT-SV: she fell first: she cannot carry him, she drags them both home hurt
+  const how = nDown ? 'Sena comes to, binds her own wound, and drags you back to camp. You tend each other until morning.' : 'Sena carries you back to camp and tends you until morning.';
+  fadeTo(`${why} ${how}${penalty ? ' The food you carried is gone.' : ''}`, () => {
     matDownEnd(); MAT.rescuing = false; P.matW = 0; P.matUp = 0; P.h.removeOverride('matLie');
+    if (N.downed > 0 || nDown) {                     // MAT-SV: she is up by morning, still hurt (no revive line: the fade text carries it)
+      N.downed = 0; S.nhp = Math.max(S.nhp, 40); N.matUp = 0; N.matW = 0; N.matFallT = 0; N.matStill = false; N.speed = 0; N.h.removeOverride('matLie');
+      emit('revived', { who: 'N', by: 'rescue', item: null });
+    }
     const f = structs.find((s) => s.kind === 'fire');
     P.pos.set(f ? f.x + 1.6 : 0, 0, f ? f.z + 1.2 : 4);
     N.pos.set(P.pos.x + 1.2, 0, P.pos.z + 0.8); N.node = null;
@@ -6047,9 +6053,11 @@ function predKidGuard(o, dt) {
 function kidHide(c, dt) {
   const home = homeHouse(), door = home && home.rise >= 1 ? toWorld(home, [0, 0, 3.6]) : null;
   if (c.hid) {
-    if (!door) { c.hid = false; c.h.root.visible = !ARCS.raidOn; return false; }
-    c.hidClear = arcThreat(door, 40) ? 0 : (c.hidClear || 0) + dt;
-    c.pos.set(door.x, 0, door.z); c.speed = 0;
+    const at = c.bush || door;                       // GORE-FIX6: hidden in the brush (no house) or indoors
+    if (!at) { c.hid = false; c.h.root.visible = !ARCS.raidOn; return false; }
+    c.hidClear = arcThreat(at, 40) ? 0 : (c.hidClear || 0) + dt;
+    c.pos.set(at.x, 0, at.z); c.speed = 0;
+    if (c.hidClear > 4 && c.bush) { c.bush = null; c.fleeT = 0; }
     if (c.hidClear > 4) { c.hid = false; c.hidClear = 0; if (!ARCS.raidOn) c.h.root.visible = true; return false; }
     return true;
   }
@@ -6058,14 +6066,62 @@ function kidHide(c, dt) {
   c.seat = null; c.play = 0; c.h.pose = null;
   if (door && Math.hypot(door.x - c.pos.x, door.z - c.pos.z) < 70) {
     if (villagerWalk(c, door.x, door.z, 4.6, dt, 0.7, home)) { c.hid = true; c.hidClear = 0; c.h.root.visible = false; c.hideT = 0; }   // round the walls to the front door
-  } else {                                           // no house: behind Sena, away from the danger
-    let tx = 0, tz = 0; for (const o of animals) if ((o.kind === 'wolf' || o.hostile) && o.state === 'live') { tx = o.root.position.x; tz = o.root.position.z; break; }
-    for (const f of foes) if (f.live && !f.fled) { tx = f.pos.x; tz = f.pos.z; break; }
-    const ax = N.pos.x - tx, az = N.pos.z - tz, l = Math.hypot(ax, az) || 1;
-    walkTo(c, N.pos.x + (ax / l) * 1.3, N.pos.z + (az / l) * 1.3, 4.6, dt, 0.3);
-  }
+  } else if (kidFlee(c, dt)) return true;            // GORE-FIX6: no house: she runs from the fight and hides in the brush
   settle(c, dt, false);
   return true;
+}
+// GORE-FIX6 GUARDRAIL: with no house to run to, the child runs away from the nearest threat (a raider, a wolf), past
+// Sena's side of the fight, and once she is 30 m clear (or has run 8 s and is 16 m clear) she ducks into the brush:
+// hidden until nothing hostile is within 40 m for 4 s, then she walks back to Sena.
+function kidThreatAt(p) {
+  let best = null, bd = 1e9;
+  for (const o of animals) if ((o.kind === 'wolf' || o.hostile) && o.state === 'live') { const d = Math.hypot(o.root.position.x - p.x, o.root.position.z - p.z); if (d < bd) { bd = d; best = o.root.position; } }
+  for (const f of foes) if (f.live) { const d = Math.hypot(f.pos.x - p.x, f.pos.z - p.z); if (d < bd) { bd = d; best = f.pos; } }
+  return best ? { x: best.x, z: best.z, d: bd } : null;
+}
+function kidFlee(c, dt) {
+  const t = kidThreatAt(c.pos); if (!t) return false;
+  c.fleeT = (c.fleeT || 0) + dt;
+  if (t.d > 30 || (c.fleeT > 8 && t.d > 16)) {
+    c.bush = new THREE.Vector3(c.pos.x, 0, c.pos.z); c.hid = true; c.hidClear = 0; c.h.root.visible = false; c.hideT = 0; c.speed = 0; return true;
+  }
+  // away from the threat and from Aro's fight (he is usually the one it is fighting)
+  let ax = c.pos.x - t.x, az = c.pos.z - t.z; const l = Math.hypot(ax, az) || 1; ax /= l; az /= l;
+  const pd = Math.hypot(c.pos.x - P.pos.x, c.pos.z - P.pos.z);
+  if (pd < 12) { ax += (c.pos.x - P.pos.x) / (pd || 1) * 0.6; az += (c.pos.z - P.pos.z) / (pd || 1) * 0.6; }
+  const k = Math.hypot(ax, az) || 1; ax /= k; az /= k;
+  // turn aside a little if a wall or rock holds her up
+  if (c.fleeStuck > 0.6) { const s = c.fleeSide ||= rand() < 0.5 ? -1 : 1; const ox = ax; ax = ax * 0.4 + -az * s * 0.92; az = az * 0.4 + ox * s * 0.92; }
+  _kv.copy(c.pos);
+  walkTo(c, c.pos.x + ax * 6, c.pos.z + az * 6, 4.8, dt, 0.1);
+  c.fleeStuck = c.pos.distanceTo(_kv) < dt * 1.5 ? (c.fleeStuck || 0) + dt : Math.max(0, (c.fleeStuck || 0) - dt * 0.5);
+  return false;
+}
+// GORE-FIX6 GUARDRAIL: the child never walks onto a kill: she stays 9 m from a carcass, a severed piece, an animal lying
+// dead, or Aro while he butchers, and never stands inside Aro or Sena.
+const _kg = new THREE.Vector3();
+function kidGoreSpot(c) {
+  let best = null; const at = (x, z, r) => { const d = Math.hypot(x - c.pos.x, z - c.pos.z); if (d < r && (!best || d - r < best.d - best.r)) best = { x, z, d, r }; };
+  if (GS.butch) at(P.pos.x, P.pos.z, 9);
+  if (GS.butch?.o?.root) at(GS.butch.o.root.position.x, GS.butch.o.root.position.z, 9);
+  for (const o of animals) if (o.state === 'dead' && o.root.visible && !o.tame && !o.horse) at(o.root.position.x, o.root.position.z, 9);
+  const g = GS.init && GR.goreNear?.(c.pos.x, c.pos.z, 9); if (g) at(g.x, g.z, 9);
+  return best;
+}
+function kidGoreKeep(c, dt) {
+  const g = kidGoreSpot(c); if (!g) { c.goreAway = 0; return false; }
+  c.seat = null; c.play = 0; c.h.pose = null;
+  if (g.d > g.r - 0.8) { c.speed = 0; c.face = turn(c.face || 0, Math.atan2(c.pos.x - g.x, c.pos.z - g.z), Math.min(1, dt * 3)); settle(c, dt, false); return true; }   // waits at the edge, looking away
+  let ax = c.pos.x - g.x, az = c.pos.z - g.z; const l = Math.hypot(ax, az);
+  if (l < 0.05) { ax = c.pos.x - P.pos.x || 1; az = c.pos.z - P.pos.z; }
+  const k = Math.hypot(ax, az) || 1;
+  _kg.set(g.x + (ax / k) * g.r, 0, g.z + (az / k) * g.r);
+  walkTo(c, _kg.x, _kg.z, 3.2, dt, 0.2); kidPersonalSpace(c); settle(c, dt, false);
+  return true;
+}
+// a child is never inside an adult: pushed out to 0.75 m from Aro and Sena
+function kidPersonalSpace(c) {
+  for (const e of [P, N]) { const dx = c.pos.x - e.pos.x, dz = c.pos.z - e.pos.z, d = Math.hypot(dx, dz); if (d < 0.75) { const s = d > 0.01 ? (0.75 - d) / d : 0; if (s) { c.pos.x += dx * s; c.pos.z += dz * s; } else c.pos.x += 0.75; } }
 }
 // No gore where a child can see it: Aro's and Sena's wounds are washed, blood and severed pieces near the child go
 // (twice a second, while a child is within 20 m of them).
@@ -10798,7 +10854,8 @@ function updateKids(dt) {
       if (P.rest > 0) { settle(c, dt, false); return; }
       c.rest = 0; c.h.root.rotation.x = 0; c.pos.set(N.pos.x - 1, 0, N.pos.z - 1);   // wake with them at the door
     }
-    if (kidHide(c, dt)) return;                      // GORE-FIX GUARDRAIL: a predator or raider near: she runs indoors (or behind Sena)
+    if (kidHide(c, dt)) return;                      // GORE-FIX GUARDRAIL: a predator or raider near: she runs indoors (or hides in the brush)
+    if (kidGoreKeep(c, dt)) return;                  // GORE-FIX6 GUARDRAIL: never on a kill or beside the butchering
     if (kidEpiHold(c, dt)) return;
     // Epilogue: Lio rides the old horse at a walk around the house (unless Aro has taken the reins).
     if (i === 0 && horse && P.ride !== horse && !busy && S.time > 8 && S.time < 11.5) {   // final test: mornings only, else Lio follows Sena
@@ -10835,6 +10892,7 @@ function updateKids(dt) {
         c.h.pose = rand() < 0.5 && c.h.has?.('dance') ? 'dance' : 'talk';
       }
     }
+    kidPersonalSpace(c);                             // GORE-FIX6: never inside Aro or Sena
     settle(c, dt, false);
   });
 }
