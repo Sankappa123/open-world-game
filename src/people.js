@@ -1048,8 +1048,56 @@ function adultDress(model, body, bones, who, color, style = null) {
     const ln = new THREE.SkinnedMesh(cache.skirtLine, lm); ln.name = 'dressSkirtBand'; ln.receiveShadow = true; ln.frustumCulled = false;
     body.parent.add(ln); ln.updateMatrixWorld(true); ln.bind(sk.skeleton, sk.bindMatrix); out.parts.push(ln);
   }
+  if (two) { const y2 = bw('spine_02').y; const lo = senaLoin(body, cache, 'loin', (i) => wy[i] < y2, 260, unit, mat(1.05)); if (lo) out.parts.push(lo); }   // SENA-LOOK A3: the hide loincloth under the skirt
+  if (two) {   // SENA-LOOK A3b (verifier a3vfin): the base mesh's painted bra showed as a dark lace strip above the breast band; a hide under-band over every bra texel
+    const y2 = bw('spine_02').y, yN = bw('neck_01').y, NOT = /^(upperarm|lowerarm|hand|neck|head)/;
+    const br = senaLoin(body, cache, 'bra', (i) => wy[i] > y2 && wy[i] < yN && !NOT.test(main[i]), 330, unit, mat(1)); if (br) { br.name = 'dressBra'; out.parts.push(br); }
+  }
   if (two) out.parts.push(...senaTrinkets(bones));     // SENA-LOOK: bone-bead necklace and arm cords
   return out;
+}
+// SENA-LOOK A3 (verifier A3, blocker: jogging toward a low camera, the base mesh's black painted brief showed between
+// her thighs under the flared skirt front). A hide loincloth, skinned exactly like the skin under it: every body
+// triangle below the ribs that touches the painted brief (dark texels in the body texture), lifted 5 mm off the skin
+// along the welded normals. It moves with the body in every pose, so the brief is never seen: under the skirt there is
+// only hide. The skirt and the bare midriff and thighs (the two-piece look) are unchanged.
+function senaLoin(body, cache, key, sel, thr, unit, material) {
+  let g = cache[key];
+  if (g === undefined) {
+    g = cache[key] = null;
+    const im = body.material.map?.image; if (!im || !im.width) return null;
+    const W = im.width, H = im.height, cv = document.createElement('canvas'); cv.width = W; cv.height = H;
+    const cx = cv.getContext('2d', { willReadFrequently: true }); cx.drawImage(im, 0, 0); const px = cx.getImageData(0, 0, W, H).data;
+    const flip = body.material.map.flipY;
+    const dark = (u, v) => {                                           // a 5x5 texel average: the brief's paint is a dark, grainy brown
+      const x0 = Math.round(u * W), y0 = Math.round((flip ? 1 - v : v) * H); let s = 0, c = 0;
+      for (let dy = -2; dy <= 2; dy++) for (let dx = -2; dx <= 2; dx++) { const x = Math.min(W - 1, Math.max(0, x0 + dx)), y = Math.min(H - 1, Math.max(0, y0 + dy)), o = (y * W + x) * 4; s += px[o] + px[o + 1] + px[o + 2]; c++; }
+      return s / c < thr;
+    };
+    const g0 = body.geometry, uv = g0.attributes.uv, n = g0.attributes.position.count;
+    const src = g0.index ? g0.index.array : Array.from({ length: n }, (_, i) => i), idx = [];
+    const low = sel;
+    for (let t = 0; t < src.length; t += 3) {
+      const a = src[t], b = src[t + 1], c = src[t + 2];
+      if (!(low(a) && low(b) && low(c))) continue;
+      const ua = uv.getX(a), va = uv.getY(a), ub = uv.getX(b), vb = uv.getY(b), uc = uv.getX(c), vc = uv.getY(c);
+      if (dark(ua, va) || dark(ub, vb) || dark(uc, vc) || dark((ua + ub + uc) / 3, (va + vb + vc) / 3) || dark((ua + ub) / 2, (va + vb) / 2) || dark((ub + uc) / 2, (vb + vc) / 2) || dark((ua + uc) / 2, (va + vc) / 2)) idx.push(a, b, c);
+    }
+    if (!idx.length) return null;
+    // one normal per welded position (no cracks at the UV seams), 5 mm out
+    g = g0.clone(); const p = g.attributes.position, nr = g.attributes.normal, q = 0.0005 * unit, acc = new Map(), keyOf = (i) => Math.round(p.getX(i) / q) + ',' + Math.round(p.getY(i) / q) + ',' + Math.round(p.getZ(i) / q);
+    for (let i = 0; i < n; i++) { const k = keyOf(i); let a = acc.get(k); if (!a) acc.set(k, (a = [0, 0, 0])); a[0] += nr.getX(i); a[1] += nr.getY(i); a[2] += nr.getZ(i); }
+    const off = 0.005 * unit;
+    for (let i = 0; i < n; i++) { const a = acc.get(keyOf(i)), l = Math.hypot(a[0], a[1], a[2]) || 1; p.setXYZ(i, p.getX(i) + a[0] / l * off, p.getY(i) + a[1] / l * off, p.getZ(i) + a[2] / l * off); }
+    g.setIndex(idx); g.computeBoundingSphere(); weldNormals(g);
+    cache[key] = g;
+  }
+  if (!g) return null;
+  const m = new THREE.SkinnedMesh(g, material); m.name = 'dressLoin';
+  m.castShadow = m.receiveShadow = true; m.frustumCulled = false;
+  m.position.copy(body.position); m.quaternion.copy(body.quaternion); m.scale.copy(body.scale);
+  body.parent.add(m); m.bind(body.skeleton, body.bindMatrix);
+  return m;
 }
 // SENA-LOOK r2/r3 (verifier): the skirt's top edge. SENA_WAIST: the front's base height, as a fraction of the way from
 // the pelvis joint up to the first spine joint. SENA_RISE (metres): [all round, over the hips, more toward the back].

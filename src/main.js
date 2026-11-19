@@ -482,7 +482,12 @@ function settle(e, dt, crouch) {
   if (e.standOff) standOffStep(e, dt);              // SIT-r3: easing off the bench log
   // Seated on something that moves (horse rider): the caller supplies the world seat point.
   if (e.seat) { root.position.copy(e.seat); if (e.fsW > 0) root.position.y -= FS.drop * smooth01(e.fsW); root.rotation.y = e.face; e.h.animate(dt, 0, false, false, false); return; }
-  const g = getHeight(e.pos.x, e.pos.z);
+  let g = getHeight(e.pos.x, e.pos.z);
+  // CAVE-SIT (verifier A3: seated at a fire on an uneven cave floor, Sena sat 1.6 m below her bench and her shins went
+  // through the log): the bench logs stand on the fire's own ground (its group y), so a fire sit takes that height,
+  // eased in over the walk to the seat and out over the step off it.
+  const fy = e.fire?.[2] ?? e.standOff?.y;
+  if (fy != null && (e.sit > 0 || e.standOff)) { const w = e.sitIn ? smooth01(e.sitIn.t / e.sitIn.dur) : e.standOff && !e.fire ? 1 - smooth01((e.standOff.t - 0.12) / 0.7) : 1; g += (fy - g) * w; }
   e.swim = g < -1.15;                       // deeper than the waist: swim at the surface
   e.pos.y = (e.swim ? SWIM_Y : g) + (e.jy || 0);
   e.h.root.position.copy(e.pos);
@@ -3179,6 +3184,14 @@ function updateHome(dt) {
     h.hearthW ??= toWorld(h, h.hearthPt);
     homeLight.position.copy(h.hearthW); homeLight.intensity = 1 + 2 * world.env.night;
   } else homeLight.intensity = 0;
+  // ARC-A3r5: the romance-night kiss: the hearth's light comes up toward the lens side of the two of them, so both faces
+  // read warm and lit (it lit only the far side of them: two dark silhouettes). No new light (lights are never added).
+  if (ROM_FILL.on) { homeLight.position.copy(ROM_FILL.pos); homeLight.intensity = Math.max(homeLight.intensity, 3.2); }
+}
+const ROM_FILL = { on: false, pos: new THREE.Vector3() };
+function romKissFill(on, cam, lk) {
+  ROM_FILL.on = on;
+  if (on) { ROM_FILL.pos.copy(cam).lerp(lk, 0.45); ROM_FILL.pos.y = lk.y + 0.35; }
 }
 function toggleMenu(on = !menuOpen) {
   if (!playing || busy || mapOpen) return;
@@ -3478,14 +3491,18 @@ function addClose(n, why) {
 }
 // The campfire's two log benches sit at local x = ±1.6 m (see BUILD.fire); rotation.y = rot maps local +x to (cos, -sin).
 const fireSeats = (s) => { const c = Math.cos(s.rot || 0), sn = Math.sin(s.rot || 0); return [[s.x - 1.6 * c, s.z + 1.6 * sn], [s.x + 1.6 * c, s.z - 1.6 * sn]]; };
+const FIRE_SIT_IN = 0.34;   // CAVE-SIT: metres from the root back to the pelvis in the seated clip
 function sitTogether(s) {
   const p0 = [P.pos.x, P.pos.z], n0 = [N.pos.x, N.pos.z];                // SIT-r3: where they stand now (they walk to the benches)
-  let [a, b] = fireSeats(s);
+  // CAVE-SIT (verifier A3: Sena's shins passed through the bench log): the seated clip (Sitting_Idle) carries the pelvis
+  // FIRE_SIT_IN behind the root, so a root on the log's axis sat them in the air behind the log with the shins down
+  // through it. The root now stands that much nearer the fire: the pelvis is over the log, the shins and feet in front.
+  let [a, b] = fireSeats(s).map(([x, z]) => { const d = Math.hypot(x - s.x, z - s.z) || 1, k = (d - FIRE_SIT_IN) / d; return [s.x + (x - s.x) * k, s.z + (z - s.z) * k]; });
   if (Math.hypot(b[0] - P.pos.x, b[1] - P.pos.z) < Math.hypot(a[0] - P.pos.x, a[1] - P.pos.z)) [a, b] = [b, a];   // Aro takes the nearer bench
   P.pos.set(a[0], 0, a[1]); N.pos.set(b[0], 0, b[1]);
   P.face = Math.atan2(s.x - a[0], s.z - a[1]); N.face = Math.atan2(s.x - b[0], s.z - b[1]);
   P.vx = P.vz = 0; P.auto = false; P.sneak = false; N.node = null; N.act = 0;
-  P.sit = N.sit = 8; P.fire = N.fire = [s.x, s.z];
+  P.sit = N.sit = 8; P.fire = N.fire = [s.x, s.z, s.group.position.y];   // CAVE-SIT: [2] the benches' ground (settle)
   romBench(s);                                       // ROM: one bench together (40+), before the spear is planted
   wpnStowAll('sit', true);                           // WPN stow (SIT-r3: the spear is planted by the bench when he gets there, below)
   // SIT-r3: no teleport onto the logs. The seats are set (above); each of them now walks there around the fire, turns
@@ -3591,7 +3608,7 @@ function endSit(e) {
   }
   if (e.h.pose !== 'sit' && e.h.pose !== 'sitTalk') return;
   e.h.pose = null; e.h.swing('standUp', 1.05);      // SIT-r3: an unhurried rise (1.7 was over in 0.35 s)
-  if (e.fire) { const a = Math.atan2(e.pos.x - e.fire[0], e.pos.z - e.fire[1]); e.standOff = { x: Math.sin(a) * 0.5, z: Math.cos(a) * 0.5, t: 0 }; e.fire = null; }   // stand clear of the bench log: SIT-r3 eased in settle() (it was a one-frame 0.5 m pop)
+  if (e.fire) { const a = Math.atan2(e.pos.x - e.fire[0], e.pos.z - e.fire[1]); e.standOff = { x: Math.sin(a) * 0.5, z: Math.cos(a) * 0.5, t: 0, y: e.fire[2] }; e.fire = null; }   // stand clear of the bench log: SIT-r3 eased in settle() (it was a one-frame 0.5 m pop)
 }
 // SIT-r3: the step off the bench as he rises: 0.5 m over 0.8 s, added to whatever else moves him (so keys still steer).
 function standOffStep(e, dt) {
@@ -4123,6 +4140,7 @@ function rstCalibrate(e) {
 }
 // settle() hook for Aro and Sena: lying in bed, walking to it / standing up (upright on the shelter floor), and after
 // waking (kept inside the walls until they leave by the door). Returns true when it placed the body itself.
+const _rsPel = new V3();
 function rstSettle(e, dt) {
   if (e !== P && e !== N) return false;
   if (e.rest > 0 && e.lie && e.L) {
@@ -4136,6 +4154,14 @@ function rstSettle(e, dt) {
     root.rotation.set(0, L.sitYaw + angTo(L.sitYaw, L.lieYaw) * w, 0);
     e.h.pose = L.base;
     e.h.animate(dt, 0, false, false, false);
+    // ARC-A3r5: mid-blend (sitting up out of bed, or lying down) the root has already sunk toward the floor while the
+    // pose is still half lying: her pelvis went 0.3 m into the mattress (4.66 vs 4.96) and her legs showed under the
+    // bed. On a raised bed the pelvis never goes below the mattress top: lift the whole body by the shortfall.
+    if (!R.L?.low && e.lieW > 0 && e.lieW < 1) {
+      root.updateMatrixWorld(true);
+      const py = e.h.bones.pelvis.getWorldPosition(_rsPel).y, lo = R.L.matY + 0.1;
+      if (py < lo) { root.position.y += lo - py; root.updateMatrixWorld(true); }
+    }
     return true;
   }
   if (e.rest > 0) {
@@ -4507,7 +4533,7 @@ function rstBegin(s, mode = 'dawn', o = {}) {
   rstAbort();
   const together = rstTogether(s), L = rstLayout(s);
   Object.assign(R, { on: true, s, mode, together, L, applied: false, skip: false, hold4: 0, line: null, log: [], storm: world.env.storm > 0.5, speed: 1,
-    t0: S.time, hours: mode === 'nap' ? 2 : (((6.3 - S.time) % 24) + 24) % 24 || 24, dayDone: false, dream: false, morning: false, wpnWoke: false,
+    t0: S.time, hours: mode === 'nap' ? 2 : (((6.3 - S.time) % 24) + 24) % 24 || 24, dayDone: false, dream: false, morning: false, wpnWoke: false, upCut: false,
     hp0: S.hp, close0: S.close, eve: S.c.mealDay === S.day || S.c.satDay === S.day, first: !S.c.restSeen, out: null, nOut: null, comfort: rstComfort(s, together),
     dolly: false, skipping: false, dip: 0, holdPt: null, lastLook: null, kidsIn: false, released: false, hutOut: false, glowPos: null, skipSpeed: 0, lastNow: 0, ext: false });
   R.t1 = (R.t0 + R.hours) % 24; R.tier = rstTier(R.comfort);
@@ -4679,9 +4705,24 @@ function rstStartWake() {
   }
   if (R.ext) { $('restdip').classList.add('on'); setTimeout(() => $('restdip').classList.remove('on'), 120); }
 }
+const RST_UPCUT = 0.9;   // ARC-A3r6: on a raised bed, seconds of the waking shot (both still lying) before the dip-cut to them on their feet
 function rstWakeTick(dt) {
   const L = R.L, t = R.t, tog = R.together;
   dt *= R.speed;                                                                    // a skipped night wakes at 1.5×
+  // ARC-A3r6 (verifier a3vfin: on the house's raised bed the lie->sit-on-the-edge blend lifted Sena as a stiff plank,
+  // legs straight out past the bed over the floor, and Aro sat on the edge with his back to the lens). On a raised bed
+  // there is no blended get-up: the shot holds on them waking under the blanket, then a dip to black cuts to the two of
+  // them already standing beside the bed, turned to the room. Low beds (hut, floor, cave) keep the kneel-up.
+  if (!L.low && !R.upCut) {
+    for (const e of tog ? [P, N] : [P]) if (e.lie) { e.lieW = 1; e.L.hold = Math.max(0, e.L.hold - dt * 4); }
+    if (t < RST_UPCUT) { rstDrape(1); return rstWakeRest(dt, t, L); }
+    R.upCut = true; dipCut();
+    for (const e of tog ? [P, N] : [P]) {
+      const pl = e.L; if (!e.lie && pl.up) continue;
+      e.lie = false; e.lieW = 0; e.pos.copy(pl.sitPos); e.pos.y = L.floorY; e.face = L.yaw; e.speed = 0; e.path = null;
+      e.h.pose = null; pl.up = true; if (pl.rollW != null) pl.rollW = 0;
+    }
+  }
   for (const [e, t0] of tog ? [[P, 0], [N, 0.6]] : [[P, 0]]) {
     const u = t - t0;
     if (u < 0) continue;
@@ -4695,6 +4736,7 @@ function rstWakeTick(dt) {
     } else if (!pl.up && u2 > 0.85) {                                               // stand up beside the bed
       pl.up = true; if (!L.low) e.h.swing('standUp'); e.h.pose = null;
     } else if (pl.up) {
+      if (e.stretch < 0 && !L.low) e.face = turn(e.face, L.yaw, Math.min(1, dt * 2.2));   // ARC-A3r5: on his feet he turns to the room at once (he stood with his back to the wake camera, facing the wall)
       if (e.stretch < 0 && u2 > 1.45) { e.stretch = 0; if (e === P) A.tone(180, 0.6, 0.02); else A.tone(240, 0.6, 0.015); }
       if (e.stretch >= 0 && e.stretch <= 1) { e.stretch = Math.min(1.01, e.stretch + dt / 1.1); e.face = turn(e.face, L.yaw, Math.min(1, dt * 2.5)); }
       // Aro then takes a few steps toward the door, where the camera hands back to the player
@@ -4703,7 +4745,10 @@ function rstWakeTick(dt) {
       else if (e === P && pl.exit) e.face = turn(e.face, L.yaw, Math.min(1, dt * 4));
     }
   }
-  rstDrape(Math.max(0, 1 - t / 1.2));
+  rstDrape(R.upCut ? 0 : Math.max(0, 1 - t / 1.2));
+  return rstWakeRest(dt, t, L);
+}
+function rstWakeRest(dt, t, L) {
   if (!R.wpnWoke && (P.L.exit || t > 3.2)) { R.wpnWoke = true; if (typeof wpnWake === 'function') wpnWake(); }   // WPN: he gathers his things as he heads out
   if (!R.morning && t > 1.5) {
     R.morning = true;
@@ -6991,7 +7036,7 @@ function romBench(s) {
   const ax = P.pos.x, az = P.pos.z, h = S.close >= ROMD.GATE.beloved ? 0.27 : 0.35;
   P.pos.set(ax + lx * h, 0, az + lz * h); N.pos.set(ax - lx * h, 0, az - lz * h);
   P.face = Math.atan2(s.x - P.pos.x, s.z - P.pos.z); N.face = Math.atan2(s.x - N.pos.x, s.z - N.pos.z);
-  N.fire = [s.x, s.z];
+  N.fire = [s.x, s.z, s.group.position.y];        // CAVE-SIT
   ROM.bench = true; ROM.benchHead = S.close >= ROMD.GATE.beloved;
   const rx = -Math.cos(P.face), rz = Math.sin(P.face);
   ROM.benchSideP = (N.pos.x - P.pos.x) * rx + (N.pos.z - P.pos.z) * rz > 0 ? 'r' : 'l';
@@ -7074,13 +7119,30 @@ async function romNight(s) {
   const mid = new THREE.Vector3().addVectors(P.pos, N.pos).multiplyScalar(0.5);
   // side-on two-shot at 1.5 m, on whichever side of the couple stays inside the room (a fixed spot ended up behind Aro)
   const ux = N.pos.x - P.pos.x, uz = N.pos.z - P.pos.z, ul = Math.hypot(ux, uz) || 1, room = (q) => { const [x, z] = rstLocal(s, q); return Math.min(2.5 - Math.abs(x), 1.9 - Math.abs(z)); };
-  const sides = [1, -1].map((sg) => new THREE.Vector3(mid.x + (uz / ul) * sg * 1.5, ROM.nightFloor + 1.45, mid.z - (ux / ul) * sg * 1.5));
-  const kissCam = room(sides[0]) >= room(sides[1]) ? sides[0] : sides[1];
-  const scP = romSceneStart('kiss', { mid, keepCam: true, fade: false, camPos: kissCam, camLook: new THREE.Vector3(mid.x, ROM.nightFloor + 1.5, mid.z), dur: 3.6 });
+  // ARC-A3r5: the lens is picked from a fan of spots round the side-on line (not just the two straight sides): it must
+  // stand well inside the walls, keep a clear line (no wall, bed or cradle: structCam pulled a blocked lens to 0.5 m, a
+  // black frame inside a body), and it prefers the hearth's side, so the faces it sees are the fire-lit ones. It cuts
+  // there (a 0.9 s dolly from the hearth shot swept the lens through the two of them).
+  const kLook = new THREE.Vector3(mid.x, ROM.nightFloor + 1.5, mid.z), hw = W3(hx);
+  let kissCam = null, kBest = -1e9;
+  for (const sg of [1, -1]) for (const da of [0, 0.3, -0.3, 0.55, -0.55]) for (const dist of [1.6, 1.35]) {
+    const a0 = Math.atan2((uz / ul) * sg, -(ux / ul) * sg) + da;
+    const q = new THREE.Vector3(mid.x + Math.sin(a0) * dist, ROM.nightFloor + 1.45, mid.z + Math.cos(a0) * dist);
+    const rm = room(q); if (rm < 0.25) continue;
+    const pulled = q.clone(); structCam(kLook, pulled); if (pulled.distanceTo(q) > 0.05) continue;
+    if (!arcSeen(q, [kLook], [P.h.root, N.h.root])) continue;
+    const hd = Math.hypot(hw.x - mid.x, hw.z - mid.z) || 1, lit = ((q.x - mid.x) * (hw.x - mid.x) + (q.z - mid.z) * (hw.z - mid.z)) / (dist * hd);
+    const sc = Math.min(rm, 0.8) + lit * 0.6 - Math.abs(da) * 0.5 + (dist > 1.5 ? 0.15 : 0);
+    if (sc > kBest) { kBest = sc; kissCam = q; }
+  }
+  if (!kissCam) { const sides = [1, -1].map((sg) => new THREE.Vector3(mid.x + (uz / ul) * sg * 1.5, ROM.nightFloor + 1.45, mid.z - (ux / ul) * sg * 1.5)); kissCam = room(sides[0]) >= room(sides[1]) ? sides[0] : sides[1]; }
+  romKissFill(true, kissCam, kLook);
+  const scP = romSceneStart('kiss', { mid, keepCam: true, fade: false, cut: true, camPos: kissCam, camLook: kLook, dur: 3.6 });
   // the kiss is cut short by the fade: black over the embrace, then the card
   await romSleep(2300);
   $('fade-text').textContent = S.arc?.season === 'winter' ? ROMD.L.nightCardWinter : ROMD.L.nightCard; $('fade').classList.add('on');
   await scP;
+  romKissFill(false);
   await romSleep(1300);
   busy = false;
   ROM.nightFloor = null; N.jy = 0; P.jy = 0;
@@ -7312,7 +7374,7 @@ function romSena(dt) {
   if (!playing) return false;
   const wdt = romWall();
   romTick(dt);
-  if (ROM.nightFloor != null) { N.jy = ROM.nightFloor - getHeight(N.pos.x, N.pos.z); P.pos.y = ROM.nightFloor; P.h.root.position.y = P.pos.y; }   // the night scene: on the house floor
+  if (ROM.nightFloor != null) { N.jy = ROM.nightFloor - getHeight(N.pos.x, N.pos.z); P.jy = ROM.nightFloor - getHeight(P.pos.x, P.pos.z); P.pos.y = ROM.nightFloor; P.h.root.position.y = P.pos.y; }   // the night scene: on the house floor (ARC-A3r5: P.jy too, so he is posed at the floor: his arms were solved 0.56 m low on the slope, then lifted: his hands flew up over her head)
   if (ROM.scene) { romSceneTick(wdt, dt); return true; }
   if (ROM.nightCrouch) { N.speed = 0; settle(N, dt, true); return true; }
   if (ROM.nightOn) { N.speed = 0; settle(N, dt, false); return true; }
@@ -9082,6 +9144,19 @@ function arcTamuHome() {
   if (e.wound) { e.wound.parent?.remove(e.wound); e.wound = null; }
   if (e.mode === 'dead') return;
   e.pos.set(w.x, 0, w.z); e.face = Math.atan2(f.x - w.x, f.z - w.z); e.mode = 'sit'; e.jy = -0.44; e.talk = false;
+  // ARC-A3r5: at the campfire he gets his own log (he sat in mid-air in a squat with nothing under him): a third bench
+  // across the fire's +z side, the same 0.45 m log as the two benches; his root goes 0.3 m toward the fire (the sit
+  // clip's hips sit behind its root, as for Sena on her bench), on the ground (jy 0) so the hips land on the log.
+  if (f.kind === 'fire' && f.group) {
+    if (!f.tamuLog) {
+      const g = new THREE.Group(), lg = new THREE.Mesh(new THREE.CylinderGeometry(0.18, 0.18, 1.3, 8), ARCM.wood);
+      lg.rotation.z = Math.PI / 2; lg.position.set(0, 0.27, 2.45); lg.castShadow = lg.receiveShadow = true; g.add(lg);
+      for (const sx of [-0.42, 0.42]) { const r = new THREE.Mesh(new THREE.DodecahedronGeometry(1, 0), ARCM.stone); r.position.set(sx, 0.06, 2.45); r.scale.set(0.13, 0.1, 0.16); g.add(r); }
+      f.group.add(g); f.tamuLog = g;
+    }
+    const s = toWorld(f, [0, 0, 2.15]);
+    e.pos.set(s.x, 0, s.z); e.jy = 0;
+  }
 }
 async function arcTamuFound() {
   const A = S.arc, L = ARCD.L.outcast, t = arcGet('tamu');

@@ -1,3 +1,15 @@
+# UPDATE 2026-11-20: last fix pass (workflow "A-last-five")
+A focused pass targeted the 5 open items. An independent verifier then re-checked them (evidence in `../hb-scratch/shots/a3vfin/`).
+- **FIXED, verified:**
+  - jog brief blocker: `senaLoin()` in people.js adds a hide loincloth layer over the brief texels; 0 brief pixels in 56 frames;
+  - cave-fire seat (`CAVE-SIT`, `FIRE_SIT_IN`);
+  - Tamu mid-air in the jealousy scene;
+  - romance-night kiss camera.
+- **STILL OPEN:**
+  1. **Content rule (new):** the base-mesh bra shows as a dark lace strip above Sena's breast band in every pose (`a3vfin/chest_0.jpg`, `chest_1.jpg`). Fix it like `senaLoin()`: a hide layer over the bra texels, or a raised band edge.
+  2. **Romance-night morning:** Sena no longer sinks, but she rises as a stiff plank. She floats above the bed with her legs out over the floor (`a3vfin/nb_w45.png`, `nn_up2.png`), and Aro still faces the wall. She needs a real sit-up or roll-out, or the shot should cut past it.
+- Tests: build passes; play.json 45/45, errors=0.
+
 # Workflow A: open items after the final round (A3, 2026-11-20)
 
 Workflow A built, QA'd, fixed and verified the mature packages: GORE, SURV, CMB, ARC, ROM+MUS and BOW. There were 3 independent verify rounds per area.
