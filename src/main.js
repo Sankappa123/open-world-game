@@ -5417,6 +5417,14 @@ function matEndTick(dt) {
       E.relax ||= samplePose(h, 'idle', 0, (b) => /^(thumb|index|middle|ring|pinky)_0[1-3]_[lr]$/.test(b));
       applyPose(h, E.relax, hw * 0.85, (b) => b.endsWith('_' + cs));
       // (the other hand stays on her knee, as the kneeling frame has it: reaching it across to a hand or shoulder folded the arm)
+      // MAT-GRIEF A3r4: the kneeling frame's other hand hangs down in front of the body; over a lying partner it landed on
+      // their upper chest (Aro's hand on Sena's breast-band). It rests on the mourner's own thigh above the knee instead.
+      const os = cs === 'r' ? 'l' : 'r', th = h.bones['thigh_' + os], kn = h.bones['calf_' + os];
+      if (th && kn) {
+        th.getWorldPosition(_mPt); kn.getWorldPosition(_mDir); _mPt.lerp(_mDir, 0.72); _mPt.y += 0.08;
+        _mDir.copy(_mPt); _mDir.y += 0.35; _mDir.x -= rX * sg * 0.45; _mDir.z -= rZ * sg * 0.45;   // the elbow out to that side
+        ik2(h, os, _mPt, _mDir, hw);
+      }
     });
   }
   if (fallen === P) settle(P, dt, false); else { P.h.pose = 'work'; settle(P, dt, false); }
@@ -7098,7 +7106,8 @@ async function romNight(s) {
   if (ok && R.on && R.phase === 'wake' && R.speed === 0) {
     await romSleep(1400);                            // the fade is up
     const m = ROM.nightLine; ROM.nightLine = null;
-    if (m) { say('Sena', m); await romWaitSubs(9000); await romSleep(500); }
+    if (m) say('Sena', m);
+    await romWaitSubs(16000); await romSleep(500);   // ARC-A3r4: every queued morning line ends in bed (a 9 s cap got them up mid-line)
     if (R.on && R.phase === 'wake') { R.speed = 1; R.lastLook = null; rstShot(R.L.cam.wake, R.L.cam.wakeLook, 0.01, true); }
   }
   return ok;
@@ -7120,8 +7129,11 @@ on('rested', (e) => {
   ROM.nightPending = false;
   S.rom.contentUntil = S.gh + 16;
   addClose(3, 'a night together');
-  if (ROM.nightOn) ROM.nightLine = ROMD.L.nightMorning; else say('Sena', ROMD.L.nightMorning);   // ARC-A3r3: under the night's card, romNight says it once the card lifts on the two of them in bed
-  R.morning = ROMD.L.nightMorning;
+  // ARC-A3r4: the first night in their own bed already has her line (FIRST_HOME, said by rstApply): one morning line, in bed
+  // (both queued: 'Our own bed' took the in-bed hold and 'smiling in your sleep' played after they got up, Aro at the wall)
+  const firstHome = R.morning === FIRST_HOME;
+  if (!firstHome) { if (ROM.nightOn) ROM.nightLine = ROMD.L.nightMorning; else say('Sena', ROMD.L.nightMorning); }   // ARC-A3r3: under the night's card, romNight says it once the card lifts on the two of them in bed
+  if (!firstHome) R.morning = ROMD.L.nightMorning;
   setTimeout(() => toast('Content: the cold bites less today'), 2500);
 }, 90);
 function romChillK() { return S.rom?.contentUntil > S.gh ? 0.8 : 1; }
@@ -8546,7 +8558,7 @@ function arcAshHands(h, k) {
   m.onBeforeCompile = (sh, r) => {
     prev?.call(m, sh, r);
     sh.vertexShader = 'attribute float aAsh;\nvarying float vAsh;\n' + sh.vertexShader.replace('#include <begin_vertex>', '#include <begin_vertex>\n vAsh = aAsh;');
-    sh.fragmentShader = 'varying float vAsh;\n' + sh.fragmentShader.replace('#include <map_fragment>', '#include <map_fragment>\n diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.58, 0.57, 0.55), vAsh);');
+    sh.fragmentShader = 'varying float vAsh;\n' + sh.fragmentShader.replace('#include <map_fragment>', '#include <map_fragment>\n { float aL = dot(diffuseColor.rgb, vec3(0.3, 0.59, 0.11)); vec3 aC = mix(diffuseColor.rgb, vec3(aL) * vec3(1.0, 0.97, 0.93), 0.8) * 0.78 + vec3(0.035, 0.034, 0.032); diffuseColor.rgb = mix(diffuseColor.rgb, aC, vAsh * 0.9); }');   // ARC-A3r4: ash rubbed into the skin (greyed and dulled, its own texture and shading kept), not a flat light grey (hands and forearms read white and untextured)
   };
   const key0 = m.customProgramCacheKey?.() || '';
   m.customProgramCacheKey = () => key0 + '-arcash';
@@ -9551,10 +9563,14 @@ function arcBodyClear(x, z, a) {
   return true;
 }
 // Sena's spot near (x, z) and an angle round her where a body lies clear (spec: he falls in front of her).
-function arcPairSpot(x, z, bodyD = 1.1) {
+function arcPairSpot(x, z, bodyD = 1.1, fireD = 0) {
+  // ARC-A3r4: fireD: this far from any lit fire ring, so a low shot of the two of them has a lens spot with the ring and its
+  // bench logs out of the frame (3.7 m from it, every lens had a log's black end in the frame's edge)
+  const fires = fireD ? structs.filter((q) => q.kind === 'fire' && q.rise > 0.2) : [];
   for (const rr of [0, 1.5, 3, 4.5, 6, 8]) for (let k = 0; k < (rr ? 10 : 1); k++) {
     const nx = x + Math.sin(k * 0.628) * rr, nz = z + Math.cos(k * 0.628) * rr;
     if (!arcClearAt(nx, nz, 0.45)) continue;
+    if (fires.some((q) => Math.hypot(q.x - nx, q.z - nz) < fireD)) continue;
     for (let j = 0; j < 8; j++) {
       const a = j * Math.PI / 4, bx = nx + Math.sin(a) * bodyD, bz = nz + Math.cos(a) * bodyD;
       if (arcBodyClear(bx, bz, a + Math.PI / 2)) return { nx, nz, bx, bz, a };
@@ -9592,11 +9608,12 @@ function arcLowShot(x1, z1, x2, z2, t = 60, o = {}) {
   // the head end the thrown-back head and flung arms read as a body face down)
   let fdx = 0, fdz = 0, kx = 0, kz = 0;
   if (o.face) { const B = o.face.bones; B.pelvis.getWorldPosition(_alP); B.spine_03.getWorldPosition(_alC); const l = Math.hypot(_alP.x - _alC.x, _alP.z - _alC.z) || 1; fdx = (_alP.x - _alC.x) / l; fdz = (_alP.z - _alC.z) / l; const kl = Math.hypot(x2 - x1, z2 - z1) || 1; kx = (x2 - x1) / kl; kz = (z2 - z1) / kl; }
-  let best = null, bs = -1e9;
+  let best = null, bs = -1e9; ARCS.lowDbg = [];
+  const lcx = tgt.reduce((s, v) => s + v.x, 0) / tgt.length, lcz = tgt.reduce((s, v) => s + v.z, 0) / tgt.length;   // ARC-A3r4: where the lens will aim
   for (const d of [o.d || 2.9, (o.d || 2.9) + 0.8]) for (const sw of [0, Math.PI, 0.5, -0.5, Math.PI + 0.5, Math.PI - 0.5, 1.0, -1.0, 1.5, -1.5]) {
     const b = a + Math.PI / 2 + sw, px = mx + Math.sin(b) * d, pz = mz + Math.cos(b) * d, py = Math.max(getHeight(px, pz), 0.2) + yH;
     let sc = -Math.abs(Math.sin(sw)) * 2 - (d > (o.d || 2.9) ? 0.6 : 0);
-    if (o.face) sc += 3 * (Math.sin(b) * fdx + Math.cos(b) * fdz) + 0.8 * (Math.sin(b) * kx + Math.cos(b) * kz) + (Math.abs(Math.sin(sw)) < 0.6 && Math.abs(Math.sin(sw)) > 0.3 ? 2.2 : 0);   // a three-quarter view from the feet
+    if (o.face) sc += (o.fw ?? 3) * (Math.sin(b) * fdx + Math.cos(b) * fdz) + (o.kw ?? 0.8) * (Math.sin(b) * kx + Math.cos(b) * kz) + (Math.abs(Math.sin(sw)) < 0.6 && Math.abs(Math.sin(sw)) > 0.3 ? 2.2 : 0);   // a three-quarter view from the feet (ARC-A3r4: o.fw/o.kw weigh the feet and the side away from the kneeler)
     if (!arcClearAt(px, pz, 0.3)) sc -= 5;
     for (const q of structs) if (q.kind === 'fire' && q.rise > 0.2) {   // never through the fire ring, its logs and benches
       const L = Math.hypot(px - mx, pz - mz) || 1, u = clamp(((q.x - mx) * (px - mx) + (q.z - mz) * (pz - mz)) / (L * L), 0, 1);
@@ -9604,10 +9621,15 @@ function arcLowShot(x1, z1, x2, z2, t = 60, o = {}) {
       // ARC-A3r3: nor with the ring and its bench logs in the frame's edge near the lens (a log's black end stood in the left of Tamu's shot)
       const fq = Math.hypot(q.x - px, q.z - pz), cosA = ((q.x - px) * (mx - px) + (q.z - pz) * (mz - pz)) / ((fq || 1) * L);
       if (fq < 2.6 || (fq < 5.5 && cosA > 0.62)) sc -= 5;
+      // ARC-A3r4: nor anywhere in the frame up close: the ring with its bench logs (~1.7 m round) against the lens's real aim
+      // (the middle of everyone in it) and the half-width of a 16:9 frame (~45 deg); the logs' black ends stood in its edge
+      { const ax = lcx - px, az = lcz - pz, al = Math.hypot(ax, az) || 1, ang = Math.acos(clamp(((q.x - px) * ax + (q.z - pz) * az) / ((fq || 1) * al), -1, 1));
+        if (fq < 7.5 && ang - Math.asin(Math.min(1, 1.7 / Math.max(fq, 0.01))) < 0.86) sc -= 4; }
     }
     if (arcCamBlocked(mx, mz, px, pz)) sc -= 6;
     if (arcLineHits(mx, mz, px, pz, null)) sc -= 3;
     if (sc > bs - 8 && !arcSeen(new THREE.Vector3(px, py, pz), tgt, o.skip || [])) sc -= 8;
+    (ARCS.lowDbg ||= []).push([+px.toFixed(2), +pz.toFixed(2), +sc.toFixed(2)]);   // ARC-A3r4: debug (G.arcDbg.low())
     if (sc > bs) { bs = sc; best = [px, pz]; }
   }
   const cx = tgt.reduce((s, v) => s + v.x, 0) / tgt.length, cz = tgt.reduce((s, v) => s + v.z, 0) / tgt.length;   // aimed at the middle of everyone in it
@@ -9616,7 +9638,7 @@ function arcLowShot(x1, z1, x2, z2, t = 60, o = {}) {
 function arcTamuFall() {
   const t = arcGet('tamu') || (arcTamuHome(), arcGet('tamu')); if (!t) return;
   t.hidden = false; t.h.spear.visible = false;
-  const sp = arcPairSpot(N.pos.x, N.pos.z) || { nx: N.pos.x, nz: N.pos.z, bx: N.pos.x + 1.1, bz: N.pos.z, a: Math.PI / 2 };
+  const sp = arcPairSpot(N.pos.x, N.pos.z, 1.1, 6.5) || arcPairSpot(N.pos.x, N.pos.z) || { nx: N.pos.x, nz: N.pos.z, bx: N.pos.x + 1.1, bz: N.pos.z, a: Math.PI / 2 };   // ARC-A3r4: clear of the fire ring
   N.pos.set(sp.nx, 0, sp.nz); N.speed = 0; N.path = null; N.node = null;
   t.pos.set(sp.bx, 0, sp.bz); t.face = sp.a + Math.PI / 2; t.mode = 'stand'; arcDead(t);
   world.clear((sp.bx + sp.nx) / 2, (sp.bz + sp.nz) / 2, 2.6);   // ARC-A3: the grass trodden flat round them (blades hid his face)
@@ -9699,7 +9721,7 @@ function arcNHoldTick(dt) {
 // ARC-FIX4: the raid's dawn: Sena on the ground with the spear wound, Aro kneeling over her ('Sena, look at me. Stay
 // awake.'); after her line she gets up, slowly, insisting it is nothing (the fever chapter opens on 'only a scratch').
 function arcDawnStage(h) {
-  const sp = arcPairSpot(h.x + 4, h.z + 3.8, 0.01) || { nx: h.x + 4, nz: h.z + 3.8 };
+  const sp = arcPairSpot(h.x + 4, h.z + 3.8, 0.01, 6.5) || arcPairSpot(h.x + 4, h.z + 3.8, 0.01) || { nx: h.x + 4, nz: h.z + 3.8 };   // ARC-A3r4: clear of the fire ring
   N.pos.set(sp.nx, 0, sp.nz); N.speed = 0; N.path = null; N.node = null;
   for (let j = 0; j < 8; j++) { const a = j * Math.PI / 4; if (arcBodyClear(sp.nx, sp.nz, a)) { N.face = a; break; } }
   N.h.pose = null; N.matUp = 0; matLieStart(N, true); N.matStill = false;
@@ -10346,6 +10368,7 @@ function arcHooks(G) {
     fever: (v) => (v == null ? S.arc.fever : arcFeverSet(v)),
     goalsOf: (id) => goalsOf(id ? CH[chIdx(id)] : CH[S.ch]).map(([l, f]) => [l, !!f()]),
     arcDbg: {
+      low: () => ARCS.lowDbg || null,                // ARC-A3r4: the last arcLowShot's candidates [x, z, score]
       state: () => ({ scene: ARCS.scene, season: S.arc.season, snow: +ARCS.uSnow.value.toFixed(2), autumn: +ARCS.uAutumn.value.toFixed(2), raidOn: ARCS.raidOn, vigil: ARCS.vigil,
         npcs: ARCS.npcs.map((e) => ({ id: e.id, mode: e.mode, hidden: !!e.hidden, child: !!e.child, x: +e.pos.x.toFixed(1), z: +e.pos.z.toFixed(1) })), props: Object.keys(ARCS.props),
         choice: MAT.choice?.id || null, card: [$('card-sub')?.textContent, $('card-season')?.textContent, $('card-recap')?.textContent] }),

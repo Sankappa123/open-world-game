@@ -66,39 +66,34 @@ The user asked for a 21+ game.
 - They tend to restart or close sessions. Commit WIP before long runs, and commit again at checkpoints.
 - Never start a new game or click "New story" without `/api/` interception. Never touch their real save except at their explicit request.
 
-## Status (updated 2026-11-19 ~06:30, M4 Air; STOPPED by the user). RESUME HERE
-**Workflow A is about 96% done.** Only the final round is left: script `docs/dev/workflows/A3-final.js`.
-- It runs an independent verify of 4 areas (gore-cmb, arc-rom-mus, mat-surv, bow-limits), then at most 2 fix and re-verify rounds, then the wrap-up (build, play/play_survivor/bow/old tests, update this file, write `docs/dev/a-open-items.md`).
-- On "continue": run it fresh with the Workflow tool (scriptPath = that file). Nothing from the cut-off runs is cached; the agents reuse the harnesses and shots in `../hb-scratch/tests` and `../hb-scratch/shots` (a3story, a3ms, a3bow, v8gc, v9gc, a3vb).
-- Two attempts (2026-11-18 21:45 and 2026-11-19 05:56) were cut by the 5-hour usage limit and by a user stop. Both were read-only, so no code was lost. Each verifier takes about 2 h on this machine.
-- Before relaunching, check for stale test servers and headless Chrome (`ps -eo pid,args | grep -E "hb-scratch/tests|remote-debugging-port=94"`) and stop them by PID. They slow the Mac badly and hold ports.
-- Early finding to fix: after a revive, Sena stands inside Aro's body (mat-surv).
-- Known open items per area are listed in A3-final.js (the `open:` fields).
+## Status (updated 2026-11-20, M4 Air). RESUME HERE
+**Workflow A is finished: all 3 verify rounds ran. 2 of the 4 areas pass; 3 items are still open.** The full list is in **`docs/dev/a-open-items.md`**.
+- **Passed:**
+  - gore-cmb: all known items, plus the M2 and M4 acceptance items;
+  - mat-surv: rescue, Hardcore reload, the 21+ gate, the grief camera and the water-down shot.
+- **Still failing:**
+  - **Blocker (SENA-LOOK):** when Sena jogs toward a hip-height camera, the black base-mesh brief shows under the flared skirt front. The skirt front also reads as a stiff card.
+  - Romance-night morning (arc-rom-mus): Sena sinks about 0.3 m through the bed as she gets up.
+  - Jealousy scene (arc-rom-mus): Tamu sits in mid-air.
+- **New majors:**
+  - the romance-night kiss camera is blocked or dark;
+  - at a cave fire, Sena's shins pass through the seat log.
+- There are about 16 minor polish items, listed by area in `a-open-items.md`.
+- **Tests at the wrap-up** (snapshot of the working tree, ports 5225 and 9425, all /api/ intercepted):
+  - `npm run build` passes;
+  - play.json 45/45, play_survivor.json 54/54, bow.json 10/10 and old.json 9/9, all with errors=0 and fails=0.
+  - play.json has a known flaky step: "smoke -> outcast" failed in 1 of 2 runs during verification.
+- The agent log for all A rounds is in `docs/dev/progress-log-mature.md`, a copy of `../hb-scratch/progress.md`.
+- **NEXT:**
+  1. A short fix pass for the 3 fails and 2 majors above, starting with the SENA-LOOK blocker. Ask the user whether to run it now.
+  2. Then the **Viking "Book II: The Sea Road"** (`docs/dev/spec-viking.md`). **Ask the user the 4 questions in §0 first.**
+  3. Then the backlog (`docs/dev/spec-mature.md` §1.2).
+- Before any test run, stop stale test servers and headless Chrome by PID. Find them with `ps -eo pid,args | grep -E "hb-scratch/tests|remote-debugging-port=94"`.
+- **Sena's look (USER DECISION, 2026-11-17):** a revealing hide two-piece, not the dress. It is `SENA-LOOK` in people.js and main.js: a breast-band, a hip-slung mid-thigh skirt and a bead necklace. It stays within the content limits. Never revert her to the dress. No base-mesh underwear may show in any pose.
+- Agents run on the session model (Opus). Fable needs paid usage credits; do not use it unless the user buys credits. On the user's plan, run about 2 agents at a time.
 
 ### Older status, kept for history
-**Workflow A is about 90% done and PAUSED.** On "continue", relaunch it. Do not ask any questions first.
-- Script: `docs/dev/workflows/A2-mature-finish-pro.js`. In the same Claude session, use `resumeFromRunId: "wf_667b3159-507"`. In a NEW session or account, run it fresh: finished packages re-check the code on disk quickly and continue.
-- Agents run on the session model (Opus). **Fable needs paid usage credits now. Do not use Fable unless the user buys credits.**
-- Concurrency: CAP 2 for builders and QA, FAST 4 for fixers and verifiers.
-- **Done (all committed):**
-  - M2 GORE, M3 SURV, M4 CMB (bow vs predators and raiders), M5 ARC phases B and C (the full story end to end; play.json passes 45 checks), M6 ROM+MUS, BOW finish (first-person bow, rock break, tests);
-  - QA found 41 issues; the fixers fixed them;
-  - independent verification round 1: gore-cmb 34/38, mat-surv 27/31, arc-rom-mus 16/21, bow-limits 12/16;
-  - round-2 re-fixes are done for gore-cmb and bow-limits.
-- **Left:**
-  - round-2 re-fixes for arc-rom-mus (lake embrace cut by the chapter advance, Tamu dies off screen, scene cameras) and mat-surv (Hardcore reload escape, 21+ gate, play.json on Story);
-  - the round-2 re-verify for all 4 areas;
-  - at most one more fix and verify round;
-  - then the wrap-up: build, commit, push, update this file.
-- **Sena's look (USER DECISION, 2026-11-17):** a revealing hide two-piece, not the dress. It is `SENA-LOOK` in people.js and main.js: a breast-band, a hip-slung mid-thigh skirt, and a bead necklace. It stays within the content limits (no nudity, nothing sexual).
-  - Known polish item: a strip of the base-mesh underwear shows between the band and the low skirt at the hips. Raise the skirt or cover it.
-  - Never revert her to the dress.
-- Usage: the user's plan hits the 5-hour limit roughly every 2-3 hours of agent work. In a live session, an hourly cron check relaunches A after each reset (session-only; recreate it in a new session).
-- Agent notes: `../hb-scratch/progress.md`. Agents must ignore chat status questions; the `FOCUS` suffix in the script handles this.
-
-**(Answered on 2026-11-16; kept for history.)** When the user says "continue" (or "I'm back"), do NOT start anything. FIRST ask these 2 questions and wait for the answers:
-1. **Which machine runs workflow A?** The M4 MacBook Air, the Mac mini M1 (8 GB RAM, so 2 agents and a long run), or the Asus A15 (GTX 1650, 16 GB+, needs a setup test first).
-2. **Clear the open B items first** (`docs/dev/b-open-items.md`), **or go straight to A?**
+- Workflow A ran as A-mature-finish.js, then A2-mature-finish-pro.js, then A3-final.js (all in `docs/dev/workflows/`). Each was cut several times by usage limits; no code was lost.
 
 **Workflow B is DONE.** QA, 2 fix rounds, then an independent verification with 3 fix and re-verify rounds, then a content-limit fix. Everything is committed and pushed.
 - The verification passed most items. Save and regressions passed 11/11. What is still open is listed in **`docs/dev/b-open-items.md`**:
@@ -108,11 +103,6 @@ The user asked for a 21+ game.
   - home: the blanket on the floor beds, and Sena's hearth seat clips the bed;
   - child faces: art polish.
 - **Content-limit fix (commit 67221c7):** children (Lio, Pell, the village kids) now have a real child body on the base mesh, modest child clothing, a swaddled newborn and their own bed. They were the adult female rig scaled down, in adult clothing. The child-safety judge passed it.
-
-**NEXT: workflow A** (`docs/dev/workflows/A-mature-finish.js`): finish the 5 mature packages GORE, SURV, CMB, ARC phase C, and ROM+MUS. Their partial code is on disk.
-- **Ask the user which machine runs A before preparing anything.** The options are this M4 Air, a Mac mini M1 (8 GB, so 2 agents and a long run), or an Asus A15 (GTX 1650, needs a setup test).
-- Use the strict verify loop from B for A as well: independent judges with fresh screenshots, fix until pass. See `docs/dev/workflows/D-B-verify.js` and the child-fix pattern.
-- The user may also choose to clear `b-open-items.md` first.
 
 **Open design question for Deril:** the style of the brick ruins and brick house.
 
@@ -143,16 +133,10 @@ The user asked for a 21+ game.
   - 5-tab settings.
 - **Save protection:** only port 5173 touches the real database. A double-start guard stops structures from being built twice.
 
-### What is partial (code on disk, not finished or tested; details in `docs/dev/where-agents-stopped.txt`)
-| Package | Where it stopped |
-|---|---|
-| M2 GORE (`gore.js`) | Logic and bear wounds done. Was running its visual test pass. |
-| M3 SURV (`survival.js`) | Unit tests pass. Was running its browser acceptance tests. |
-| M4 CMB (`combat.js`, `enemies.js`, `tribe.js`) | Fixed a null-attacker crash in the raider logic. Was writing acceptance scripts 5, 11 and 12. |
-| M5 ARC (`arc_data.js`) | Phase B mostly done (fever goal counters, migration tests). **Phase C (raid, fever, romance integration) not started.** |
-| M6 ROM+MUS (`romance.js`, `music.js`) | Was testing the heart-60 event, the fade setting and gifts. |
+### Mature packages (workflow A, 2026-11-16 to 2026-11-20)
+- M2 GORE (`gore.js`), M3 SURV (`survival.js`), M4 CMB (`combat.js`, `enemies.js`, `tribe.js`), M5 ARC (`arc_data.js`, phases B and C), M6 ROM+MUS (`romance.js`, `music.js`) and the bow are built, QA'd, fixed and verified. What is still open: `docs/dev/a-open-items.md`.
 
-### Top QA issues to fix (see `docs/dev/qa-round1-issues.json`)
+### QA round 1 issues (historical, from before workflow B; check `b-open-items.md` and `a-open-items.md` for what is still open)
 - **Help panel** is always on and covers subtitles, the E prompt, the first-person weapon and the inventory. Make it toggle with F1/H, or show contextual hints instead.
 - **Tame horse's E prompt** overrides "Sit with Sena", meals, revive and story beats. Fix the target priority.
 - **Caves:** pitch black past the torch; the mouth renders black from inside; white specks at gaps in the dome; the Echo Hollow entrance is buried under boulders.
