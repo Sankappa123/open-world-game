@@ -115,8 +115,17 @@ export function makeCarryBasket() {
   for (const y of [-0.1, 0, 0.1]) mesh(g, new THREE.TorusGeometry(0.155 + y * 0.09, 0.008, 4, 18), lashM, 0, y, 0).rotation.x = Math.PI / 2;   // woven bands
   mesh(g, new THREE.TorusGeometry(0.172, 0.014, 5, 18), lashM, 0, 0.16, 0).rotation.x = Math.PI / 2;                                             // rim
   for (let i = 0; i < 5; i++) { const s = mesh(g, cyl(0.008, 0.008, 0.3, 4), woodM, -0.08 + i * 0.04, 0.2, -0.03 + (i % 2) * 0.05); s.rotation.z = (i - 2) * 0.12; }   // sticks poking out
-  for (const x of [-0.08, 0.08]) {                                   // straps: up the side against the back, then over the shoulders
-    const st = mesh(g, new THREE.BoxGeometry(0.035, 0.42, 0.012), wrapM, x, 0.12, 0.17); st.rotation.x = 0.3;
+  // straps: up the side against the back, then over the shoulders.
+  // SENA-STRAP A3 (verifier A3 round 2: the old straight boards came out over her collarbones as two flat black cards):
+  // each strap is now a rounded hide cord that runs up the back, over the top of the shoulder beside the neck and ends
+  // on the front of the shoulder above the collarbone (+z points into her back; the points follow her measured skin about
+  // 1 cm off it).
+  for (const s of [-1, 1]) {
+    const pts = [[0.08, 0.0, 0.125], [0.09, 0.2, 0.082], [0.1, 0.279, 0.1], [0.1, 0.311, 0.145], [0.105, 0.305, 0.19], [0.11, 0.286, 0.225], [0.12, 0.252, 0.255]]
+      .map(([x, y, z]) => new THREE.Vector3(x * s, y, z));
+    const st = mesh(g, new THREE.TubeGeometry(new THREE.CatmullRomCurve3(pts), 24, 0.0085, 6, false), lashM);
+    st.castShadow = true;
+    mesh(g, new THREE.SphereGeometry(0.0085, 6, 4), lashM, pts[6].x, pts[6].y, pts[6].z);   // the cord's end
   }
   return g;
 }

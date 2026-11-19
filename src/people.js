@@ -947,7 +947,7 @@ function adultDress(model, body, bones, who, color, style = null) {
     const rings = two ? [[0], [0.34], [0.67]] : [[yW, waist[0] + 0.022, waist[1] + 0.024, waist[2]]];
     rings.push([yH, hip[0] + 0.045, hip[1] + 0.05, cz]);
     for (let r = 1; r <= 4; r++) { const t = r / 4; rings.push([yH + (yK - yH) * t, hip[0] + 0.045 + (0.015 + 0.075 * fl) * t, hip[1] + 0.05 + (0.025 + 0.07 * fl) * t, cz]); }
-    const SEG = 36, vs = [], uv = [], ssi = [], ssw = [];
+    const SEG = 36, vs = [], uv = [], ssi = [], ssw = [], pushM = [];   // pushM: SENA-JOG A3 morphs (below)
     const lSide = Math.sign(bw('thigh_l').x - P0.x) || 1, iS = bi('spine_01'), yS = bw('spine_01').y;
     // SENA-LOOK r3 (verifier round 2): the skirt's top edge is not level. The base mesh's brief is cut low in front and
     // high over the hips and the small of the back, so a level hip-slung edge left it showing at the sides and behind
@@ -988,6 +988,18 @@ function adultDress(model, body, bones, who, color, style = null) {
       else if (!fem && ring !== rings[0]) { const b = Math.max(0, -Math.cos(a)), r = Math.hypot(x, z - zc); if (b > 0 && r > 1e-6) { const s = (r + 0.04 * Math.sqrt(b)) / r; x *= s; z = zc + (z - zc) * s; } }
       const hem = y === yK ? -0.012 * (0.5 + 0.5 * Math.sin(a * 9)) : 0;   // a cut hide hem: not a ruler-straight line
       const L = body.parent.worldToLocal(new THREE.Vector3(P0.x + x, y + hem, z)); vs.push(L.x, L.y, L.z); uv.push(k / SEG * 3, (y - yK) * 4);
+      if (two) {
+        // SENA-JOG A3 (verifier A3 round 2: jogging, the top of each thigh came 2-3 cm through the front of the skirt at
+        // the hip crease, where the cloth hangs from the pelvis): two corrective morphs, one per thigh, ease the front
+        // quarter of the skirt out over that thigh as it swings forward (skirtRig sets their weights). Full at the top
+        // and the hip ring, less toward the hem (which already follows the thigh).
+        const r = Math.hypot(x, z - zc) || 1, c = (z - zc) / r, s = x / r, hw = 1 - 0.6 * Math.max(0, Math.min(1, (yH - y) / (yH - yK)));
+        const W2 = body.parent.worldToLocal(new THREE.Vector3(P0.x + x + s * SENA_PUSH, y + hem, z + c * SENA_PUSH)).sub(L);
+        for (let m = 0; m < 2; m++) {
+          const ls = (m === 0 ? 1 : -1) * lSide, w = sm((c + 0.35) / 0.9) * sm(0.5 + s * ls * 2.6) * hw;
+          (pushM[m] ||= []).push(W2.x * w, W2.y * w, W2.z * w);
+        }
+      }
       const t = Math.max(0, Math.min(1, (yH - y) / (yH - yK)));
       if (two) {
         // SENA-LOOK r3: the front goes with the front drape bone of its side and the back with the back one (see
@@ -1011,11 +1023,12 @@ function adultDress(model, body, bones, who, color, style = null) {
     for (let r = 0; r < rings.length - 1; r++) for (let k = 0; k < SEG; k++) { const a = r * (SEG + 1) + k, b = a + SEG + 1; ix.push(a, b, a + 1, a + 1, b, b + 1); }
     sg = cache[key] = new THREE.BufferGeometry();
     sg.setAttribute('position', new THREE.Float32BufferAttribute(vs, 3)); sg.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2)); sg.setAttribute('skinIndex', new THREE.Uint16BufferAttribute(ssi, 4)); sg.setAttribute('skinWeight', new THREE.Float32BufferAttribute(ssw, 4)); sg.setIndex(ix); sg.computeVertexNormals();
+    if (two) { sg.morphTargetsRelative = true; sg.morphAttributes.position = pushM.map((d) => new THREE.Float32BufferAttribute(d, 3)); }   // SENA-JOG A3
   }
   const sk = new THREE.SkinnedMesh(sg, mat(fem ? 0.92 : 1)); sk.name = fem ? 'dressSkirt' : 'dressKilt';
   sk.castShadow = sk.receiveShadow = true; sk.frustumCulled = false;
   body.parent.add(sk); sk.updateMatrixWorld(true);
-  const rig = two ? skirtRig(bones) : null;                          // SENA-LOOK r3: four drape bones under the pelvis
+  const rig = two ? skirtRig(bones, sk) : null;                      // SENA-LOOK r3: four drape bones under the pelvis (SENA-JOG A3: and the push morphs)
   sk.bind(new THREE.Skeleton(rig ? [...body.skeleton.bones, ...rig.bones] : body.skeleton.bones));   // inverses from the rest pose (now)
   if (rig) out.rig = rig.update;
   out.skirt = sk; out.parts.push(sk);
@@ -1033,7 +1046,9 @@ const SENA_WAIST = 0.72, SENA_RISE = [0.03, 0.06, 0.03];
 // back L/R the same toward the trailing thigh; each takes its own thigh's sideways spread (riding). Seated, both
 // thighs are forward, so the whole skirt goes with them. update() runs as a late bone override.
 const SENA_WF = 0.96, SENA_DRAPE = 0.7, SENA_LAP = [0.8, 1.15, 0.03], SENA_SEATC = 0.85;   // SENA-SIT A3: SEATC (front centre, seated)
-function skirtRig(bones) {
+// SENA-JOG A3: the push morphs: SENA_PUSH metres out at full weight, reached at SENA_PUSHF radians of forward thigh swing
+const SENA_PUSH = 0.05, SENA_PUSHF = 0.55, SENA_SEATB = 0.5;   // SENA-SIT A3r2: SEATB, the back's share of the swing given up when seated
+function skirtRig(bones, mesh = null) {
   const pel = bones.pelvis, th = [bones.thigh_l, bones.thigh_r], V = THREE.Vector3;
   pel.updateWorldMatrix(true, false);
   const pq = pel.getWorldQuaternion(new THREE.Quaternion()).invert();
@@ -1062,10 +1077,18 @@ function skirtRig(bones) {
   const update = () => {
     const a = read(0, th[0].quaternion), b = read(1, th[1].quaternion), f = [a[0] - rest[0][0], b[0] - rest[1][0]], ab = [a[1] - rest[0][1], b[1] - rest[1][1]];
     const hi = Math.max(f[0], f[1]), lo = Math.min(f[0], f[1]), ff = [0, 0];
-    for (let i = 0; i < 2; i++) { ff[i] = f[i] + (hi - f[i]) * SENA_DRAPE; set(rb[i], i, ff[i], ab[i], -1); set(rb[2 + i], i, f[i] + (lo - f[i]) * SENA_DRAPE, ab[i], 1); }
+    // SENA-SIT A3r2 (verifier: seated, the skirt stood out round her as a stiff disc): seated, the back bones take only
+    // part of the thighs' swing, so the back hangs onto the seat and the sides fall away from the lap in a slope
+    const seatB = 1 - SENA_SEATB * sm01((lo - 0.6) / 0.6);
+    for (let i = 0; i < 2; i++) { ff[i] = f[i] + (hi - f[i]) * SENA_DRAPE; set(rb[i], i, ff[i], ab[i], -1); set(rb[2 + i], i, (f[i] + (lo - f[i]) * SENA_DRAPE) * seatB, ab[i], 1); }
     // front centre: the front bones' average swing; seated (the trailing thigh well forward too) it lets the middle
     // hang from the belt between the knees (SENA_SEATC of the swing taken off), a fold of hide over the lap's gap
     set(fc, 0, (ff[0] + ff[1]) / 2 * (1 - SENA_SEATC * sm01((lo - 0.6) / 0.6)), 0, -1, fcP);
+    // SENA-JOG A3: each thigh's push morph with its forward swing (and 0.6 of the leading one's: the front is taut); seated (both thighs well forward)
+    // it eases to 0.6 (thigh tops on the lap: 17 pokes up to 3 cm with none, 7 under 1 cm at 0.5). A high knee (over
+    // 0.9 rad) takes up to half as much again.
+    const mi = mesh?.morphTargetInfluences;
+    if (mi) { const seat = 1 - 0.4 * sm01((lo - 0.7) / 0.5); for (let i = 0; i < 2; i++) { const s = Math.max(f[i], hi * 0.6); mi[i] = (sm01(s / SENA_PUSHF) + 0.5 * sm01((s - 0.9) / 0.5)) * seat; } mesh.userData.flex = f; }
   };
   return { bones: rb, update };
 }

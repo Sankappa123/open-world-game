@@ -392,7 +392,7 @@ function showChapter() {
   $('card-title').textContent = ch.title;
   const recap = arcCard(ch);                         // ARC: the season line and last chapter's choices recap
   $('card').classList.add('on');
-  setTimeout(() => $('card').classList.remove('on'), recap ? 6200 : 3800);
+  clearTimeout(showChapter.tm); showChapter.tm = setTimeout(() => $('card').classList.remove('on'), recap ? 6200 : 3800);   // ARC-A3 r2: an earlier card's timer never cuts this one short
   if (!musicSting('chapter')) { A.tone(196, 2.5, 0.12); A.tone(294, 2.5, 0.09, 0.25); A.tone(392, 3, 0.07, 0.5); }   // MUS chapter stinger (the old triad when music is off)
   subT = Math.max(subT, 2.5);
   [...ch.lines, ...(ch.extra?.() || [])].forEach((l) => say(...l));
@@ -1374,7 +1374,7 @@ let hurtFlash = 0, packBite = 0;
 function banner(title, text) {
   if (matHoldBanner(title, text)) return;            // MAT-SV A3: never over DOWN, the rescue fade or the grief beat
   const el = $('event');
-  el.innerHTML = `<b>${title}</b>${text}`; el.classList.add('on');
+  el.innerHTML = `<b>${title}</b>${text}`; el.classList.add('on'); MAT.bannerOn = [title, text];   // MAT-SV A3r2: kept so a fall can hold it
   setTimeout(() => el.classList.remove('on'), 7000);
   A.tone(147, 2.4, 0.12); A.tone(220, 2.4, 0.08, 0.25);
 }
@@ -5152,7 +5152,7 @@ function downed(why) {
   if (N.ride) { N.ride = false; N.seat = null; N.h.pose = null; N.h.straddle = false; }
   $('downed').classList.toggle('nb', settings.blood === 'off'); $('downed').classList.add('on');
   $('downed-note').textContent = D().revive === 'daily' ? `Sena is coming · she has ${ITEMS[matDressing()].toLowerCase()}` : 'Sena is coming';
-  $('event').classList.remove('on'); MAT.bannerQ = null;   // MAT-SV A3: no "Discovered" banner over DOWN
+  MAT.bannerQ = $('event').classList.contains('on') && MAT.bannerOn ? MAT.bannerOn : null; $('event').classList.remove('on');   // MAT-SV A3: no "Discovered" banner over DOWN (A3r2: one on screen as he falls waits until he is up)
   subs.length = 0; subT = 0; clearToasts(); say('Sena', matPick(Math.hypot(N.pos.x - P.pos.x, N.pos.z - P.pos.z) < 12 ? DOWN_NEAR : DOWN_LINES));   // MAT-SV: toasts cleared too; A3: "I am coming" only when she is far off
   A.hit(90, 0.6, 0.6); A.tone(65, 1.4, 0.12);
   emit('downed', { who: 'P', cause: why });
@@ -5205,6 +5205,7 @@ function rescue(why, penalty = false) {
       drawInv();
     }
     subs.length = 0; subT = 0; $('sub').classList.remove('on'); MAT.bannerQ = null;   // MAT-SV A3: a clean dawn
+    ARCS.sceneEndAt = clock;                        // MAT-SV A3r2: no cheerful bow lesson the moment he wakes from a rescue
     N.node = null; N.act = 0; N.wait = Math.max(N.wait || 0, 150);   // MAT-SV A3: she stays by him the morning after (no gathering minutes after she dragged him home)
     emit('rescued', { who: 'P', cause: why, penalty, lost });
     save();
@@ -5344,7 +5345,7 @@ function matEndTick(dt) {
   const { fallen, mourner } = E;
   fallen.speed = 0; mourner.speed = 0;
   if (!E.placed && MAT.endT > 0.2) {                 // in the dark: lay the fallen down
-    E.placed = true; $('hud').classList.add('cine'); subs.length = 0; subT = 0; $('sub').classList.remove('on');
+    E.placed = true; $('hud').classList.add('cine', 'mgrief'); subs.length = 0; subT = 0; $('sub').classList.remove('on');
     for (const e of [P, N]) { e.sit = 0; e.rest = 0; e.work = 0; e.dance = 0; e.seat = null; e.node = null; e.fetch = null; e.h.straddle = false; }
     for (const o of animals.filter((o) => o.kind === 'wolf' || o.hostile)) remove(o);
     if (torchOn) setTorch(false); ARCS.doorLamp = null;   // MAT-GRIEF r3: the torch light becomes the soft key on the faces below
@@ -5437,6 +5438,7 @@ function matShowObit(e) {
   $('obit-stats').innerHTML = st.map(([k, v]) => `<div><b></b>${k}</div>`).join('');
   [...$('obit-stats').children].forEach((d, i) => { d.querySelector('b').textContent = st[i][1]; });
   $('obit-cause').textContent = `${e.cause === 'sena' ? 'Sena could not be saved' : e.cause} · ${MATD.MODES[e.mode]?.name || e.mode}${e.softened ? ' (softened)' : ''}`;
+  $('hud').classList.remove('mgrief');               // MAT-GRIEF A3r2
   $('obit').classList.add('on'); A.tone(147, 4, 0.08); A.tone(110, 5, 0.06, 0.6);
 }
 $('obit-go').onclick = () => location.reload();
@@ -5968,6 +5970,7 @@ function goreButcherStart(o) {
   if (GS.butch?.o === o) return;
   const site = { x: o.root.position.x, z: o.root.position.z, rise: 0, label: o.kind, gore: true };
   GS.butch = { o, need: goreNeed(o), site, cut: o.cuts || 0, cam: null };
+  if (!o.flat) goreFlatten(o);                       // GC-FIX9: butchering at once (before the body had settled) presses the plants flat too
   o.butchT ||= 0;
   P.work = 0.5; P.workSite = site;
   if (!o.pooled) { o.killPool ||= { x: o.root.position.x, z: o.root.position.z }; goreKillPool(o, true); }   // GC-FIX7: under the body, not beside it
@@ -6069,10 +6072,41 @@ function goreFrame(dt) {
     }
     if (o.state === 'dead' && o.root.visible && o.kind !== 'bear') goreConform(o, dt);   // the bear topples on its own
     if (o.killPool && o.state === 'dead' && o.deadT > (o.kind === 'bear' ? 1.8 : 1.15)) goreKillPool(o);   // GC-FIX7
+    if (o.state === 'dead') { if (!o.flat && o.deadT > 1.3 && o.root.visible) goreFlatten(o); } else if (o.flat) o.flat = false;   // GC-FIX9: no fern through the body
     if (o.kind === 'bear' && o.state === 'dead' && o.deadT < 3 && o.a.lieAs && o.root.visible) bearClearTick(o, dt);   // GC-FIX7: clear of trunks
   }
+  if ((GS.flatT = (GS.flatT || 0) + dt) > 1) { GS.flatT = 0; if (goreFlat.length) goreFlatTick(); }   // GC-FIX9
   GR.updateGore(dt, { playing: live, hp: S.hp, dead: MAT.dead || MAT.endT > 0, bleeding: typeof survBleeding === 'function' && survBleeding(), rain: world.env.storm, canvas,
+    light: world.env.day * (1 - 0.85 * (world.env.cave || 0)),   // GC-FIX9: screen blood darkens with the scene
     thump: (amp) => A.tone(55, 0.2, 0.06 + amp * 0.1) });
+}
+// GC-FIX9: a body lying on the ground presses the small plants under it flat: decor plants (ferns, clover, flowers,
+// mushrooms; never berry bushes) inside its ground outline are hidden, and come back once the body and any carcass
+// copy are gone (never under a building put up meanwhile).
+const goreFlat = [];
+function goreFlatten(o) {
+  o.flat = true;
+  const gy = getHeight(o.root.position.x, o.root.position.z), f = GR.footprint(o.a.model, gy); if (f.length < 6) return;
+  let x0 = 1e9, x1 = -1e9, z0 = 1e9, z1 = -1e9; for (let i = 0; i < f.length; i += 2) { x0 = Math.min(x0, f[i]); x1 = Math.max(x1, f[i]); z0 = Math.min(z0, f[i + 1]); z1 = Math.max(z1, f[i + 1]); }
+  const inside = (x, z, pad) => {                     // in the convex outline, or within pad of its edge
+    if (x < x0 - pad || x > x1 + pad || z < z0 - pad || z > z1 + pad) return false;
+    let inn = true, dmin = 1e9; const n = f.length / 2;
+    for (let i = 0; i < n; i++) { const ax = f[i * 2], az = f[i * 2 + 1], bx = f[((i + 1) % n) * 2], bz = f[((i + 1) % n) * 2 + 1];
+      const ex = bx - ax, ez = bz - az, cr = ex * (z - az) - ez * (x - ax); if (cr < 0) inn = false;
+      const t = clamp(((x - ax) * ex + (z - az) * ez) / (ex * ex + ez * ez || 1), 0, 1); dmin = Math.min(dmin, Math.hypot(ax + ex * t - x, az + ez * t - z)); }
+    return inn || dmin < pad; };
+  for (const fd of world.decor || []) { if (fd.kind !== 'decor') continue;
+    for (const n of fd.nodes) if (n.alive && inside(n.x, n.z, 0.12 + 0.25 * n.s)) { fd.set(n, false); goreFlat.push({ f: fd, n, o }); } }
+}
+function goreFlatTick() {                             // once a second: the plants come back when nothing lies on them
+  for (let i = goreFlat.length - 1; i >= 0; i--) {
+    const e = goreFlat[i], o = e.o, n = e.n;
+    if (o.state === 'dead' && o.root.visible && o.root.parent) continue;
+    if (GR.goreNear(n.x, n.z, 2.2)) continue;
+    goreFlat.splice(i, 1);
+    if (n.alive || structs.some((st) => Math.hypot(st.x - n.x, st.z - n.z) < (st.radius || 3) + 1.5)) continue;
+    e.f.set(n, true);
+  }
 }
 // GC-FIX7: the death pool. Once the body has fallen, blood spreads from under it: centred on the body's own ground
 // outline (not the root, which a body falling on its side leaves beside it), drawn a little toward the wound, running
@@ -6093,6 +6127,12 @@ function goreBoneZone(b) {
   if (/^(Neck|Head|Jaw|Ear|Eye|Nose|Mouth|Tongue)/.test(n)) return 'head';
   if (/^Tail/.test(n)) return 'gut';
   if (/^(BackUpperLeg|BackLowerLeg|FrontLowerLeg|BackFoot|FrontFoot|Hoof|Paw|Toe)/.test(n)) return 'leg';
+  // GC-FIX9: the human rig (raiders): arms are arms, not 'gut'
+  if (/^(neck_|head)/i.test(n)) return 'head';
+  if (/^(upperarm_|lowerarm_|hand_|clavicle_|thumb_|index_|middle_|ring_|pinky_)/.test(n)) return 'arm';
+  if (/^(thigh_|calf_|foot_|ball_)/.test(n)) return 'leg';
+  if (/^spine_0[3-9]/.test(n)) return 'heart';
+  if (/^(spine_0[0-2]|pelvis|root)/.test(n)) return 'gut';
   return null;                                       // spine, chest, the front upper leg (behind the shoulder: the heart shot)
 }
 // Corpses settle onto the slope (head/tail/sides sampled), and flinch when struck.
@@ -7087,6 +7127,10 @@ async function romScene(kind = 'handfast', o = {}) {
   if (kind !== 'handfast' || ROM.scene) return null;
   ROM.music = true;
   try {
+    // ARC-A3 r2: the rite opens clean: no chapter card or 'Discovered: Standing Stones' banner over the two-shot, and no
+    // stray line queued just before it ('Night is here and we have no fire...' played over the opening)
+    for (let i = 0; i < 24 && ($('event').classList.contains('on') || $('card').classList.contains('on')); i++) await arcWait(0.25);
+    $('event').classList.remove('on'); subs.length = 0; subT = 0; $('sub').classList.remove('on');
     const st = o.at || LMK?.stones || null, joined = romSetting() !== 'off';
     if (st && Math.hypot(st.x - P.pos.x, st.z - P.pos.z) < 60) { P.pos.set(st.x + 2.2, 0, st.z + 1.2); }
     if (ROM.talk) { ROM.talk = null; if (N.h.pose === 'talk') N.h.pose = null; }
@@ -8864,6 +8908,8 @@ function updateArc(dt) {
   for (let i = ARCS.waits.length - 1; i >= 0; i--) { const w = ARCS.waits[i]; if (w.subs ? subs.length === 0 && subT <= 0.35 : clock >= w.t) { ARCS.waits.splice(i, 1); w.r(); } }
   if (ARCS.ch !== S.ch) { if (ARCS.chId !== S.ch) { ARCS.chId = S.ch; ARCS.chAt = clock; } ARCS.ch = S.ch; arcSync(); }   // ARC-A3: chAt = when this chapter began
   ARCS.fr = (ARCS.fr || 0) + 1;                      // ARC-A3: a frame counter (staging waits for real frames, not ms)
+  if (camShot?.keepOut) arcShotKeepOut(camShot, Math.min(1, dt * 6));   // ARC-A3 r2: the lens corridor stays clear of wandering animals
+  if ($('event').classList.contains('on') || $('card').classList.contains('on')) ARCS.evOnAt = performance.now();   // ARC-A3 r2: when a banner or card was last up
   arcNpcTick(dt);
   arcSeasonTick(dt);
   for (const k in ARCS.props) ARCS.props[k].update?.(dt);
@@ -9145,6 +9191,20 @@ function arcFoalSpawn() {
   if (f && mare) f.root.rotation.y = f.dir = mare.dir ?? 0;
   return [x, z, f, mare];
 }
+// ARC-A3 r2: animals (not the shot's own subjects) kept out of a held shot's lens corridor: anything within ~2.8 m of the
+// line from the lens to its subject is slid sideways out of it (k = 1: at once, else a gentle per-frame push).
+function arcShotKeepOut(sh, k) {
+  if (!sh?.keepOut) return;
+  const cx = sh.pos.x, cz = sh.pos.z, dx = sh.look.x - cx, dz = sh.look.z - cz, L2 = dx * dx + dz * dz; if (L2 < 0.01) return;
+  for (const o of animals) {
+    if (o.state !== 'live' || sh.keepOut.includes(o.root)) continue;
+    const p = o.root.position, t = Math.max(0, Math.min(1.15, ((p.x - cx) * dx + (p.z - cz) * dz) / L2));
+    const qx = cx + dx * t, qz = cz + dz * t; let ox = p.x - qx, oz = p.z - qz; const d = Math.hypot(ox, oz), R = 2.8 + (o.kind === 'horse' ? 0.6 : 0);
+    if (d >= R) continue;
+    if (d < 1e-3) { ox = -dz; oz = dx; } const n = Math.hypot(ox, oz), push = (R - d) * k;
+    p.x += (ox / n) * push; p.z += (oz / n) * push; p.y = getHeight(p.x, p.z);
+  }
+}
 function arcFoal() {                                 // the thaw: a foal on Horse Meadow (WP4's wild herd), and a long look at it
   try {
     const [x, z, f, mare] = arcFoalSpawn();
@@ -9158,6 +9218,7 @@ function arcFoal() {                                 // the thaw: a foal on Hors
       if (arcSeen(new THREE.Vector3(px, py, pz), [new THREE.Vector3(x, getHeight(x, z) + 0.55, z), ...(m ? [new THREE.Vector3(m.x, getHeight(m.x, m.z) + 1.3, m.z)] : [])], skip)) { best = [px, py, pz]; break; }
     }
     camShot = ARCS.shot = { pos: new THREE.Vector3(best[0], best[1], best[2]), look: new THREE.Vector3(cx, gy + 0.75, cz), t: 9, untilSubs: true };   // ARC-FIX: held over the lines (it timed out under the fade and cut back to the camp)
+    camShot.keepOut = skip; arcShotKeepOut(camShot, 1);   // ARC-A3 r2: no grazing animal wanders into the lens (a grey beast filled a third of the frame)
     if (P.pos.distanceTo(new THREE.Vector3(x, P.pos.y, z)) > 150) { const h = arcHome(); if (h) { P.pos.set(h.x + 3, 0, h.z + 4); N.pos.set(h.x + 4, 0, h.z + 3); } }
   } catch (err) { console.error('ARC foal', err); }
 }
@@ -9296,7 +9357,12 @@ async function arcRaidFight(resumed) {
         const f0 = list[0], gy = getHeight(P.pos.x, P.pos.z);
         const lookCine = !$('hud').classList.contains('cine');   // GC-FIX7: a letterboxed beat, HUD away (also in first person: the bars frame Sena's line)
         if (lookCine) cine(true);
-        if (view !== 'fpp') camShot = ARCS.shot = { pos: new THREE.Vector3(P.pos.x - Math.sin(a0) * 4, gy + 2.6, P.pos.z - Math.cos(a0) * 4), look: new THREE.Vector3(f0.pos.x, getHeight(f0.pos.x, f0.pos.z) + 1.4, f0.pos.z), t: 3.5 };
+        if (view !== 'fpp') {                        // GC-FIX9: over Aro's right shoulder, his head and shoulders in the left third, a long lens on the torches
+          let mx = 0, mz = 0; for (const f of list) { mx += f.pos.x / list.length; mz += f.pos.z / list.length; }
+          const fa = Math.atan2(mx - P.pos.x, mz - P.pos.z), fx = Math.sin(fa), fz = Math.cos(fa); P.face = fa;
+          camShot = ARCS.shot = { pos: new THREE.Vector3(P.pos.x - fx * 2.7 - fz * 0.95, gy + 1.95, P.pos.z - fz * 2.7 + fx * 0.95), look: new THREE.Vector3(mx, getHeight(mx, mz) + 1.1, mz), t: 3.5 };
+          camera.fov = 34; camera.updateProjectionMatrix();   // eases back to the player's FOV after the shot
+        }
         say('Sena', RD.lit >= 4 ? 'The braziers! I can see them coming. Aro, there!' : 'I cannot see them, Aro. Only the torches.');
         try { await arcWait(3.2); } finally { if (lookCine) cine(false); }
         if (camShot === ARCS.shot) camShot = null; ARCS.shot = null;
@@ -9889,7 +9955,7 @@ function arcBeats(id) {
       if (!c.door && S.day >= (A.doorDay ?? 1e9)) break;   // the door night stays calm until they have been answered
       // ARC-A3: never over the chapter card or another banner ('Winter' follows the card): 14 s into the chapter at least
       if (E.night > 0.6 && (S.day - (A.winterDay ?? S.day)) % 2 === 0 && A.stormDay !== S.day && EV.storm <= 0
-        && !$('card').classList.contains('on') && !$('event').classList.contains('on') && clock - (ARCS.chAt ?? -1e9) > 14 && !arcCalm()) {
+        && !$('card').classList.contains('on') && !$('event').classList.contains('on') && clock - (ARCS.chAt ?? -1e9) > 14 && performance.now() - (ARCS.evOnAt ?? -1e9) > 6000 && !arcCalm()) {   // ARC-A3 r2: and a few seconds clear of the last banner (it replaced 'Winter' the instant it went)
         A.stormDay = S.day; EV.storm = 95 + rand() * 40; banner(...ARCD.L.winter.blizzard); say(...ARCD.L.winter.blizzardLine);
       }
       break;
@@ -12136,7 +12202,8 @@ function updateWorldThings(dt) {
     if (E.day > 0.5 && E.storm < 0.4 && rand() < dt * 0.35) A.chirp(0.012 + rand() * 0.03);
   }
   saveFlash = Math.max(0, saveFlash - dt);
-  { const el = $('savechip'), o = el.textContent ? String(Math.min(1, saveFlash)) : '0'; if (el.style.opacity !== o) el.style.opacity = o; }   // SAVE-PERF: never an empty pill
+  { const el = $('savechip'), hd = $('hud'), hid = camShot?.gore || hd.classList.contains('cine') || hd.classList.contains('cinew') || hd.style.visibility === 'hidden' || !hd.classList.contains('on');   // GC-FIX9: no chip over a gore/cinematic camera or a hidden HUD
+    const o = el.textContent && !hid ? String(Math.min(1, saveFlash)) : '0'; if (el.style.opacity !== o) el.style.opacity = o; }   // SAVE-PERF: never an empty pill
 }
 const camPos = new THREE.Vector3(0, 8, 14), look = new THREE.Vector3();
 function updateCamera(dt, title) {

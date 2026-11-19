@@ -33,6 +33,7 @@ export const ZONES = {
   heart: { k: 2, bleed: 0.5 },
   gut: { k: 0.8, bleed: 0.08 },
   leg: { k: 1, bleed: 0, limp: true },
+  arm: { k: 0.7, bleed: 0.05 },                         // GC-FIX9: people only (an arrow in a raider's arm)
 };
 export function zoneOf(u, v) {
   if (v < 0.36) return 'leg';
@@ -171,61 +172,80 @@ function decalTexture() {
   for (let i = 0; i < 5; i++) { const x = 44 + rnd() * 40, w = 2 + rnd() * 3, h = 20 + rnd() * 40; g.fillRect(x, 60, w, h); blob(x + w / 2, 60 + h, w * 1.2); }   // runs down the wall
   const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace; return t;
 }
-// GC-FIX7: screen blood as wet blood on the lens, not clip-art: each splash is thrown one way (sprite +x), an uneven
-// smear where it struck, then droplets that stretch into teardrops and streaks the further they flew, and a fine mist.
-// Every shape is drawn twice: a dark meniscus rim (blood pools at the edge of a drop on glass) and a thinner, redder,
-// half-clear middle, with a faint wet glint on the bigger drops. Runs are separate sprites drawn upright (they always
-// run down the glass, whatever way the splash was thrown).
+// GC-FIX9 (A3r2): screen blood as a film of blood on the lens. The old sprites were a dark outline round a half-clear
+// red middle, drawn normally: over a bright sky the clear middle went salmon pink (petals), at night the flat red glowed.
+// Now each sprite has three layers: BODY is drawn on #splat with mix-blend-mode multiply, so it darkens and reddens what
+// is behind it like real blood does (deep crimson over sky, near black over a dark night; it can never glow); DARK is a
+// soft near-black copy drawn normally on #splatg at night so the blot still reads; GLINT is the small wet highlight
+// (scaled by daylight). Shapes are metaball clusters of round drops with short tails, not stretched ellipses.
 function screenSprites() {
   const splash = [], drip = [];
-  const paint = (c, prims) => {                       // prims: (ctx, shrink px) => path filled
-    const g = c.getContext('2d'), m = document.createElement('canvas'); m.width = c.width; m.height = c.height; const mg = m.getContext('2d');
-    g.fillStyle = 'rgb(40,2,2)'; for (const p of prims) p(g, 0);                       // 1. the dark rim colour, full shape
-    mg.fillStyle = '#fff'; for (const p of prims) p(mg, 1.7);                           // the inner, thinner part
-    g.globalCompositeOperation = 'destination-out'; g.globalAlpha = 0.32; g.drawImage(m, 0, 0);   // 2. half-clear inside
-    mg.globalCompositeOperation = 'source-in'; mg.fillStyle = 'rgb(128,12,9)'; mg.fillRect(0, 0, m.width, m.height);
-    g.globalCompositeOperation = 'source-atop'; g.globalAlpha = 0.9; g.drawImage(m, 0, 0);       // 3. redder inside
-    g.globalAlpha = 1; g.globalCompositeOperation = 'source-over';
+  const mk = (w, h) => { const c = document.createElement('canvas'); c.width = w; c.height = h; return c; };
+  const build = (w, h, prims, glints) => {
+    const mask = mk(w, h), mg = mask.getContext('2d'); mg.fillStyle = '#fff'; for (const p of prims) p(mg, 0);
+    const body = mk(w, h), bg = body.getContext('2d');
+    bg.fillStyle = 'rgb(62,3,3)'; bg.fillRect(0, 0, w, h);                              // the thick, dark edge colour
+    const core = mk(w, h), cg = core.getContext('2d'); cg.filter = 'blur(2.5px)'; cg.fillStyle = 'rgb(138,12,9)';   // a thinner, redder middle, soft edged
+    for (const p of prims) p(cg, 2.2); cg.filter = 'none';
+    bg.drawImage(core, 0, 0);
+    bg.globalCompositeOperation = 'destination-in'; bg.drawImage(mask, 0, 0);          // cut to the drop shapes
+    const dark = mk(w, h), dg = dark.getContext('2d'); dg.fillStyle = 'rgb(5,0,0)'; dg.fillRect(0, 0, w, h);
+    dg.globalCompositeOperation = 'destination-in'; dg.drawImage(mask, 0, 0);
+    const glint = mk(w, h), gg = glint.getContext('2d');
+    for (const [x, y, r] of glints) { const gr = gg.createRadialGradient(x, y, 0, x, y, r); gr.addColorStop(0, 'rgba(255,215,205,0.85)'); gr.addColorStop(0.45, 'rgba(255,190,180,0.25)'); gr.addColorStop(1, 'rgba(255,190,180,0)'); gg.fillStyle = gr; gg.beginPath(); gg.ellipse(x, y, r, r * 0.7, -0.5, 0, 6.2832); gg.fill(); }
+    gg.globalCompositeOperation = 'destination-in'; gg.drawImage(mask, 0, 0);
+    return { body, dark, glint, w, h };
   };
-  const ell = (x, y, rx, ry, r) => (g, s) => { if (rx - s < 0.4 || ry - s < 0.4) return; g.beginPath(); g.ellipse(x, y, rx - s, ry - s, r, 0, 6.2832); g.fill(); };
-  const blobP = (x, y, R, sq, rot, ph) => (g, s) => { const k = Math.max(0, (R - s) / R); if (k <= 0) return; g.beginPath();
-    for (let i = 0; i <= 60; i++) { const a = (i / 60) * 6.2832, r = R * k * (1 + 0.22 * Math.sin(2 * a + ph) + 0.12 * Math.sin(3 * a + ph * 1.7) + 0.07 * Math.sin(7 * a + ph * 2.3));
-      const lx = Math.cos(a) * r * 1.35, ly = Math.sin(a) * r * sq; g.lineTo(x + lx * Math.cos(rot) - ly * Math.sin(rot), y + lx * Math.sin(rot) + ly * Math.cos(rot)); }
-    g.closePath(); g.fill(); };
+  const circ = (x, y, r) => (g, s) => { if (r - s < 0.4) return; g.beginPath(); g.arc(x, y, r - s, 0, 6.2832); g.fill(); };
+  const tail = (x, y, r, a, L) => (g, s) => {             // a short tapering tail behind a flung drop
+    if (r - s < 0.6) return; const ca = Math.cos(a), sa = Math.sin(a), rr = r - s, nx = -sa, ny = ca;
+    g.beginPath(); g.moveTo(x + nx * rr * 0.8, y + ny * rr * 0.8); g.quadraticCurveTo(x - ca * L * 0.5 + nx * rr * 0.35, y - sa * L * 0.5 + ny * rr * 0.35, x - ca * L, y - sa * L);
+    g.quadraticCurveTo(x - ca * L * 0.5 - nx * rr * 0.35, y - sa * L * 0.5 - ny * rr * 0.35, x - nx * rr * 0.8, y - ny * rr * 0.8); g.closePath(); g.fill(); };
   for (let k = 0; k < 6; k++) {
-    const c = document.createElement('canvas'); c.width = c.height = 256; const prims = [], glint = [];
-    const cx = 62 + rnd() * 18, cy = 128 + (rnd() - 0.5) * 30, big = k < 3;
-    // the smear where it struck: a few lobes along the throw
-    for (let i = 0, n = big ? 3 + ((rnd() * 2) | 0) : 1 + ((rnd() * 2) | 0); i < n; i++) {
-      const R = (big ? 20 : 12) * (1 - i * 0.18) * (0.8 + rnd() * 0.4); prims.push(blobP(cx + i * R * 0.9, cy + (rnd() - 0.5) * 10, R, 0.55 + rnd() * 0.25, (rnd() - 0.5) * 0.4, rnd() * 6.28));
-      if (i === 0) glint.push([cx - R * 0.35, cy - R * 0.3, R * 0.32]);
+    const W = 256, prims = [], glints = [], big = k < 3;
+    const cx = 70 + rnd() * 16, cy = 128 + (rnd() - 0.5) * 24;
+    // the mass where it struck: an irregular round splotch of overlapping drops, a little longer along the throw
+    const M = big ? 30 : 20;
+    prims.push(circ(cx, cy, M * 0.66));
+    for (let i = 0, n = big ? 18 : 11; i < n; i++) {
+      const a = rnd() * 6.2832, d = Math.pow(rnd(), 0.6) * M * 0.55, r = M * (0.22 + rnd() * 0.3);
+      prims.push(circ(cx + Math.cos(a) * d * 1.15, cy + Math.sin(a) * d, r));
     }
-    // droplets flung on: further = smaller, more stretched, pointing along their flight
-    for (let i = 0, n = 26 + ((rnd() * 18) | 0); i < n; i++) {
-      const a = (rnd() - 0.5) * (0.9 + rnd() * 0.5), d = 22 + Math.pow(rnd(), 0.8) * 165, x = cx + Math.cos(a) * d, y = cy + Math.sin(a) * d;
-      if (x > 250 || y < 6 || y > 250) continue;
-      const r = Math.max(0.9, (big ? 7.5 : 5) * Math.pow(rnd(), 1.8) * (1.15 - d / 210)), e = 1 + (d / 60) * (0.6 + rnd());
-      prims.push(ell(x, y, r * e, r, a));
-      if (r > 3 && e < 3) { prims.push(ell(x - Math.cos(a) * r * e * 1.1, y - Math.sin(a) * r * e * 1.1, r * 0.55, r * 0.4, a)); if (r > 4) glint.push([x - r * 0.3, y - r * 0.35, r * 0.35]); }   // a teardrop tail, a glint
+    glints.push([cx - M * 0.28, cy - M * 0.3, M * 0.34]);
+    for (let i = 0; i < 4; i++) { const a = Math.PI + (rnd() - 0.5) * 2.6, r = M * (0.14 + rnd() * 0.16); prims.push(circ(cx + Math.cos(a) * M * (0.6 + rnd() * 0.15), cy + Math.sin(a) * M * (0.6 + rnd() * 0.15), r)); }   // a lumpy trailing edge
+    // a few uneven streaks thrown on from its leading edge (never a regular crown: that read as a clip-art star), each ending in a bead
+    for (let f = 0, nf = big ? 5 + ((rnd() * 2) | 0) : 3 + ((rnd() * 2) | 0); f < nf; f++) {
+      const a = (rnd() - 0.5) * 1.9, fw = Math.cos(a), len = M * (0.25 + Math.pow(rnd(), 1.5) * 1.1) * (0.6 + fw * 0.6);
+      const x0 = cx + Math.cos(a) * M * 0.5, y0 = cy + Math.sin(a) * M * 0.5, x1 = cx + Math.cos(a) * (M * 0.55 + len), y1 = cy + Math.sin(a) * (M * 0.55 + len), w0 = M * (0.12 + rnd() * 0.08);
+      prims.push((g, s) => { const w = w0 - s * 0.6; if (w < 0.5) return; const nx = -Math.sin(a), ny = Math.cos(a);
+        g.beginPath(); g.moveTo(x0 + nx * w, y0 + ny * w); g.quadraticCurveTo((x0 + x1) / 2 + nx * w * 0.35, (y0 + y1) / 2 + ny * w * 0.35, x1, y1);
+        g.quadraticCurveTo((x0 + x1) / 2 - nx * w * 0.35, (y0 + y1) / 2 - ny * w * 0.35, x0 - nx * w, y0 - ny * w); g.closePath(); g.fill(); });
+      if (rnd() < 0.75) prims.push(circ(x1 + Math.cos(a) * 1.5, y1 + Math.sin(a) * 1.5, w0 * (0.55 + rnd() * 0.5)));
     }
-    for (let i = 0; i < 70; i++) {                      // a fine mist of specks
-      const a = (rnd() - 0.5) * 1.6, d = 30 + rnd() * 190, x = cx + Math.cos(a) * d, y = cy + Math.sin(a) * d;
-      if (x < 250 && y > 4 && y < 252) prims.push(ell(x, y, 0.6 + rnd() * 0.9, 0.5 + rnd() * 0.7, a));
+    // satellite drops flung on: further = smaller; the bigger ones carry a short tail back to where they came from
+    for (let i = 0, n = big ? 24 : 16; i < n; i++) {
+      const a = (rnd() - 0.5) * 1.5, d = M * 1.4 + Math.pow(rnd(), 0.9) * 150, x = cx + Math.cos(a) * d, y = cy + Math.sin(a) * d;
+      if (x > 248 || y < 8 || y > 248) continue;
+      const r = Math.max(1, (big ? 6 : 4.2) * Math.pow(rnd(), 1.5) * (1.2 - d / 230));
+      prims.push(circ(x, y, r));
+      if (r > 2.2 && rnd() < 0.6) prims.push(tail(x, y, r, a, r * (1.6 + rnd() * 1.6)));
+      if (r > 4.2) glints.push([x - r * 0.3, y - r * 0.35, r * 0.4]);
     }
-    paint(c, prims);
-    const g = c.getContext('2d'); g.globalCompositeOperation = 'source-atop';
-    for (const [x, y, r] of glint) { const gr = g.createRadialGradient(x, y, 0, x, y, r); gr.addColorStop(0, 'rgba(255,225,215,0.32)'); gr.addColorStop(1, 'rgba(255,225,215,0)'); g.fillStyle = gr; g.fillRect(x - r, y - r, r * 2, r * 2); }
-    splash.push(c);
+    for (let i = 0; i < 30; i++) {                      // a little fine spray
+      const a = (rnd() - 0.5) * 1.4, d = 40 + rnd() * 170, x = cx + Math.cos(a) * d, y = cy + Math.sin(a) * d;
+      if (x < 250 && y > 4 && y < 252) prims.push(circ(x, y, 0.7 + rnd() * 0.8));
+    }
+    splash.push(build(W, W, prims, glints));
   }
   for (let k = 0; k < 4; k++) {                          // runs: a thin trickle, wandering a little, a bead at its end
-    const c = document.createElement('canvas'); c.width = 64; c.height = 256; const prims = [];
+    const prims = [], glints = [];
     for (let j = 0, n = 1 + (k % 2); j < n; j++) {
-      let x = 20 + j * 22 + rnd() * 6, y = 8, w = 3 + rnd() * 2.2; const L = 120 + rnd() * 110;
-      prims.push(ell(x, y + 2, w * 1.6, w * 1.3, 0));
-      for (; y < L; y += 1.6) { x += (rnd() - 0.5) * 0.7; w = Math.max(1.3, w * 0.996); prims.push(ell(x, y, w, w * 1.2, 0)); }
-      prims.push(ell(x, y + w, w * 1.45, w * 1.8, 0));
+      let x = 20 + j * 22 + rnd() * 6, y = 8, w = 3.2 + rnd() * 2.2; const L = 120 + rnd() * 110;
+      prims.push(circ(x, y + 2, w * 1.1));
+      for (; y < L; y += 1.6) { x += (rnd() - 0.5) * 0.6; w = Math.max(1.4, w * 0.996); prims.push(circ(x, y, w)); }
+      prims.push(circ(x, y + w, w * 1.7)); glints.push([x - w * 0.5, y + w * 0.4, w * 0.8]);
     }
-    paint(c, prims); drip.push(c);
+    drip.push(build(64, 256, prims, glints));
   }
   return { splash, drip };
 }
@@ -1114,8 +1134,11 @@ export const carcassList = () => carcasses.map((c) => ({ visible: c.g.visible, f
 let SC = null;
 function screenInit() {
   const el = document.getElementById('splat'); if (!el) return null;
-  const s = { el, g: el.getContext('2d'), sprites: screenSprites(), list: [], w: 0, h: 0, dirty: false };
-  const fit = () => { s.w = el.width = Math.max(2, Math.round(innerWidth / 2)); s.h = el.height = Math.max(2, Math.round(innerHeight / 2)); s.dirty = true; };
+  el.style.mixBlendMode = 'multiply';                   // GC-FIX9: blood darkens what is behind it, it never glows
+  const el2 = document.createElement('canvas'); el2.id = 'splatg'; el2.style.cssText = 'position:fixed;inset:0;width:100%;height:100%;pointer-events:none';
+  el.after(el2);                                        // GC-FIX9: the night darkening and the wet glints, drawn normally
+  const s = { el, el2, g: el.getContext('2d'), g2: el2.getContext('2d'), sprites: screenSprites(), list: [], w: 0, h: 0, dirty: false, day: 1 };
+  const fit = () => { s.w = el.width = el2.width = Math.max(2, Math.round(innerWidth / 2)); s.h = el.height = el2.height = Math.max(2, Math.round(innerHeight / 2)); s.dirty = true; };
   fit(); addEventListener('resize', fit);
   return s;
 }
@@ -1136,17 +1159,24 @@ export function screenSplat(angle, amt = 0.5) {
   return n;
 }
 export function clearScreen() { if (SC) { SC.list.length = 0; SC.dirty = true; } }
-function screenUpdate(dt) {
+function screenUpdate(dt, env) {
   if (!SC || (!SC.list.length && !SC.dirty)) return;
-  const { g, w, h } = SC; g.clearRect(0, 0, w, h); SC.dirty = false;
+  const { g, g2, w, h } = SC; g.clearRect(0, 0, w, h); g2.clearRect(0, 0, w, h); SC.dirty = false;
+  // GC-FIX9: how lit the scene is (env.light: 1 noon .. 0 night; caves dark). Multiply alone vanishes on a black night,
+  // so the dark copy fades in as the light goes; glints are strong by day and all but gone at night.
+  const day = Math.min(1, Math.max(0, env.light ?? 1)), nightK = 1 - day, gl = 0.03 + 0.62 * day * Math.sqrt(day);   // no light, no glint (a glint in the dark read as a glow)
   for (let i = SC.list.length - 1; i >= 0; i--) {
     const p = SC.list[i]; p.t += dt;
     if (p.t >= p.life) { SC.list.splice(i, 1); SC.dirty = true; continue; }
     const fade = 1 - smooth((p.t - p.life * 0.45) / (p.life * 0.55)), slide = Math.min(1, p.t / 2.4) * (p.sl ?? 15);   // GC-FIX7: runs creep further
-    const sz = p.s * Math.min(w, h) * (p.drip ? 1 : 1 + Math.min(0.06, p.t * 0.2));
-    g.save(); g.globalAlpha = p.a * fade; g.translate(p.x * w, p.y * h + slide); g.rotate(p.rot);
-    if (p.drip) { const k = Math.min(1, 0.2 + p.t / 1.8); g.drawImage(p.img, 0, 0, 64, 256 * k, -sz / 8, 0, sz / 4, sz * k); } else g.drawImage(p.img, -sz / 2, -sz / 2, sz, sz);   // a run grows down as it flows
-    g.restore();
+    const sz = p.s * Math.min(w, h) * (p.drip ? 1 : 1 + Math.min(0.06, p.t * 0.2)), A = p.a * fade, im = p.img;
+    const draw = (cx, layer, alpha) => {
+      if (alpha <= 0.01) return; cx.save(); cx.globalAlpha = Math.min(1, alpha); cx.translate(p.x * w, p.y * h + slide); cx.rotate(p.rot);
+      if (p.drip) { const k = Math.min(1, 0.2 + p.t / 1.8); cx.drawImage(layer, 0, 0, im.w, im.h * k, -sz / 8, 0, sz / 4, sz * k); } else cx.drawImage(layer, -sz / 2, -sz / 2, sz, sz);   // a run grows down as it flows
+      cx.restore(); };
+    draw(g, im.body, A * 1.0);
+    draw(g2, im.dark, A * 0.75 * nightK);
+    draw(g2, im.glint, A * gl * (1 - 0.6 * smooth(p.t / p.life)));   // the sheen dulls as it dries
   }
   if (SC.list.length) SC.dirty = true;
 }
@@ -1305,7 +1335,7 @@ export function updateGore(dt, env = {}) {
       for (const m of c.mats) { if (!m.transparent) { m.transparent = true; m.needsUpdate = true; } m.opacity = k; }
     }
   }
-  screenUpdate(dt);
+  screenUpdate(dt, env);
   heartUpdate(dt, env);
 }
 
