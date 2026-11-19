@@ -33,7 +33,7 @@ const AREAS = [
   { k: 'bow-limits', vp: 5224, cp: 9424, scope: 'The bow (every spec-bow.md item, first-person bow, no clipping) AND the absolute content limits across the whole game. Any content-limit violation is a blocker.',
     open: 'Last verifier (vbow5) FAILS: slung bow stave crosses the back spear while running; bow in hand at the hip crosses the spear shaft when walking; FP full draw: arrowhead hidden in the bow fist, fletching reads as flat grey cards. Minor open: TPP string is unlit LineBasicMaterial (glows white at night/indoors); arrow speed 58 m/s (spec ~45); 42 loose arrows after 50 shots (cap 40); "Crafted: Flint arrows x3" when only 1 fits; rock break 20% (spec 30%); "+1 arrows · quiver full" with no quiver. Also: Aro\'s kilt shows a skin-coloured hole at the back of the thigh mid-stride; Sena\'s two-piece skirt must not show the base-mesh brief at the hips (front/side/back).' },
 ]
-const run = (prompt, opts) => agent(prompt + FOCUS, opts)
+const run = (prompt, opts) => agent(prompt + FOCUS, opts).then(r => { if (r === null || r === undefined) throw new Error(`STOPPED: ${opts.label} returned nothing (usage limit or crash); resume after the reset`); return r })   // 2026-11-19: stop cleanly on a usage limit instead of burning the remaining calls
 const verify = (a, round) => run(`${rules(a.vp, a.cp)}
 YOU ARE AN INDEPENDENT VERIFIER (A3 round ${round}), READ-ONLY on game code. Do not trust fixers' claims; check each item yourself with fresh screenshots or measurements.
 SCOPE: ${a.scope}

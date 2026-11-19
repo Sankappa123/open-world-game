@@ -866,7 +866,14 @@ export function sever(model, seg, { dir = null, sceneRoot = null } = {}) {
   const len = Math.max(0.12, jp.distanceTo(tip)), out = tip.clone().sub(jp).normalize();
   const r = seg === 6 && rec.rig === 'quad' ? Math.min(0.04, Math.max(0.016, len * 0.07)) : Math.min(0.11, Math.max(0.035, len * (seg === 1 ? 0.22 : 0.16)));   // (a tail is thin)
   // the stump on the body
-  const cap = makeCap(bone, r, out); scene.add(cap); bone.parent.attach(cap); rec.caps.push(cap);
+  const cap = makeCap(bone, r, out);
+  // GC-FIX8: a man's neck: the cut runs along whole triangles, so its edge is ragged skin (it read as a white paper ruff);
+  // a wider, flatter stump a little down the neck covers that edge with torn, clotted flesh
+  if (seg === 1 && rec.rig === 'human') { cap.scale.set(1.75, 1.3, 1.75); cap.position.addScaledVector(out, -r * 0.35); }
+  // GC-FIX8: the cord of a neck ornament (a raider's bone-tooth necklace) is cut through with the neck: it falls away
+  // instead of standing round the stump like a white ruff
+  if (seg === 1 && rec.rig === 'human') for (const o of bone.parent.children) if (!o.isBone && o.visible && !o.userData.goreCap) { o.visible = false; (rec.hid ||= []).push(o); }
+  scene.add(cap); bone.parent.attach(cap); rec.caps.push(cap);
   emitters.push({ rec, obj: cap, t: 0, life: 2.4, rate: 46, pulse: true });
   // the severed piece: a posed, unanimated copy that shows only this segment
   const copy = SkeletonUtils.clone(model);
@@ -971,7 +978,7 @@ function copySamples(copy, seg) {
 // to the sky or chin down like a bust, costs extra), then rolled about the level axes to the bottom of that basin.
 function settleLow(p, n, q1) {
   const ax = p.head.up, u = new THREE.Vector3();
-  const h = (qq) => { let lo = 1e9; for (const l of p.loc) { const d = _v.copy(l).applyQuaternion(qq).dot(n); if (d < lo) lo = d; } u.copy(ax).applyQuaternion(qq); return -lo + 0.3 * Math.max(0, Math.abs(u.dot(n)) - 0.3); };
+  const h = (qq) => { let lo = 1e9; for (const l of p.loc) { const d = _v.copy(l).applyQuaternion(qq).dot(n); if (d < lo) lo = d; } u.copy(ax).applyQuaternion(qq); return -lo + 1.2 * Math.max(0, Math.abs(u.dot(n)) - 0.25); };   // GC-FIX8: a tipped-up neck costs far more (it stood 40° up on its stump)
   const q0 = p.q0, d = new THREE.Vector3(), w = new THREE.Vector3(), down = n.clone().negate(), t = new THREE.Quaternion();
   let best = q1.clone(), bh = h(best);
   for (let i = 0, N = 120; i < N; i++) {                // a Fibonacci sphere of piece-frame directions to put down

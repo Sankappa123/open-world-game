@@ -142,6 +142,16 @@ export function makeHuman({ female = false, light = false, tint = 0xffffff, hair
   // tummy leads, not the chest), and the adult clips carry the head forward over the chest, which on a big child's head
   // reads as a stoop, so the neck and head tip back.
   if (clothes?.rig) h.overrides.push({ id: 'skirtRig', order: 98, fn: clothes.rig });   // SENA-LOOK r3: the skirt's drape bones, after every pose override
+  // SENA-LOOK A3: lying down (h.laceW, set each frame by the lying pose in main) the strand keeps to her chest the way it
+  // sits when she stands; it rode the neck bone, so with the head thrown back it stood up off her chest in a loop.
+  const lace = clothes?.parts?.find((o) => o.name === 'senaLace');
+  if (lace) h.overrides.push({ id: 'laceRest', order: 99, fn: (hh) => {
+    const w = hh.laceW || 0; hh.laceW = 0;
+    const base = lace.userData.base || _laceI;
+    if (!(w > 0)) { lace.quaternion.copy(base); return; }
+    const q0 = (lace.userData.q0 ||= samplePose(hh, 'idle', 0).q.neck_01); if (!q0 || !hh.bones.neck_01) return;
+    lace.quaternion.copy(hh.bones.neck_01.quaternion).invert().multiply(q0); lace.quaternion.slerp(_laceI, 1 - w).multiply(base);
+  } });
   if (kid) h.overrides.push({ id: 'childHip', order: 1, fn: (hh) => {
     hh.bones.pelvis.position.multiplyScalar(kid.legK);
     if (hh.kidLie) {                                                   // asleep: lying straight, legs together (under her own cover)
@@ -194,7 +204,10 @@ export function makeHuman({ female = false, light = false, tint = 0xffffff, hair
   h.useGrip = () => h.addOverride('fingers', 20, (hh) => { applyPose(hh, hh.fist.r, hh.gripR); applyPose(hh, hh.fist.l, hh.gripL); });
   h.animate = (dt, speed, crouch = false, swim = false, air = false) => {
     const moving = speed > 0.1;
-    const state = h.pose && act[h.pose] ? h.pose : air ? 'jump' : swim ? (moving ? 'swim' : 'swimIdle') : crouch ? (moving ? 'sneak' : 'sneakIdle') : !moving ? 'idle' : speed > 5.6 ? 'sprint' : speed > 2.4 ? 'run' : 'walk';
+    // SENA-SIT A3 (content limit, verifier A3): the seated talking clip's gestures land on a woman's chest (Sena seemed to
+    // cup her breast-band at the fire); a woman sits with her hands on her thighs (Sitting_Idle) instead
+    const pz = h.pose === 'sitTalk' && who === 'female' ? 'sit' : h.pose;
+    const state = pz && act[pz] ? pz : air ? 'jump' : swim ? (moving ? 'swim' : 'swimIdle') : crouch ? (moving ? 'sneak' : 'sneakIdle') : !moving ? 'idle' : speed > 5.6 ? 'sprint' : speed > 2.4 ? 'run' : 'walk';
     h.crouch += ((crouch ? 1 : 0) - h.crouch) * Math.min(1, dt * 8);
     if (shot && (!shot.isRunning() || shot.time > shot.getClip().duration - 0.25)) { fading = shot; shot = null; }
     shotW += ((shot ? 1 : 0) - shotW) * Math.min(1, dt * 12);
@@ -968,6 +981,11 @@ function adultDress(model, body, bones, who, color, style = null) {
       if (ring.length === 1) { const t = ring[0]; y = topY(a) + (yH - topY(a)) * t; const e = extAt(y); rx = e[0] + 0.008 + 0.037 * t; rz = e[1] + 0.008 + 0.042 * t; zc = e[2] + (cz - e[2]) * t; }
       let x = Math.sin(a) * rx, z = zc + Math.cos(a) * rz;
       if (two) { const up = ring.length === 1, g = up ? girth(y, zc, k % SEG, 0.015) + 0.014 + 0.016 * ring[0] : girth(y, zc, k % SEG) + 0.03 + 0.02 * Math.max(0, Math.min(1, (yH - y) / (yH - yK))), r = Math.hypot(x, z - zc); if (g > r) { x *= g / r; z = zc + (z - zc) * g / r; } }
+      // KILT-A3 (verifier A3: a skin-coloured hole in the back of Aro's kilt mid-stride): the back panel hangs mostly
+      // from the pelvis, and the leg swinging back pushed the buttock up to 3.5 cm through it just under the belt. Below
+      // the belt the back now stands 4 cm further out (tapering to nothing at the sides): 0 pokes in walk, run, back,
+      // strafe and sneak (body-vertex ray test, 30 frames each).
+      else if (!fem && ring !== rings[0]) { const b = Math.max(0, -Math.cos(a)), r = Math.hypot(x, z - zc); if (b > 0 && r > 1e-6) { const s = (r + 0.04 * Math.sqrt(b)) / r; x *= s; z = zc + (z - zc) * s; } }
       const hem = y === yK ? -0.012 * (0.5 + 0.5 * Math.sin(a * 9)) : 0;   // a cut hide hem: not a ruler-straight line
       const L = body.parent.worldToLocal(new THREE.Vector3(P0.x + x, y + hem, z)); vs.push(L.x, L.y, L.z); uv.push(k / SEG * 3, (y - yK) * 4);
       const t = Math.max(0, Math.min(1, (yH - y) / (yH - yK)));
@@ -977,7 +995,12 @@ function adultDress(model, body, bones, who, color, style = null) {
         const fw = Math.max(0, Math.min(1, (sm(0.5 + 0.8 * (Math.cos(a) + 0.3)) - 0.15) / 0.7)),   // (the outside of the thigh goes with the front)
           tf = Math.max(0, Math.min(1, (yH + 0.05 - y) / 0.075)), wT = (SENA_WF * Math.pow(tf, 0.6)) * fw + (0.96 * Math.pow(Math.min(1, t * 1.6), 1.3)) * (1 - fw);
         const wS = Math.max(0, Math.min(0.75, (y - (yS - 0.045)) / 0.1)), left = x * lSide >= 0, sL = sm(0.5 + x * lSide / 0.16);
-        if (fw === 1 || fw === 0) { const o = fw ? 0 : 2, wC = wT * (1 - 0.42 * fw * Math.max(0, 1 - Math.abs(x) / 0.08)); ssi.push(iP, nB + o, nB + o + 1, iS); ssw.push(1 - wC - wS, wC * sL, wC * (1 - sL), wS); }   // front and back: shared across the middle by the two sides' bones (no step between the halves); the front sags a little between the thighs
+        // SENA-SIT A3 (verifier A3: seated, the front rose onto the lap with the thighs and opened between them on the
+        // brief): the front's middle now goes with a fifth drape bone (front centre) instead of half each of the two
+        // front bones. It swings as their average (the same drape as before, standing and walking), but seated it lets
+        // the middle hang from the belt between the thighs (skirtRig). c: 1 at the middle, 0 where the side bone has it.
+        if (fw === 1) { const own = nB + (left ? 0 : 1), c = 2 * (1 - sm(0.5 + Math.abs(x) / 0.16)), wC = wT * (1 - 0.42 * Math.max(0, 1 - Math.abs(x) / 0.08)); ssi.push(iP, nB + 4, own, iS); ssw.push(1 - wC - wS, wC * c, wC * (1 - c), wS); }
+        else if (fw === 0) { const o = fw ? 0 : 2, wC = wT * (1 - 0.42 * fw * Math.max(0, 1 - Math.abs(x) / 0.08)); ssi.push(iP, nB + o, nB + o + 1, iS); ssw.push(1 - wC - wS, wC * sL, wC * (1 - sL), wS); }   // front and back: shared across the middle by the two sides' bones (no step between the halves); the front sags a little between the thighs
         else { ssi.push(iP, nB + (left ? 0 : 1), nB + (left ? 2 : 3), iS); ssw.push(1 - wT - wS, wT * fw, wT * (1 - fw), wS); }   // the sides: between their own front and back bones
       } else {
         const f = Math.min(1, Math.abs(x) / rx * 1.5), wT = Math.pow(t, 0.9) * 0.82 * f;
@@ -1009,7 +1032,7 @@ const SENA_WAIST = 0.72, SENA_RISE = [0.03, 0.06, 0.03];
 // forward swing of the leading thigh (their own thigh's in full, SENA_DRAPE of the way to the other's when that leads),
 // back L/R the same toward the trailing thigh; each takes its own thigh's sideways spread (riding). Seated, both
 // thighs are forward, so the whole skirt goes with them. update() runs as a late bone override.
-const SENA_WF = 0.96, SENA_DRAPE = 0.7, SENA_LAP = [0.8, 1.15, 0.03];
+const SENA_WF = 0.96, SENA_DRAPE = 0.7, SENA_LAP = [0.8, 1.15, 0.03], SENA_SEATC = 0.85;   // SENA-SIT A3: SEATC (front centre, seated)
 function skirtRig(bones) {
   const pel = bones.pelvis, th = [bones.thigh_l, bones.thigh_r], V = THREE.Vector3;
   pel.updateWorldMatrix(true, false);
@@ -1025,15 +1048,24 @@ function skirtRig(bones) {
   // the lap when seated). A forward swing is scaled (dir < 0, the front: a little less, so the hem comes down on the
   // thigh; dir > 0, the back: a little more, so it closes up under it) and the bone lifts a little along its own
   // forward, which keeps the top of the thigh under the cloth near the hip.
-  const zr = new V(), set = (b, i, flex, abd, dir) => {
-    const fl = flex > 0 ? flex * SENA_LAP[dir < 0 ? 0 : 1] : flex;
-    b.quaternion.setFromAxisAngle(X, -fl).multiply(qa.setFromAxisAngle(Z, side[i] * abd));
-    b.position.copy(th[i].position); if (flex > 0) b.position.addScaledVector(zr.copy(Z).applyQuaternion(b.quaternion), SENA_LAP[2] * Math.sin(Math.min(flex, Math.PI / 2)));
+  // SENA-SIT A3: the fifth bone, front centre, between the hip joints (see the skirt's front weights)
+  const fc = new THREE.Bone(); fc.name = 'skirt_fc'; fc.position.copy(th[0].position).add(th[1].position).multiplyScalar(0.5); pel.add(fc); fc.updateWorldMatrix(true, false); rb.push(fc);
+  const fcP = fc.position.clone(), sm01 = (x) => { x = Math.max(0, Math.min(1, x)); return x * x * (3 - 2 * x); };
+  // SENA-SIT A3: the front's scale eases in with the swing (verifier A3: at a walk the leading thigh came through the
+  // front panel, which swung only 0.8 of it): in full up to a stride's swing, 0.8 by a seat's.
+  const lapF = (flex) => flex * (1 + (SENA_LAP[0] - 1) * sm01((flex - 0.55) / 0.6));
+  const zr = new V(), set = (b, i, flex, abd, dir, p = th[i].position) => {
+    const fl = flex > 0 ? (dir < 0 ? lapF(flex) : flex * SENA_LAP[1]) : flex;
+    b.quaternion.setFromAxisAngle(X, -fl); if (abd) b.quaternion.multiply(qa.setFromAxisAngle(Z, side[i] * abd));
+    b.position.copy(p); if (flex > 0) b.position.addScaledVector(zr.copy(Z).applyQuaternion(b.quaternion), SENA_LAP[2] * Math.sin(Math.min(flex, Math.PI / 2)));
   };
   const update = () => {
     const a = read(0, th[0].quaternion), b = read(1, th[1].quaternion), f = [a[0] - rest[0][0], b[0] - rest[1][0]], ab = [a[1] - rest[0][1], b[1] - rest[1][1]];
-    const hi = Math.max(f[0], f[1]), lo = Math.min(f[0], f[1]);
-    for (let i = 0; i < 2; i++) { set(rb[i], i, f[i] + (hi - f[i]) * SENA_DRAPE, ab[i], -1); set(rb[2 + i], i, f[i] + (lo - f[i]) * SENA_DRAPE, ab[i], 1); }
+    const hi = Math.max(f[0], f[1]), lo = Math.min(f[0], f[1]), ff = [0, 0];
+    for (let i = 0; i < 2; i++) { ff[i] = f[i] + (hi - f[i]) * SENA_DRAPE; set(rb[i], i, ff[i], ab[i], -1); set(rb[2 + i], i, f[i] + (lo - f[i]) * SENA_DRAPE, ab[i], 1); }
+    // front centre: the front bones' average swing; seated (the trailing thigh well forward too) it lets the middle
+    // hang from the belt between the knees (SENA_SEATC of the swing taken off), a fold of hide over the lap's gap
+    set(fc, 0, (ff[0] + ff[1]) / 2 * (1 - SENA_SEATC * sm01((lo - 0.6) / 0.6)), 0, -1, fcP);
   };
   return { bones: rb, update };
 }
@@ -1043,10 +1075,14 @@ function senaTrinkets(bones) {
   const bone = new THREE.MeshStandardMaterial({ color: 0xe8dcc2, roughness: 0.6 }), amber = new THREE.MeshStandardMaterial({ color: 0xc27a22, roughness: 0.35 }), cord = new THREE.MeshStandardMaterial({ color: 0x4a3324, roughness: 0.9 });
   const neck = bones.neck_01, nw = neck.getWorldPosition(new THREE.Vector3()), s3 = bones.spine_03.getWorldPosition(new THREE.Vector3());
   const g = new THREE.Group(), cy = nw.y - (nw.y - s3.y) * 0.35, cz = nw.z + 0.015, R = 0.068;
+  g.name = 'senaLace'; g.position.copy(nw);           // SENA-LOOK A3: pivots at the neck joint (laceRest below turns it)
+  // SENA-LOOK A3: built round the bind-pose neck, the strand sat inside her chest in every real pose (the clips carry the
+  // neck forward of the bind pose); tipped back 0.38 rad about the joint it lies on her collarbones and upper chest.
+  g.userData.base = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1, 0, 0), -0.38);
   for (let k = 0; k < 22; k++) {
     const a = -Math.PI * 0.95 + (k / 21) * Math.PI * 1.9, x = Math.sin(a) * R, z = Math.cos(a) * R * 0.9, drop = Math.max(0, Math.cos(a)) * 0.05;
     const m = new THREE.Mesh(k === 11 ? tooth : bead, k % 4 === 1 ? amber : bone);
-    m.position.set(nw.x + x, cy - drop, cz + z - 0.01); if (k === 11) m.rotation.x = Math.PI;
+    m.position.set(x, cy - drop - nw.y, cz + z - 0.01 - nw.z); if (k === 11) m.rotation.x = Math.PI;
     g.add(m);
   }
   scene_attach(neck, g); parts.push(g);
@@ -1058,4 +1094,5 @@ function senaTrinkets(bones) {
   }
   return parts;
 }
+const _laceI = new THREE.Quaternion();
 function scene_attach(boneObj, o) { boneObj.updateWorldMatrix(true, false); boneObj.attach(o); o.castShadow = true; }

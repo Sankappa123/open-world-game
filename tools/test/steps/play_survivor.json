@@ -231,7 +231,7 @@
 "wait": 500
 },
 {
-"js": "UP(); window.DEER=G.spawn('deer', G.P.pos.x, G.P.pos.z+17); DEER.stun=1e6; 1",
+"js": "UP(); { const p=G.P.pos, e=G.h(p.x,p.z)+1.5; let best=null; for (let i=0;i<24 && !best;i++){ const a=i*Math.PI/12, x=p.x+Math.sin(a)*17, z=p.z+Math.cos(a)*17, ty=G.h(x,z); if (ty<0.4) continue; let ok=true; for (let t=0.06;t<0.97;t+=0.03){ if (G.h(p.x+Math.sin(a)*17*t, p.z+Math.cos(a)*17*t) > e+(ty+0.7-e)*t-0.45){ ok=false; break; } } if (ok) best=[x,z]; } window._deerAt=best||[p.x,p.z+17]; window.DEER=G.spawn('deer', _deerAt[0], _deerAt[1]); DEER.stun=1e6; } 1",
 "wait": 500
 },
 {
