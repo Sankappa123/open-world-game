@@ -2645,6 +2645,7 @@ function bowQuiet() {
   // ARC-A3: never in a rift (she is hurt or angry with him), nor within 3 minutes of any story or romance scene (she
   // offered the bow cheerfully 9 s after 'Should I have let you burn...')
   if ((S.arc?.rift || 0) > 0 || arcCalm() || clock - (ARCS.sceneEndAt ?? -1e9) < 180) return false;
+  if (EV.storm > 0 || world.env.storm > 0.2 || S.aff?.some((a) => /^(bleed|infection|fracture|hypo|dysentery)$/.test(a.id))) return false;   // ARC-A3r3: not in a blizzard ('Like wolves made of wind'), nor while he is hurt or feverish ('The wound is hot')
   const p = P.pos;
   for (const q of POIS) if (!S.found[q.id] && q.x != null && Math.hypot(q.x - p.x, q.z - p.z) < q.r + 25) return false;
   for (const id of BOWQ_SPOTS[CH[S.ch].id] || []) { const v = arcSpot(id); if (v && Math.hypot(v[0] - p.x, v[1] - p.z) < 70) return false; }
@@ -5025,7 +5026,7 @@ function die(why) {
   if (canBeDowned()) { downed(why); return; }
   if (P.swim && canBeDowned(true)) {                 // MAT-SV: cut down in the water: he drifts to the nearest bank, then the downed phase
     const b = matBankSpot(P.pos.x, P.pos.z);
-    if (b) { downed(why); P.matBank = b; $('downed-note').textContent = 'You drift into the shallows · ' + $('downed-note').textContent; return; }
+    if (b) { downed(why); P.matBank = b; matDownNote(); return; }   // MAT-SV A3r3: the note follows what is happening (matDownNote)
     why = (why ? why + ' ' : '') + 'In the deep water, Sena could not reach you in time.';
   }
   matDeath(why);
@@ -5079,6 +5080,15 @@ function matFightResume(data) {                      // start(), after matStart:
     for (const [o, b] of wolves) { if (Number.isFinite(b.hp)) o.hp = Math.min(o.hp ?? b.hp, b.hp); o.hostile = true; }
   }
   for (const f of m.men || []) { const r = spawnRaider(f.x, f.z, { mode: 'combat', chief: !!f.chief }); if (r && Number.isFinite(f.hp)) r.hp = Math.min(r.hp ?? f.hp, f.hp); }
+  // MAT-SV A3r3: the fight is put back, but not on top of him: a wolf left at 0.8 m bit the moment the game ran and he
+  // went from 54 hp to dead in 4 s with no time to see what was there. Each foe stands at least 3.5 m off, on its own
+  // bearing, and no wolf bites for the first 3 s of play (game time: the gate and the pause do not use it up).
+  if (!(m.down > 0)) {
+    const off = (p) => { const dx = p.x - P.pos.x, dz = p.z - P.pos.z, d = Math.hypot(dx, dz); if (d < 3.5) { const a = d > 0.05 ? Math.atan2(dx, dz) : P.face + Math.PI; p.x = P.pos.x + Math.sin(a) * 3.5; p.z = P.pos.z + Math.cos(a) * 3.5; } };
+    for (const o of animals) if ((o.kind === 'wolf' || o.hostile) && o.state === 'live') off(o.root.position);
+    for (const f of foes) if (f.live) { off(f.pos); f.root?.position?.set?.(f.pos.x, f.root.position.y, f.pos.z); }
+    packBite = Math.max(packBite, clock + 3);
+  }
   if (m.ndown) cmbSenaDown(null);
   if (m.down > 0) { S.hp = 1; die(m.why || 'The fight you left was still waiting.'); if (P.downed > 0) P.downed = Math.max(4, m.down); }
   MAT.saveHeld = true;
@@ -5086,6 +5096,15 @@ function matFightResume(data) {                      // start(), after matStart:
   return m;
 }
 function matDressing() { return ['bandage', 'hidebandage', 'ypoultice', 'poultice'].find((k) => S.inv[k] > 0) || null; }
+// MAT-SV A3r3: the DOWN note says what is happening now. It was set once as he fell, so it read "You drift into the
+// shallows · Sena is coming" while she was already kneeling beside him.
+function matDownNote() {
+  const el = $('downed-note'); if (!el) return;
+  const dN = Math.hypot(N.pos.x - P.pos.x, N.pos.z - P.pos.z), dr = D().revive === 'daily' ? matDressing() : null;
+  const t = MAT.rescueT > 0 || MAT.kneelOn || dN < 1.6 ? 'Sena is with you'
+    : (P.matBank ? 'You drift into the shallows · ' : '') + (dr ? `Sena is coming · she has ${ITEMS[dr].toLowerCase()}` : 'Sena is coming');
+  if (el.textContent !== t) el.textContent = t;
+}
 function canBeDowned(inWater = false) {
   if ((P.swim && !inWater) || P.ride || N.downed > 0 || N.ride && P.ride) return false;
   if (Math.hypot(N.pos.x - P.pos.x, N.pos.z - P.pos.z) > 40) return false;
@@ -5108,11 +5127,18 @@ function matBankSpot(x, z) {                       // MAT-SV: nearest dry shore 
   if (!lip) return null;
   // the flattest low ground just above the water line (never dragged up a hill: within 3.5 m of it, at most 1 m up)
   let best = null, bs = 1e9;
-  for (let r = 0; r <= 3.5; r += 0.5) for (let i = 0; i < (r ? 16 : 1); i++) {
-    const b = lip.a + (i / 16) * Math.PI * 2, bx = lip.x + Math.sin(b) * r, bz = lip.z + Math.cos(b) * r, h = getHeight(bx, bz);
-    if (h < 0.04 || h > 1) continue;
-    let dev = 0; for (let j = 0; j < 8; j++) { const c = (j / 8) * Math.PI * 2; dev = Math.max(dev, Math.abs(getHeight(bx + Math.sin(c) * 0.9, bz + Math.cos(c) * 0.9) - h)); }
-    const sc = dev + r * 0.03; if (sc < bs) { bs = sc; best = { x: bx, z: bz }; }
+  // MAT-SV A3r3: first pass: the whole body dry (the lying body reaches ~1.3 m from its root: every point 0.9 m round it
+  // at least 0.06 m above the water and 1.3 m round it above it), so no foot or arm lies over the foam strip at the
+  // water's edge. A steep bank may need the spot a little higher up (1.5 m); only then the old rule (the centre dry).
+  for (const strict of [true, false]) {
+    for (let r = 0; r <= (strict ? 5 : 3.5); r += 0.5) for (let i = 0; i < (r ? 16 : 1); i++) {
+      const b = lip.a + (i / 16) * Math.PI * 2, bx = lip.x + Math.sin(b) * r, bz = lip.z + Math.cos(b) * r, h = getHeight(bx, bz);
+      if (h < (strict ? 0.12 : 0.04) || h > (strict ? 1.5 : 1)) continue;
+      let dev = 0, lo = h, lo2 = h; for (let j = 0; j < 8; j++) { const c = (j / 8) * Math.PI * 2; dev = Math.max(dev, Math.abs(getHeight(bx + Math.sin(c) * 0.9, bz + Math.cos(c) * 0.9) - h)); if (strict) { lo = Math.min(lo, getHeight(bx + Math.sin(c) * 0.9, bz + Math.cos(c) * 0.9)); lo2 = Math.min(lo2, getHeight(bx + Math.sin(c) * 1.3, bz + Math.cos(c) * 1.3)); } }
+      if (strict && (lo < 0.06 || lo2 < 0.01)) continue;
+      const sc = dev + r * 0.03; if (sc < bs) { bs = sc; best = { x: bx, z: bz }; }
+    }
+    if (best) break;
   }
   return best || { x: lip.x + Math.sin(lip.a) * 0.7, z: lip.z + Math.cos(lip.a) * 0.7 };
 }
@@ -5143,7 +5169,7 @@ const DOWN_LINES = ['Aro! Stay with me, I am coming!', 'Aro! No. No, hold on!', 
 const DOWN_NEAR = ['Aro! No. No, hold on!', 'Aro! Do not close your eyes!', 'Aro! Look at me. Stay with me!'];   // MAT-SV A3: she is already at his side
 const REVIVE_LINES = ['Breathe. Just breathe. I have you.', 'Up. Lean on me. Slowly.', 'Do not do that to me again, Aro.', 'Look at me. There. You are still here.'];
 function downed(why) {
-  P.downed = 25; MAT.downWhy = why; MAT.downHits = 0; MAT.rescueT = 0; MAT.bankFace = undefined;
+  P.downed = 25; MAT.downWhy = why; MAT.downHits = 0; MAT.rescueT = 0; MAT.bankFace = undefined; MAT.kneelOn = false;   // MAT-SV A3r3: kneelOn
   S.hp = 0; P.speed = 0; P.vx = P.vz = 0; P.sneak = false; P.auto = false; P.air = false; P.jy = 0; P.work = 0; P.dance = 0;
   if (P.sit > 0) { endSit(P); endSit(N); }
   wpnStowAll('downed', true); if (torchOn) setTorch(false);
@@ -5234,7 +5260,7 @@ function matLieStart(e, fallen = false) {
     if (b && !e.matStill) { _mq.setFromAxisAngle(_mAx, Math.sin(clock * 2.6) * 0.03 * w); b.quaternion.multiply(_mq); }
     // MAT-GRIEF A3: the death clip ends with the head thrown back, chin up. At rest it lies back on the ground, the chin
     // eased down and the face turned a little towards the one kneeling beside them.
-    if (e.matStill) {
+    if (e.matStill || e.matNeck) {                   // ARC-A3r3: matNeck: the wounded (Sena at the raid's dawn) too
       const nf = MAT.neckFix || [0.55, 0.5];
       for (const [bn, k] of [['neck_01', 0.45], ['Head', 0.55]]) { const bb = h.bones[bn]; if (!bb) continue; _mq.setFromAxisAngle(_mAx, nf[0] * k * w); bb.quaternion.multiply(_mq); _mq.setFromAxisAngle(_mAy, nf[1] * k * w * (e.matTurn || 0)); bb.quaternion.multiply(_mq); }
     }
@@ -5242,7 +5268,7 @@ function matLieStart(e, fallen = false) {
 }
 // Where to kneel beside someone lying down: 0.7 m to the side of the chest, on the side nearer `from`. [x, z, chestX, chestZ]
 const _kA = new THREE.Vector3(), _kB = new THREE.Vector3(), _kOut = [0, 0, 0, 0];
-function matKneelSpot(f, from) {
+function matKneelSpot(f, from, along = 0, off = 0.7) {   // MAT-GRIEF A3r3: along/off (the grief kneel is nearer the head)
   const b = f.h.bones;
   if (b.spine_03 && b.pelvis) { b.spine_03.getWorldPosition(_kA); b.pelvis.getWorldPosition(_kB); } else { _kA.copy(f.pos); _kB.copy(f.pos); }
   let ax = _kA.x - _kB.x, az = _kA.z - _kB.z; const l = Math.hypot(ax, az);
@@ -5250,7 +5276,8 @@ function matKneelSpot(f, from) {
   let px = az, pz = -ax;
   if ((from.x - _kA.x) * px + (from.z - _kA.z) * pz < 0) { px = -px; pz = -pz; }
   if (getHeight(_kA.x + px * 0.7, _kA.z + pz * 0.7) < 0.05 && getHeight(_kA.x - px * 0.7, _kA.z - pz * 0.7) > getHeight(_kA.x + px * 0.7, _kA.z + pz * 0.7) + 0.05) { px = -px; pz = -pz; }   // MAT-SV A3: kneel on the dry side, not in the water
-  _kOut[0] = _kA.x + px * 0.7; _kOut[1] = _kA.z + pz * 0.7; _kOut[2] = _kA.x; _kOut[3] = _kA.z;
+  if (along) { _kA.x += ax * along; _kA.z += az * along; }
+  _kOut[0] = _kA.x + px * off; _kOut[1] = _kA.z + pz * off; _kOut[2] = _kA.x; _kOut[3] = _kA.z;
   return _kOut;
 }
 // updatePlayer: true while Aro is down (or in the death beat); input is ignored and the camera stays low.
@@ -5272,7 +5299,7 @@ function matDownedTick(dt) {
   settle(P, dt, false);
   if (MAT.rescuing) return true;
   P.downed -= dt;
-  $('downed-bar').style.width = clamp(P.downed / 25, 0, 1) * 100 + '%';
+  $('downed-bar').style.width = clamp(P.downed / 25, 0, 1) * 100 + '%'; matDownNote();   // MAT-SV A3r3
   // low camera beside him; the mouse orbits it. Frames Sena too once she is close.
   const c = MAT.cam, dN = Math.hypot(N.pos.x - P.pos.x, N.pos.z - P.pos.z);
   c.look.set(P.pos.x, P.pos.y + 0.35, P.pos.z);
@@ -5291,11 +5318,17 @@ function matSenaRescue(dt) {
   N.sit = 0; N.rest = 0; N.node = null; N.act = 0; N.fetch = null; N.dance = 0;
   const [tx, tz, cx, cz] = matKneelSpot(P, N.pos);   // beside his chest, on her side of him
   const dK = Math.hypot(tx - N.pos.x, tz - N.pos.z); MAT.nearT = dK < 0.45 ? (MAT.nearT || 0) + dt : 0;   // (a rock in the way: close enough after 0.5 s)
-  if (MAT.rescueT <= 0 && !walkTo(N, tx, tz, dK > 3 ? 6.6 : 2.6, dt, 0.12) && MAT.nearT < 0.5) N.h.pose = null;   // MAT-SV A3: right to the spot (0.35 short left her knees on his arm, bent over his middle)
+  // MAT-SV A3r3: in the water he is still drifting to the bank and turning along it when she gets there; she knelt where
+  // she first arrived and stayed, so the body slid and turned under her and she ended up bent over his hips. Now the
+  // revive count waits until he lies still, and while she kneels she keeps to the spot beside his chest.
+  const L = MAT.lie?.[P.h.who], adF = MAT.bankFace != null ? Math.abs(((((P.face - MAT.bankFace + Math.PI) % 6.2832) + 6.2832) % 6.2832) - Math.PI) : 0;
+  const settling = !!P.matBank || adF > 0.06 || P.matFallT < (L ? L.dur : 1.5);
+  if (MAT.rescueT <= 0 && !(MAT.kneelOn && dK < 0.7) && !walkTo(N, tx, tz, dK > 3 ? 6.6 : 2.6, dt, 0.12) && MAT.nearT < 0.5) { N.h.pose = null; MAT.kneelOn = false; }   // MAT-SV A3: right to the spot (0.35 short left her knees on his arm, bent over his middle)
   else {
+    MAT.kneelOn = true;
+    if (dK > 0.03) { const k = Math.min(1, dt * 4); N.pos.x += (tx - N.pos.x) * k; N.pos.z += (tz - N.pos.z) * k; }   // MAT-SV A3r3
     N.speed = 0; N.h.pose = 'work'; N.face = turn(N.face, Math.atan2(cx - N.pos.x, cz - N.pos.z), Math.min(1, dt * 8));
-    if (MAT.rescueT <= 0) $('downed-note').textContent = 'Sena is with you';
-    MAT.rescueT += dt;
+    if (!settling) MAT.rescueT += dt;                // MAT-SV A3r3
     if (MAT.rescueT >= 2.5) matRevive();
   }
   settle(N, dt, false);
@@ -5355,8 +5388,8 @@ function matEndTick(dt) {
   }
   if (E.placed && !E.knelt && MAT.endT > 0.8) {      // still dark, the body has settled: the other kneels at the chest
     E.knelt = true;
-    const k = matKneelSpot(fallen, mourner.pos); E.kneel = [...k];   // MAT-GRIEF r2: the shot is built on this line
-    { const fb = fallen.h.bones; if (fb.Head && fb.spine_03) { fb.Head.getWorldPosition(_mPt); fb.spine_03.getWorldPosition(_mPt2); const ax = _mPt.x - _mPt2.x, az = _mPt.z - _mPt2.z; fallen.matTurn = Math.sign((k[0] - _mPt.x) * -az + (k[1] - _mPt.z) * ax) || 1; } }   // MAT-GRIEF A3: the face turns to the mourner's side
+    const gk = MAT.griefKneel || [0.24, 0.6], k = matKneelSpot(fallen, mourner.pos, gk[0], gk[1]); E.kneel = [...k];   // MAT-GRIEF r2: the shot is built on this line (A3r3: at the shoulder, close enough that the hand reaches the face, not the chest)
+    { const fb = fallen.h.bones; if (fb.Head && fb.spine_03) { fb.Head.getWorldPosition(_mPt); fb.spine_03.getWorldPosition(_mPt2); const ax = _mPt.x - _mPt2.x, az = _mPt.z - _mPt2.z; fallen.matTurn = -(Math.sign((k[0] - _mPt.x) * -az + (k[1] - _mPt.z) * ax) || 1) * (MAT.griefFace ?? 0.6); E.hdir = [ax, az]; } }   // MAT-GRIEF A3: the face turns to the mourner's side; A3r3: up and a little towards the lens across the body (turned to the mourner it showed the lens only the back of the head)
     mourner.pos.set(k[0], 0, k[1]); mourner.face = Math.atan2(k[2] - k[0], k[3] - k[1]);
     mourner.h.pose = 'work';
     // MAT-GRIEF r3: Fixing_Kneeling starts standing, kneels, works with its hands and stands up again every 5.2 s: the
@@ -5401,7 +5434,8 @@ function matEndTick(dt) {
     const k = E.kneel || [mourner.pos.x, mourner.pos.z, fallen.pos.x, fallen.pos.z];
     let fx = k[2] - k[0], fz = k[3] - k[1]; const l = Math.hypot(fx, fz) || 1; fx /= l; fz /= l;   // mourner -> the chest
     let side = 1;                                    // three-quarter: the side with a clear line (no trunk, boulder or wall)
-    for (const sd of [1, -1]) { const cx = k[0] + fx * 1.9 + fz * 0.7 * sd, cz = k[1] + fz * 1.9 - fx * 0.7 * sd; if (!arcCamBlocked(k[0], k[1], cx, cz)) { side = sd; break; } }
+    const sds = E.hdir && (fz * E.hdir[0] - fx * E.hdir[1]) < 0 ? [-1, 1] : [1, -1];   // MAT-GRIEF A3r3: the lens sits off towards the fallen one's head first, so the face is in the shot
+    for (const sd of sds) { const cx = k[0] + fx * 1.9 + fz * 0.7 * sd, cz = k[1] + fz * 1.9 - fx * 0.7 * sd; if (!arcCamBlocked(k[0], k[1], cx, cz)) { side = sd; break; } }
     E.fx = [fx, fz]; E.side = side;
     world.clear(k[2], k[3], 2.8);                    // round the two of them
     for (let t = 1.2; t <= 3.4; t += 0.7) world.clear(k[0] + fx * t + fz * 0.36 * t * side, k[1] + fz * t - fx * 0.36 * t * side, 1.3);   // the lens line
@@ -5433,8 +5467,9 @@ function matShowObit(e) {
   $('obit-sub').textContent = e.cause === 'sena' ? 'Embers' : 'Here lies';
   $('obit-name').textContent = e.cause === 'sena' ? 'Sena' : 'Aro';
   $('obit-epi').textContent = e.epitaph;
-  const st = [['Days', e.days], ['Chapter', e.chapterTitle], ['Closeness', e.close], ['Deer', e.deer], ['Wolves', e.wolves], ['Places found', e.found]];
-  if (e.kids) st.push(['Children', e.kids]);
+  const one = (n, a, b) => (n === 1 ? a : b);         // MAT-SV A3r3: "1 Day", not "1 Days"
+  const st = [[one(e.days, 'Day', 'Days'), e.days], ['Chapter', e.chapterTitle], ['Closeness', e.close], ['Deer', e.deer], [one(e.wolves, 'Wolf', 'Wolves'), e.wolves], [one(e.found, 'Place found', 'Places found'), e.found]];
+  if (e.kids) st.push([one(e.kids, 'Child', 'Children'), e.kids]);
   $('obit-stats').innerHTML = st.map(([k, v]) => `<div><b></b>${k}</div>`).join('');
   [...$('obit-stats').children].forEach((d, i) => { d.querySelector('b').textContent = st[i][1]; });
   $('obit-cause').textContent = `${e.cause === 'sena' ? 'Sena could not be saved' : e.cause} · ${MATD.MODES[e.mode]?.name || e.mode}${e.softened ? ' (softened)' : ''}`;
@@ -6742,7 +6777,7 @@ function romSceneEnd(cut = false) {
   const sc = ROM.scene; if (!sc) return;
   ROM.scene = null; ROM.mode = null; ROM.w = ROM.kissK = ROM.browK = 0; ROM.peck = false; busy = false;
   for (const m of ROM.hidden.splice(0)) m.visible = true;
-  if (sc.kind !== 'peck') {                          // ARC-FIX: they let go: a half step apart (the embrace pose ended with them 0.2 m apart, clipped)
+  if (sc.kind !== 'peck' && !sc.o.noPart) {         // ARC-FIX: they let go: a half step apart (ARC-A3r3: noPart: the caller parts them under a cut) (the embrace pose ended with them 0.2 m apart, clipped)
     const ux = N.pos.x - P.pos.x, uz = N.pos.z - P.pos.z, ul = Math.hypot(ux, uz);
     if (ul < 0.75) { const k = (0.8 - ul) / 2, nx = ul > 0.01 ? ux / ul : Math.sin(P.face), nz = ul > 0.01 ? uz / ul : Math.cos(P.face); N.pos.x += nx * k; N.pos.z += nz * k; P.pos.x -= nx * k; P.pos.z -= nz * k; collide(N.pos, 0.3); collide(P.pos, 0.3); }
   }
@@ -7050,9 +7085,22 @@ async function romNight(s) {
     R.tier = order[ti]; R.comfort = Math.max(R.comfort, [0, 3, 6][ti]);
     ROM.nightPending = true; S.rom.nights = (S.rom.nights || 0) + 1; S.rom.dayCaps.night = S.day; romShared();
   }
-  await romSleep(3500);                                                                     // the card holds 3.5 s over the bed
+  // ARC-A3r3: the card holds over the whole night (its 3 s time-lapse ran under it, and the wake began under it too: the
+  // fade lifted on Aro at the wall mid-stretch and Sena half out of bed, her legs under the frame). It lifts on the
+  // morning with the two of them still lying in bed under the blanket; her line is said there, then they get up.
+  const tN = performance.now();
+  while (ok && R.on && R.phase !== 'wake' && performance.now() - tN < 9000) await romSleep(100);
+  if (ok && R.on && R.phase === 'wake') { R.speed = 0; R.lastLook = null; rstShot(R.L.cam.end, R.L.cam.look, 0.01, true); }
+  else await romSleep(Math.max(0, 3500 - (performance.now() - tN)));
   $('fade').classList.remove('on');
   ROM.nightOn = false; setTimeout(() => { ROM.music = false; }, 4000);
+  ARCS.sceneEndAt = clock;                           // ARC-A3r3: no cheerful bow lesson right after the night (bowQuiet's 3 minutes)
+  if (ok && R.on && R.phase === 'wake' && R.speed === 0) {
+    await romSleep(1400);                            // the fade is up
+    const m = ROM.nightLine; ROM.nightLine = null;
+    if (m) { say('Sena', m); await romWaitSubs(9000); await romSleep(500); }
+    if (R.on && R.phase === 'wake') { R.speed = 1; R.lastLook = null; rstShot(R.L.cam.wake, R.L.cam.wakeLook, 0.01, true); }
+  }
   return ok;
 }
 // Into bed at once (RST rstLieNow without the freeze): both lying, holding hands, the night time-lapse starting
@@ -7072,7 +7120,8 @@ on('rested', (e) => {
   ROM.nightPending = false;
   S.rom.contentUntil = S.gh + 16;
   addClose(3, 'a night together');
-  say('Sena', ROMD.L.nightMorning); R.morning = ROMD.L.nightMorning;
+  if (ROM.nightOn) ROM.nightLine = ROMD.L.nightMorning; else say('Sena', ROMD.L.nightMorning);   // ARC-A3r3: under the night's card, romNight says it once the card lifts on the two of them in bed
+  R.morning = ROMD.L.nightMorning;
   setTimeout(() => toast('Content: the cold bites less today'), 2500);
 }, 90);
 function romChillK() { return S.rom?.contentUntil > S.gh ? 0.8 : 1; }
@@ -7159,13 +7208,23 @@ async function romScene(kind = 'handfast', o = {}) {
     say('Sena', 'Then I will hold you to it. Every day of it.');
     await romWaitSubs(16000);
     ROM.hand = null; ROM.cord.visible = false;
-    if (romSetting() !== 'off') await romSceneStart('kiss', { lines: null, keepCam: true });
-    // the dance: a step apart (the clip is a solo dance), a wider shot held over it, then the camera goes home
-    { const ux = N.pos.x - P.pos.x, uz = N.pos.z - P.pos.z, ul = Math.hypot(ux, uz) || 1; N.pos.x += (ux / ul) * 0.42; N.pos.z += (uz / ul) * 0.42; P.pos.x -= (ux / ul) * 0.42; P.pos.z -= (uz / ul) * 0.42; collide(N.pos, 0.3); collide(P.pos, 0.3); }
+    if (romSetting() !== 'off') await romSceneStart('kiss', { lines: null, keepCam: true, noPart: true });
+    // the dance: a step apart (the clip is a solo dance), a wider shot held over it, then the camera goes home.
+    // ARC-A3r3: they part under a hard cut to the wide shot (they snapped 1.6 m apart inside the close two-shot, then a
+    // 1.4 s glide from one side of them to the other passed through them: 2-3 s of an empty frame, then a head cut off)
+    { const ux = N.pos.x - P.pos.x, uz = N.pos.z - P.pos.z, ul = Math.hypot(ux, uz) || 1, mx = (P.pos.x + N.pos.x) / 2, mz = (P.pos.z + N.pos.z) / 2;
+      N.pos.set(mx + (ux / ul) * 0.5, 0, mz + (uz / ul) * 0.5); P.pos.set(mx - (ux / ul) * 0.5, 0, mz - (uz / ul) * 0.5); collide(N.pos, 0.3); collide(P.pos, 0.3);
+      P.face = Math.atan2(N.pos.x - P.pos.x, N.pos.z - P.pos.z); N.face = Math.atan2(P.pos.x - N.pos.x, P.pos.z - N.pos.z); }
     for (const e of [P, N]) { e.dance = 6; e.h.pose = e.h.has('dance') ? 'dance' : null; }
-    const dx = (P.pos.x + N.pos.x) / 2, dz = (P.pos.z + N.pos.z) / 2, dg = getHeight(dx, dz), da = P.face + Math.PI / 2;
-    const dp = new THREE.Vector3(dx + Math.sin(da) * 4.2, dg + 1.9, dz + Math.cos(da) * 4.2), dl = new THREE.Vector3(dx, dg + 1.0, dz);
-    structCam(dl, dp); R.lastLook = null; rstShot(dp, dl, 1.4);
+    const dx = (P.pos.x + N.pos.x) / 2, dz = (P.pos.z + N.pos.z) / 2, dg = getHeight(dx, dz), ax = Math.atan2(N.pos.x - P.pos.x, N.pos.z - P.pos.z);
+    const heads = [P, N].map((e) => new THREE.Vector3(e.pos.x, getHeight(e.pos.x, e.pos.z) + 1.55, e.pos.z));
+    let dp = null;
+    for (const [da, dd] of [[ax + Math.PI / 2, 3.8], [ax - Math.PI / 2, 3.8], [ax + Math.PI / 2 + 0.4, 3.8], [ax - Math.PI / 2 - 0.4, 3.8], [ax + Math.PI / 2, 4.6], [ax - Math.PI / 2, 4.6]]) {
+      const c = new THREE.Vector3(dx + Math.sin(da) * dd, 0, dz + Math.cos(da) * dd); c.y = Math.max(getHeight(c.x, c.z), dg) + 1.75;
+      dp ||= c; if (arcSeen(c, heads, [P.h.root, N.h.root])) { dp = c; break; }
+    }
+    const dl = new THREE.Vector3(dx, dg + 1.1, dz);
+    structCam(dl, dp); R.lastLook = null; rstShot(dp, dl, 0.01, true);
     emit('romance', { kind: 'handfast', vow: i });
     await romSleep(6000);
     return i;
@@ -9112,7 +9171,17 @@ async function arcReckoning() {
     if (c2 === 'kill') {
       if (duel === 'dead') { for (const e of ARCS.npcs) if (/^hunter/.test(e.id)) { e.mode = 'leave'; e.spd = 4; e.tx = e.pos.x + (e.pos.x - P.pos.x) * 8; e.tz = e.pos.z + (e.pos.z - P.pos.z) * 8; } await arcWait(2.5); }
       else await arcFade(L.killFade, () => { arcDead(arcGet('korr') || k); for (const e of ARCS.npcs) if (/^hunter/.test(e.id)) { e.mode = 'leave'; e.spd = 4; e.tx = e.pos.x + (e.pos.x - P.pos.x) * 8; e.tz = e.pos.z + (e.pos.z - P.pos.z) * 8; } }, 2600);
-      arcSenaSays(L.kill);
+      // ARC-A3r3: the aftermath is a letterboxed exchange (the HUD came back for 'Is it over?' while the lines went on):
+      // Sena comes to his side, each line framed on its speaker
+      if (Math.hypot(N.pos.x - P.pos.x, N.pos.z - P.pos.z) < 30 && !(N.downed > 0)) {
+        const cineA = !$('hud').classList.contains('cine'); if (cineA) cine(true);
+        try {
+          if (typeof wpnStowAll === 'function') wpnStowAll('story', true);
+          ARCS.focus = N; arcTwoShot(P, N, 3);
+          for (let i = 0; i < 16 && Math.hypot(N.pos.x - P.pos.x, N.pos.z - P.pos.z) > 2.6; i++) await arcWait(0.25);
+          arcFace(P, N.pos); await arcTalk(L.kill, N); await arcWait(0.6);
+        } finally { ARCS.focus = null; if (cineA) cine(false); }
+      } else arcSenaSays(L.kill);
     } else if (c2 === 'spare') {
       if (duel !== 'downed') await arcFade(L.spareFade, () => { const kk = arcGet('korr') || k; kk.mode = 'sit'; kk.jy = -0.44; }, 2400);
       ARCS.focus = arcGet('korr') || k;
@@ -9360,11 +9429,15 @@ async function arcRaidFight(resumed) {
         if (view !== 'fpp') {                        // GC-FIX9: over Aro's right shoulder, his head and shoulders in the left third, a long lens on the torches
           let mx = 0, mz = 0; for (const f of list) { mx += f.pos.x / list.length; mz += f.pos.z / list.length; }
           const fa = Math.atan2(mx - P.pos.x, mz - P.pos.z), fx = Math.sin(fa), fz = Math.cos(fa); P.face = fa;
-          camShot = ARCS.shot = { pos: new THREE.Vector3(P.pos.x - fx * 2.7 - fz * 0.95, gy + 1.95, P.pos.z - fz * 2.7 + fx * 0.95), look: new THREE.Vector3(mx, getHeight(mx, mz) + 1.1, mz), t: 3.5 };
+          camShot = ARCS.shot = { pos: new THREE.Vector3(P.pos.x - fx * 3.4 - fz * 1.25, gy + 2.2, P.pos.z - fz * 3.4 + fx * 1.25), look: new THREE.Vector3(mx, getHeight(mx, mz) + 1.1, mz), t: 5.5 };   // ARC-A3r3: a step further back and up (his dark back filled the left third)
           camera.fov = 34; camera.updateProjectionMatrix();   // eases back to the player's FOV after the shot
         }
-        say('Sena', RD.lit >= 4 ? 'The braziers! I can see them coming. Aro, there!' : 'I cannot see them, Aro. Only the torches.');
-        try { await arcWait(3.2); } finally { if (lookCine) cine(false); }
+        try {
+          for (let i = 0; i < 10 && $('event').classList.contains('on'); i++) await arcWait(0.2);   // ARC-A3r3: her line after the alarm banner, not under it
+          subs.length = 0; subT = 0; $('sub').classList.remove('on');
+          say('Sena', RD.lit >= 4 ? 'The braziers! I can see them coming. Aro, there!' : 'I cannot see them, Aro. Only the torches.');
+          await arcWait(3.2);
+        } finally { if (lookCine) cine(false); }
         if (camShot === ARCS.shot) camShot = null; ARCS.shot = null;
       }
       RD.left = list.length + rest; save();
@@ -9514,14 +9587,23 @@ function arcLowShot(x1, z1, x2, z2, t = 60, o = {}) {
   if (view === 'fpp') return;
   const mx = (x1 + x2) / 2, mz = (z1 + z2) / 2, gy = Math.max(getHeight(mx, mz), 0.2), a = Math.atan2(x2 - x1, z2 - z1);
   const tgt = [[x1, z1], [x2, z2], ...(o.pts || [])].map(([x, z]) => new THREE.Vector3(x, Math.max(getHeight(x, z), 0.2) + 0.45, z));
+  const yH = o.y || 1.35;
+  // ARC-A3r3: o.face (a body lying on its back): the lens goes toward its feet and away from the one kneeling (from
+  // the head end the thrown-back head and flung arms read as a body face down)
+  let fdx = 0, fdz = 0, kx = 0, kz = 0;
+  if (o.face) { const B = o.face.bones; B.pelvis.getWorldPosition(_alP); B.spine_03.getWorldPosition(_alC); const l = Math.hypot(_alP.x - _alC.x, _alP.z - _alC.z) || 1; fdx = (_alP.x - _alC.x) / l; fdz = (_alP.z - _alC.z) / l; const kl = Math.hypot(x2 - x1, z2 - z1) || 1; kx = (x2 - x1) / kl; kz = (z2 - z1) / kl; }
   let best = null, bs = -1e9;
   for (const d of [o.d || 2.9, (o.d || 2.9) + 0.8]) for (const sw of [0, Math.PI, 0.5, -0.5, Math.PI + 0.5, Math.PI - 0.5, 1.0, -1.0, 1.5, -1.5]) {
-    const b = a + Math.PI / 2 + sw, px = mx + Math.sin(b) * d, pz = mz + Math.cos(b) * d, py = Math.max(getHeight(px, pz), 0.2) + 1.35;
+    const b = a + Math.PI / 2 + sw, px = mx + Math.sin(b) * d, pz = mz + Math.cos(b) * d, py = Math.max(getHeight(px, pz), 0.2) + yH;
     let sc = -Math.abs(Math.sin(sw)) * 2 - (d > (o.d || 2.9) ? 0.6 : 0);
+    if (o.face) sc += 3 * (Math.sin(b) * fdx + Math.cos(b) * fdz) + 0.8 * (Math.sin(b) * kx + Math.cos(b) * kz) + (Math.abs(Math.sin(sw)) < 0.6 && Math.abs(Math.sin(sw)) > 0.3 ? 2.2 : 0);   // a three-quarter view from the feet
     if (!arcClearAt(px, pz, 0.3)) sc -= 5;
     for (const q of structs) if (q.kind === 'fire' && q.rise > 0.2) {   // never through the fire ring, its logs and benches
       const L = Math.hypot(px - mx, pz - mz) || 1, u = clamp(((q.x - mx) * (px - mx) + (q.z - mz) * (pz - mz)) / (L * L), 0, 1);
       if (Math.hypot(mx + (px - mx) * u - q.x, mz + (pz - mz) * u - q.z) < 2.3) sc -= 6;
+      // ARC-A3r3: nor with the ring and its bench logs in the frame's edge near the lens (a log's black end stood in the left of Tamu's shot)
+      const fq = Math.hypot(q.x - px, q.z - pz), cosA = ((q.x - px) * (mx - px) + (q.z - pz) * (mz - pz)) / ((fq || 1) * L);
+      if (fq < 2.6 || (fq < 5.5 && cosA > 0.62)) sc -= 5;
     }
     if (arcCamBlocked(mx, mz, px, pz)) sc -= 6;
     if (arcLineHits(mx, mz, px, pz, null)) sc -= 3;
@@ -9529,7 +9611,7 @@ function arcLowShot(x1, z1, x2, z2, t = 60, o = {}) {
     if (sc > bs) { bs = sc; best = [px, pz]; }
   }
   const cx = tgt.reduce((s, v) => s + v.x, 0) / tgt.length, cz = tgt.reduce((s, v) => s + v.z, 0) / tgt.length;   // aimed at the middle of everyone in it
-  camShot = ARCS.shot = { pos: new THREE.Vector3(best[0], Math.max(getHeight(best[0], best[1]), 0.2) + 1.35, best[1]), look: new THREE.Vector3(cx, gy + 0.4, cz), t, untilSubs: true };
+  camShot = ARCS.shot = { pos: new THREE.Vector3(best[0], Math.max(getHeight(best[0], best[1]), 0.2) + yH, best[1]), look: new THREE.Vector3(cx, gy + 0.4, cz), t, untilSubs: true };
 }
 function arcTamuFall() {
   const t = arcGet('tamu') || (arcTamuHome(), arcGet('tamu')); if (!t) return;
@@ -9546,8 +9628,40 @@ function arcTamuFall() {
     const k = arcKneelBy(t, N.pos, sp);
     N.pos.set(k[0], 0, k[1]); collide(N.pos, 0.25);
     ARCS.nHold = { at: new THREE.Vector3(k[2], 0, k[3]), pose: 'work' }; arcKneelOv(N, true);
-    const fx = Math.sin(t.face), fz = Math.cos(t.face);   // his whole length in the frame (he lay cut off at the edge)
-    arcLowShot(N.pos.x, N.pos.z, k[2], k[3], 8, { skip: [N.h.root, t.h.root], d: 3.2, pts: [[t.pos.x + fx * 0.9, t.pos.z + fz * 0.9], [t.pos.x - fx * 0.9, t.pos.z - fz * 0.9]] });
+    arcLieBack(t, N.pos);                            // ARC-A3r3: on his back, a hand on the wound, his face turned up to her
+    // ARC-A3r3: a closer, higher three-quarter shot from the side his face is turned to (a distant wide shot read as a
+    // man face down, and a fire log's end stood in the frame's edge): his head and chest and Sena at his side
+    const hd = t.h.bones.Head.getWorldPosition(new THREE.Vector3());
+    arcLowShot(N.pos.x, N.pos.z, k[2], k[3], 8, { skip: [N.h.root, t.h.root], d: 2.5, y: 1.7, face: t.h, pts: [[hd.x, hd.z]] });
+  });
+}
+// ARC-A3r3: someone lying wounded or dying on their back (Tamu's last line, Sena at the raid's dawn). The death clip's
+// last frame has the arms flung out past the head and the head thrown back: from most lenses it read as a body face
+// down. The arms come down (one hand pressed to the wound under the ribs, the other on the ground by the hip), the
+// chin comes down and the face turns to the one kneeling beside them (MAT's matNeck / matTurn).
+const _alC = new THREE.Vector3(), _alP = new THREE.Vector3(), _alU = new THREE.Vector3(), _alT = new THREE.Vector3(), _alQ = new THREE.Vector3();
+function arcLieBack(e, from) {
+  e.h.removeOverride('arcLieArms');
+  if (!from) { e.matNeck = false; return; }
+  const b = e.h.bones; e.h.root.updateMatrixWorld(true);
+  if (b.Head && b.spine_03) { b.Head.getWorldPosition(_alC); b.spine_03.getWorldPosition(_alP); const ax = _alC.x - _alP.x, az = _alP.z - _alC.z; e.matTurn = Math.sign((from.x - _alC.x) * az + (from.z - _alC.z) * ax) || 1; }
+  e.matNeck = true;
+  e.h.addOverride('arcLieArms', 12, (h) => {
+    const w = e.matUp > 0 ? smooth01(e.matUp / 1.1) : (e.matW ?? 1); if (!(w > 0)) return;
+    const B = h.bones; B.spine_03.getWorldPosition(_alC); B.pelvis.getWorldPosition(_alP);
+    let ax = _alC.x - _alP.x, az = _alC.z - _alP.z; const l = Math.hypot(ax, az) || 1; ax /= l; az /= l;
+    for (const sd of ['l', 'r']) {
+      B['upperarm_' + sd].getWorldPosition(_alU);
+      let sx = az, sz = -ax; if ((_alU.x - _alC.x) * sx + (_alU.z - _alC.z) * sz < 0) { sx = -sx; sz = -sz; }   // out to this arm's side
+      if (sd === 'r') {                              // the hand on the wound, below the ribs
+        _alT.lerpVectors(_alC, _alP, 0.5); _alT.x += sx * 0.06; _alT.z += sz * 0.06; _alT.y += 0.13;
+        _alQ.copy(_alT); _alQ.x += sx * 0.5 + ax * 0.1; _alQ.z += sz * 0.5 + az * 0.1; _alQ.y += 0.15;
+      } else {                                       // the other arm down by the side, the hand on the ground by the hip
+        _alT.copy(_alP); _alT.x += sx * 0.3 + ax * 0.05; _alT.z += sz * 0.3 + az * 0.05; _alT.y = Math.max(_alP.y - 0.06, getHeight(_alT.x, _alT.z) + 0.05);
+        _alQ.copy(_alT); _alQ.x += sx * 0.25 + ax * 0.35; _alQ.z += sz * 0.25 + az * 0.35; _alQ.y += 0.4;
+      }
+      ik2(h, sd, _alT, _alQ, w);
+    }
   });
 }
 // ARC-A3: one still kneeling frame, held (Fixing_Kneeling stands up again every 5.2 s: she rose to her feet over
@@ -9597,8 +9711,9 @@ function arcDawnStage(h) {
     N.h.root.updateMatrixWorld(true);
     const k = arcKneelBy(N, P.pos, null); P.pos.set(k[0], 0, k[1]); collide(P.pos, 0.25);
     ARCS.dawnSite = { x: k[2], z: k[3], rise: 0 }; P.work = 60; P.workSite = ARCS.dawnSite; P.face = Math.atan2(k[2] - P.pos.x, k[3] - P.pos.z); arcKneelOv(P, true);
-    const fx = Math.sin(N.face), fz = Math.cos(N.face);
-    arcLowShot(P.pos.x, P.pos.z, k[2], k[3], 30, { skip: [P.h.root, N.h.root], pts: [[N.pos.x + fx * 0.8, N.pos.z + fz * 0.8], [N.pos.x - fx * 0.8, N.pos.z - fz * 0.8]] });
+    arcLieBack(N, P.pos);                            // ARC-A3r3: on her back (the death clip's frame read as face down), a hand on the wound, her face to him
+    const fx = Math.sin(N.face), fz = Math.cos(N.face), hd = N.h.bones.Head.getWorldPosition(new THREE.Vector3());
+    arcLowShot(P.pos.x, P.pos.z, k[2], k[3], 30, { skip: [P.h.root, N.h.root], y: 1.65, face: N.h, pts: [[hd.x, hd.z], [N.pos.x - fx * 0.8, N.pos.z - fz * 0.8]] });
   });
 }
 function arcDawnUp() {
@@ -9606,6 +9721,7 @@ function arcDawnUp() {
   ARCS.nHold = null; arcKneelOv(P, false);           // ARC-A3: busy stays until the dawn's letterbox ends (arcRaidAfter)
   if (P.workSite === ARCS.dawnSite) { P.work = 0; P.workSite = null; } ARCS.dawnSite = null;
   N.matUp = 1.1; N.matW = 1; if (N.h.has('getUp')) N.h.swing('getUp', 1.35);
+  setTimeout(() => { if (!ARCS.nHold) arcLieBack(N, null); }, 1600);   // ARC-A3r3: the arms and head are hers again once she is up
 }
 // CMB torch scorch marks on the buildings fade into the morning's repair (the house keeps ARC's own scorch if it burned).
 function arcUnscorch() {
@@ -9854,7 +9970,8 @@ function arcSena(dt) {
   }
   if (ARCS.jealous) {                                // laughing with Tamu on the far bench
     const f = structs.find((s) => s.kind === 'fire'); if (!f) { ARCS.jealous = false; return false; }
-    const [, b] = fireSeats(f); N.pos.set(b[0], 0, b[1]); N.face = Math.atan2(f.x - b[0], f.z - b[1]); N.speed = 0; N.h.pose = N.h.has('sitTalk') ? 'sitTalk' : 'sit';
+    const [, b] = fireSeats(f), bd = Math.hypot(f.x - b[0], f.z - b[1]) || 1, so = 0.3 / bd;   // ARC-A3r3: the sit clip's hips sit 0.34 m behind its root: the root goes toward the fire, so she sits on the log and her shins hang in front of it (they ran through it)
+    N.pos.set(b[0] + (f.x - b[0]) * so, 0, b[1] + (f.z - b[1]) * so); N.face = Math.atan2(f.x - b[0], f.z - b[1]); N.speed = 0; N.h.pose = N.h.has('sitTalk') ? 'sitTalk' : 'sit';
     settle(N, dt, false); return true;
   }
   if (ARCS.scene && ARCS.focus && ARCS.scene !== 'vigil') {   // stand by Aro and face whoever is talking
@@ -10011,7 +10128,12 @@ function arcJealousBeat() {
     ARCS.focus = N; arcFireGrass(f);
     const cineOn = !$('hud').classList.contains('cine'); if (cineOn) cine(true);   // ARC-FIX4: letterbox, HUD away for the scene
     try {
-    arcFireTwoShot(f, N, t); await arcWait(1.6);
+    arcFireTwoShot(f, N, t);
+    // ARC-A3r3: the scene opens clean: no chapter card or banner over Tamu's first line, and no stray line queued
+    // before it (the 'Clay and Flame' card covered the opening when the chapter started on the scene's evening)
+    for (let i = 0; i < 32 && ($('event').classList.contains('on') || $('card').classList.contains('on')); i++) await arcWait(0.25);
+    subs.length = 0; subT = 0; $('sub').classList.remove('on');
+    await arcWait(1.6);
     await arcTalk(L.scene, arcGet('tamu'));
     arcFireTwoShot(f, N, t);                         // ARC-FIX4: the choice over the two of them laughing (not a blurred back under the panel)
     $('choice').classList.add('low');
@@ -13339,6 +13461,7 @@ Object.assign(window.G, {
     downed: () => P.downed || 0, rescuing: () => MAT.rescuing, dead: () => MAT.dead, stones: () => MATD.readStones(), respawnAt: matRespawnAt, loot: matLoot,
     griefHold: (t = 0) => { MAT.endHold = t; return MAT.endT; },   // MAT-GRIEF r3: test hook
     tune: (o) => Object.assign(MAT, o || {}), M: () => MAT,       // MAT A3: test hook (neckFix, griefLook, griefDrop)
+    bankSpot: (x, z) => matBankSpot(x, z), bank: () => P.matBank,   // MAT-SV A3r3: test hooks
     gate: matGate, newGame: (mode = 'survivor', custom = null) => { settings.ageOk = MATD.CONTENT_V; saveSettings(); matGate(false); start(false, { mode, custom }); },
     state: () => ({ busy, downed: P.downed || 0, hits: MAT.downHits, rescueT: MAT.rescueT, rescuing: MAT.rescuing, dead: MAT.dead, endT: MAT.endT, gh: S.gh, weak: S.weakUntil > S.gh, mode: S.diff.mode }),
     DIFF: MATD.DIFF, BUS: MATD.BUS, foes,

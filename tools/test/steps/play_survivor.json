@@ -235,7 +235,7 @@
 "wait": 500
 },
 {
-"js": "(async()=>{ const o=DEER, log=[]; for (let k=0;k<6 && o.state==='live';k++){ UP(); const p=o.root.position; await LOOK(p.x, p.y+0.75*(o.root.scale.x||1), p.z); const ar=await G.bow.shoot(1); const t0=performance.now(); while(ar && ar.st==='air' && performance.now()-t0<3000) await new Promise(r=>setTimeout(r,50)); log.push(G.bow.st(ar)); } return JSON.stringify({log, state:o.state}); })()",
+"js": "(async()=>{ const o=DEER, log=[]; const AIM=async(x,y,z)=>{ const c=G.camera, d=new c.position.constructor(), f=()=>new Promise(r=>requestAnimationFrame(r)); let p=G.pitch||0, e=1; for (let k=0;k<24;k++){ G.yaw=Math.atan2(-(x-c.position.x),-(z-c.position.z)); G.pitch=p; for (let j=0;j<4;j++) await f(); c.getWorldDirection(d); const w=new c.position.constructor(x,y,z).sub(c.position).normalize(); e=d.angleTo(w); if (k>=3 && e<0.004) break; p+=(Math.asin(d.y)-Math.asin(w.y))*0.9; } return e; }; for (let k=0;k<6 && o.state==='live';k++){ UP(); const p=o.root.position; log.push(+(await AIM(p.x, p.y+0.75*(o.root.scale.x||1), p.z)).toFixed(4)); const ar=await G.bow.shoot(1); const t0=performance.now(); while(ar && ar.st==='air' && performance.now()-t0<3000) await new Promise(r=>setTimeout(r,50)); log.push(G.bow.st(ar)); } return JSON.stringify({log, state:o.state}); })()",
 "wait": 500
 },
 {

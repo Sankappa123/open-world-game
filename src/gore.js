@@ -545,7 +545,11 @@ function woundCompile(u, wounds) {
     vec3 bloodWet = mix(vec3(0.21, 0.026, 0.02), vec3(0.46, 0.035, 0.026), goreDark), bloodDry = mix(vec3(0.10, 0.026, 0.018), vec3(0.24, 0.03, 0.022), goreDark), dust = vec3(0.30, 0.235, 0.165);   // FIX gore-cmb: less saturated, darker
     // tribe ash paint (CMB): rough patches around bone points
     for (int i = 0; i < 4; i++) { if (i >= uPN) break; vec3 q = (vGoreBind - uP[i].xyz) / uP[i].w;
-      float d = length(q) + (goreN(q * 2.5 + 3.1) - 0.5) * 0.8; diffuseColor.rgb = mix(diffuseColor.rgb, uPC, (1.0 - smoothstep(0.6, 1.0, d)) * 0.8); }
+      float d = length(q) + (goreN(q * 2.5 + 3.1) - 0.5) * 0.8;
+      // ARC-A3r3: ash rubbed into the skin, not paint over it: the skin's own shading shows through, streaky and uneven
+      // (a flat 80% grey read as white, untextured hands and forearms)
+      float pa = (1.0 - smoothstep(0.55, 1.0, d)) * (0.35 + 0.45 * goreN(q * 7.0 + 1.3));
+      diffuseColor.rgb = mix(diffuseColor.rgb, diffuseColor.rgb * 0.45 + uPC * 0.32, pa); }
     float core = 0.0, torn = 0.0;
     for (int i = 0; i < 8; i++) {
       if (i >= uWN) break;
