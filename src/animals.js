@@ -99,7 +99,9 @@ function makeBear(scale) {
   const run = mixer.clipAction(src.animations[0]); run.play();
   let mode = 'Idle', speed = 1, once = false, t = 0, flinch = 0, swipeT = 0, dead = false, th = 0, thv = 0;
   const a = {
-    root, kind: 'bear', model, mesh, bone: () => null, rear: 0, rearW: 0,
+    root, kind: 'bear', model, mesh, bone: () => null, rear: 0, rearW: 0, side: 1,   // GC-FIX7: side ±1, the flank it falls on (main picks the clear one)
+    // GC-FIX7: put the body in its fallen pose on `side` (or back upright with th = 0) to test where it would lie
+    lieAs(s, ang = 1.48) { roll.rotation.z = -ang * s; roll.position.y = Math.sin(ang) * 0.32 * (scale / 0.0105); pitch.rotation.x = 0; body.rotation.y = 0; root.updateMatrixWorld(true); },
     play(name, o = false, sp = 1) {
       if (dead && name !== 'Death') return;
       if (name === 'Death') { dead = true; mode = 'Death'; th = 0; thv = 0; return; }
@@ -127,7 +129,7 @@ function makeBear(scale) {
       pitch.rotation.x = px;
       if (dead) {                                    // topple onto the right side
         if (th < 1.48) { thv += 9 * Math.sin(th + 0.1) * dt; th = Math.min(1.48, th + thv * dt); if (th >= 1.48) thv = 0; }
-        roll.rotation.z = -th; roll.position.y = Math.sin(th) * 0.32 * (scale / 0.0105);
+        roll.rotation.z = -th * a.side; roll.position.y = Math.sin(th) * 0.32 * (scale / 0.0105);
       }
     },
   };

@@ -25,6 +25,9 @@ export const COMBO = {
   spear: [['jabU', 1.4, 0.5, 0.2, 2.1, 0.35, 1], ['jabU', 1.55, 0.5, 0.19, 2.1, 0.35, 1], ['jabU', 1.1, 0.75, 0.3, 2.2, 0.4, 1.4]],
   fists: [['jabU', 1.7, 0.4, 0.17, 0.9, 0.2, 1], ['crossU', 1.7, 0.44, 0.19, 0.9, 0.2, 1.1], ['hookU', 1.3, 0.6, 0.25, 0.9, 0.25, 1.5]],
 };
+// GC-FIX7: light 2 of the axe against a low animal (its head top under LOW_TOP m): the overhead chop again, a touch
+// slower (Sword_Regular_B is a level slash at shoulder height: the head passed 1.2 m up, over a wolf's 0.75 m back)
+export const LOW2 = ['strikeU', 1.65, 0.52, 0.285, 1.2, 0.2, 1.05], LOW_TOP = 1.2;
 export const HEAVY = { axe: ['swordC', 1.0, 1.15, 0.7, 1.25, 0.15], spear: ['jabU', 0.9, 1.0, 0.42, 2.3, 0.4], fists: ['hookU', 1.0, 0.85, 0.36, 0.95, 0.25] };
 export const STEP = { axe: 1.3, spear: 0.8, fists: 1.1, keep: 0.4 };   // m; keep: how far inside the reach the step ends (the blade bites, it does not graze)
 // The step in: how far to move toward a target whose surface is `gap` m away, for a swing of `reach` (0: none needed or too far).

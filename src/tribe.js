@@ -178,12 +178,15 @@ export function createTribe(ctx) {
 
   // ---------- attacks ----------
   const handPos = (f, out = _v2) => { f.h.bones.hand_r.getWorldPosition(out); return out; };
+  const RSWING = { strikeU: [1.0, 0.46], swordB: [0.68, 0.35], swordC: [0.95, 0.71] };   // GC-FIX7: [timeScale, strike s] (hand peak: 0.46 / 0.24 / 0.67 s at 1x)
   function startAttack(f, t) {
     const heavy = Math.random() < (f.chief ? 0.4 : 0.25);
-    const wind = heavy ? 0.6 : 0.45;
+    // GC-FIX7: blade swings land when the blade comes through (the hand's furthest reach, measured per clip): the light
+    // ones alternate the overhead chop and the level slash (Sword_Regular_A only drew the axe back: it never came forward)
+    const clip = f.wpn === 'spear' ? 'jabU' : f.wpn === 'none' ? (heavy ? 'hookU' : 'jabU') : heavy ? 'swordC' : (f.combo = (f.combo || 0) + 1) % 2 ? 'strikeU' : 'swordB';
+    const [ts, wind] = RSWING[clip] || [heavy ? 0.85 : 0.75, heavy ? 0.6 : 0.45];
     f.atk = { t: 0, wind, heavy, target: t, struck: false };
-    const clip = f.wpn === 'spear' ? 'jabU' : heavy ? 'swordC' : (f.combo = (f.combo || 0) + 1) % 2 ? 'swordA' : 'swordB';
-    f.h.swing(f.wpn === 'none' ? (heavy ? 'hookU' : 'jabU') : clip, heavy ? 0.85 : 0.75);
+    f.h.swing(clip, ts);
     ctx.glint(() => handPos(f, _hp), heavy, wind + 0.1);
     ctx.sfx.grunt(f.pos, heavy);
   }

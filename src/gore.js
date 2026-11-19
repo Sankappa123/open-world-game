@@ -90,10 +90,11 @@ const smooth = (x) => { x = Math.min(1, Math.max(0, x)); return x * x * (3 - 2 *
 
 // ----- textures (procedural: a splat atlas, a soft puff, screen splatter sprites)
 function splatAtlas() {
-  const c = document.createElement('canvas'); c.width = 512; c.height = 256;
+  const c = document.createElement('canvas'); c.width = 512; c.height = 384;   // GC-FIX7: 4 x 3 tiles (row 2: four more pools)
   const g = c.getContext('2d');
   const blob = (x, y, r, a = 1) => { const gr = g.createRadialGradient(x, y, 0, x, y, r); gr.addColorStop(0, `rgba(255,255,255,${a})`); gr.addColorStop(0.72, `rgba(255,255,255,${a * 0.9})`); gr.addColorStop(1, 'rgba(255,255,255,0)'); g.fillStyle = gr; g.beginPath(); g.arc(x, y, r, 0, 6.2832); g.fill(); };
-  for (let t = 0; t < 8; t++) {
+  for (let t = 0; t < 12; t++) {
+    if (t === 6 || t >= 8) { poolTile(g, (t % 4) * 128, Math.floor(t / 4) * 128, t); continue; }   // GC-FIX7: pools are irregular, never a disc
     const ox = (t % 4) * 128, oy = Math.floor(t / 4) * 128, cx = ox + 64, cy = oy + 64;
     g.save(); g.beginPath(); g.rect(ox, oy, 128, 128); g.clip();
     if (t < 4) {                                         // FIX gore-cmb: impact splats thrown one way (canvas +y = the heading on the ground):
@@ -121,6 +122,41 @@ function splatAtlas() {
   }
   const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace; t.anisotropy = 4; return t;
 }
+// GC-FIX7: a pool of blood as it really spreads on the ground: one main body with a wavy, lopsided outline (several
+// harmonics, the centre off to one side), tongues that ran off in one general direction (canvas +y), a satellite drop
+// or two, a soaked fringe, and a darker, thicker middle (the texel grey multiplies the instance colour: thin edges read
+// redder, the deep middle near-black). Kept inside its 128 px tile so no edge is cut.
+function poolTile(g, ox, oy, seed) {
+  const cx = ox + 64 + (rnd() - 0.5) * 10, cy = oy + 56 + (rnd() - 0.5) * 8;
+  g.save(); g.beginPath(); g.rect(ox, oy, 128, 128); g.clip();
+  const ph = [rnd() * 6.28, rnd() * 6.28, rnd() * 6.28, rnd() * 6.28, rnd() * 6.28], A = [0.16 + rnd() * 0.1, 0.1 + rnd() * 0.06, 0.06 + rnd() * 0.04, 0.035, 0.02];
+  const R0 = 30 + rnd() * 4, sq = 0.78 + rnd() * 0.16;
+  const rad = (a, k = 1) => R0 * k * (1 + A[0] * Math.sin(2 * a + ph[0]) + A[1] * Math.sin(3 * a + ph[1]) + A[2] * Math.sin(5 * a + ph[2]) + A[3] * Math.sin(9 * a + ph[3]) + A[4] * Math.sin(17 * a + ph[4]));
+  const shape = (k, dx = 0, dy = 0) => { g.beginPath(); for (let i = 0; i <= 96; i++) { const a = (i / 96) * 6.2832, r = rad(a, k); const x = cx + dx + Math.cos(a) * r, y = cy + dy + Math.sin(a) * r * sq; i ? g.lineTo(x, y) : g.moveTo(x, y); } g.closePath(); g.fill(); };
+  const tongues = [];
+  for (let i = 0, n = 2 + ((rnd() * 3) | 0); i < n; i++) {           // runs: a chain of shrinking beads along a bending path
+    let a = Math.PI / 2 + (rnd() - 0.5) * 2.2, x = cx + Math.cos(a) * rad(a) * 0.8, y = cy + Math.sin(a) * rad(a) * sq * 0.8, w = 9 + rnd() * 6;
+    const L = 10 + rnd() * 18, pts = [];
+    for (let s = 0; s < L; s += 2) { a += (rnd() - 0.5) * 0.35; x += Math.cos(a) * 2; y += Math.sin(a) * 2; w *= 0.955; pts.push([x, y, Math.max(1.6, w)]); }
+    tongues.push(pts);
+  }
+  // 1. the soaked fringe: a faint, wider stain where the blood wicked into soil and grass
+  g.filter = 'blur(4px)'; g.fillStyle = 'rgba(205,205,205,0.32)'; shape(1.18, 1, 2);
+  for (const t of tongues) for (const [x, y, w] of t) { g.beginPath(); g.arc(x, y, w * 1.35, 0, 6.2832); g.fill(); }
+  // 2. the pool itself, a hard-ish wet edge
+  g.filter = 'blur(1.2px)'; g.fillStyle = 'rgba(232,232,232,0.96)'; shape(1);
+  for (const t of tongues) for (const [x, y, w] of t) { g.beginPath(); g.arc(x, y, w, 0, 6.2832); g.fill(); }
+  for (let i = 0, n = 2 + ((rnd() * 4) | 0); i < n; i++) {           // satellite drops and a small separate puddle
+    const a = rnd() * 6.28, r = rad(a) * (1.12 + rnd() * 0.3), s = 1.5 + Math.pow(rnd(), 2) * 6;
+    g.beginPath(); g.ellipse(cx + Math.cos(a) * r, cy + Math.sin(a) * r * sq, s, s * (0.6 + rnd() * 0.4), rnd() * 3, 0, 6.2832); g.fill();
+  }
+  // 3. the deep middle: darker (thicker blood), off-centre, with its own wobble
+  g.filter = 'blur(6px)'; g.globalCompositeOperation = 'source-atop';
+  g.fillStyle = 'rgba(70,70,70,0.55)'; shape(0.62, (rnd() - 0.5) * 8, -3 + (rnd() - 0.5) * 6);
+  g.fillStyle = 'rgba(40,40,40,0.35)'; shape(0.36, (rnd() - 0.5) * 8, -4);
+  g.filter = 'none'; g.globalCompositeOperation = 'source-over';
+  void seed; g.restore();
+}
 function puffTexture() {
   const c = document.createElement('canvas'); c.width = c.height = 64; const g = c.getContext('2d'), gr = g.createRadialGradient(32, 32, 0, 32, 32, 32);
   gr.addColorStop(0, 'rgba(255,255,255,0.9)'); gr.addColorStop(0.45, 'rgba(255,255,255,0.45)'); gr.addColorStop(1, 'rgba(255,255,255,0)');
@@ -135,37 +171,63 @@ function decalTexture() {
   for (let i = 0; i < 5; i++) { const x = 44 + rnd() * 40, w = 2 + rnd() * 3, h = 20 + rnd() * 40; g.fillRect(x, 60, w, h); blob(x + w / 2, 60 + h, w * 1.2); }   // runs down the wall
   const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace; return t;
 }
-// Screen splatter sprites, 256 px each, drawn once: a flat, ragged splash thrown across the lens (a mask of core, spikes,
-// droplets and runs, then one dark arterial colour through it), not shaded beads.
+// GC-FIX7: screen blood as wet blood on the lens, not clip-art: each splash is thrown one way (sprite +x), an uneven
+// smear where it struck, then droplets that stretch into teardrops and streaks the further they flew, and a fine mist.
+// Every shape is drawn twice: a dark meniscus rim (blood pools at the edge of a drop on glass) and a thinner, redder,
+// half-clear middle, with a faint wet glint on the bigger drops. Runs are separate sprites drawn upright (they always
+// run down the glass, whatever way the splash was thrown).
 function screenSprites() {
-  const out = [];
-  for (let k = 0; k < 5; k++) {
-    const c = document.createElement('canvas'); c.width = c.height = 256; const g = c.getContext('2d');
-    g.fillStyle = '#fff'; g.shadowColor = '#fff'; g.shadowBlur = 2.5;      // a soft rim
-    const dot = (x, y, r) => { g.beginPath(); g.arc(x, y, r, 0, 6.2832); g.fill(); };
-    const cx = 128 + (rnd() - 0.5) * 24, cy = 112 + (rnd() - 0.5) * 20, ph = rnd() * 6.28, N = 44;
-    g.beginPath();                                       // the ragged core
-    for (let i = 0; i <= N; i++) { const a = (i / N) * 6.2832, r = 22 + 8 * Math.sin(a * 3 + ph) + 6 * Math.sin(a * 7 + ph * 2) + rnd() * 8; g.lineTo(cx + Math.cos(a) * r, cy + Math.sin(a) * r * 0.9); }
-    g.fill();
-    for (let i = 0; i < 12 + k * 2; i++) {               // spikes thrown outward, a bead at each tip
-      const a = rnd() * 6.28, l = 38 + rnd() * 62, w = 0.06 + rnd() * 0.07, tx = cx + Math.cos(a) * l, ty = cy + Math.sin(a) * l;
-      g.beginPath(); g.moveTo(cx + Math.cos(a - w) * 20, cy + Math.sin(a - w) * 20); g.lineTo(tx, ty); g.lineTo(cx + Math.cos(a + w) * 20, cy + Math.sin(a + w) * 20); g.fill();
-      dot(tx, ty, 1 + rnd() * 2.6);
+  const splash = [], drip = [];
+  const paint = (c, prims) => {                       // prims: (ctx, shrink px) => path filled
+    const g = c.getContext('2d'), m = document.createElement('canvas'); m.width = c.width; m.height = c.height; const mg = m.getContext('2d');
+    g.fillStyle = 'rgb(40,2,2)'; for (const p of prims) p(g, 0);                       // 1. the dark rim colour, full shape
+    mg.fillStyle = '#fff'; for (const p of prims) p(mg, 1.7);                           // the inner, thinner part
+    g.globalCompositeOperation = 'destination-out'; g.globalAlpha = 0.32; g.drawImage(m, 0, 0);   // 2. half-clear inside
+    mg.globalCompositeOperation = 'source-in'; mg.fillStyle = 'rgb(128,12,9)'; mg.fillRect(0, 0, m.width, m.height);
+    g.globalCompositeOperation = 'source-atop'; g.globalAlpha = 0.9; g.drawImage(m, 0, 0);       // 3. redder inside
+    g.globalAlpha = 1; g.globalCompositeOperation = 'source-over';
+  };
+  const ell = (x, y, rx, ry, r) => (g, s) => { if (rx - s < 0.4 || ry - s < 0.4) return; g.beginPath(); g.ellipse(x, y, rx - s, ry - s, r, 0, 6.2832); g.fill(); };
+  const blobP = (x, y, R, sq, rot, ph) => (g, s) => { const k = Math.max(0, (R - s) / R); if (k <= 0) return; g.beginPath();
+    for (let i = 0; i <= 60; i++) { const a = (i / 60) * 6.2832, r = R * k * (1 + 0.22 * Math.sin(2 * a + ph) + 0.12 * Math.sin(3 * a + ph * 1.7) + 0.07 * Math.sin(7 * a + ph * 2.3));
+      const lx = Math.cos(a) * r * 1.35, ly = Math.sin(a) * r * sq; g.lineTo(x + lx * Math.cos(rot) - ly * Math.sin(rot), y + lx * Math.sin(rot) + ly * Math.cos(rot)); }
+    g.closePath(); g.fill(); };
+  for (let k = 0; k < 6; k++) {
+    const c = document.createElement('canvas'); c.width = c.height = 256; const prims = [], glint = [];
+    const cx = 62 + rnd() * 18, cy = 128 + (rnd() - 0.5) * 30, big = k < 3;
+    // the smear where it struck: a few lobes along the throw
+    for (let i = 0, n = big ? 3 + ((rnd() * 2) | 0) : 1 + ((rnd() * 2) | 0); i < n; i++) {
+      const R = (big ? 20 : 12) * (1 - i * 0.18) * (0.8 + rnd() * 0.4); prims.push(blobP(cx + i * R * 0.9, cy + (rnd() - 0.5) * 10, R, 0.55 + rnd() * 0.25, (rnd() - 0.5) * 0.4, rnd() * 6.28));
+      if (i === 0) glint.push([cx - R * 0.35, cy - R * 0.3, R * 0.32]);
     }
-    for (let i = 0; i < 48; i++) { const a = rnd() * 6.28, d = 34 + Math.pow(rnd(), 0.7) * 86; dot(cx + Math.cos(a) * d, cy + Math.sin(a) * d, 0.7 + Math.pow(rnd(), 3.2) * 6.5); }
-    for (let i = 0; i < 2 + (k % 3); i++) {              // runs down the glass
-      const x = cx + (rnd() - 0.5) * 44, w = 1.8 + rnd() * 3.2, h = 30 + rnd() * 90;
-      g.fillRect(x - w / 2, cy, w, h); dot(x, cy + h, w * 0.9);
+    // droplets flung on: further = smaller, more stretched, pointing along their flight
+    for (let i = 0, n = 26 + ((rnd() * 18) | 0); i < n; i++) {
+      const a = (rnd() - 0.5) * (0.9 + rnd() * 0.5), d = 22 + Math.pow(rnd(), 0.8) * 165, x = cx + Math.cos(a) * d, y = cy + Math.sin(a) * d;
+      if (x > 250 || y < 6 || y > 250) continue;
+      const r = Math.max(0.9, (big ? 7.5 : 5) * Math.pow(rnd(), 1.8) * (1.15 - d / 210)), e = 1 + (d / 60) * (0.6 + rnd());
+      prims.push(ell(x, y, r * e, r, a));
+      if (r > 3 && e < 3) { prims.push(ell(x - Math.cos(a) * r * e * 1.1, y - Math.sin(a) * r * e * 1.1, r * 0.55, r * 0.4, a)); if (r > 4) glint.push([x - r * 0.3, y - r * 0.35, r * 0.35]); }   // a teardrop tail, a glint
     }
-    g.shadowBlur = 0; g.globalCompositeOperation = 'source-in';
-    const gr = g.createRadialGradient(cx, cy, 0, cx, cy, 128);
-    gr.addColorStop(0, 'rgba(66,3,3,0.93)'); gr.addColorStop(0.3, 'rgba(98,6,5,0.88)'); gr.addColorStop(1, 'rgba(122,10,8,0.74)');
-    g.fillStyle = gr; g.fillRect(0, 0, 256, 256);
-    g.globalCompositeOperation = 'source-atop'; g.fillStyle = 'rgba(30,0,0,0.13)';   // clotted, uneven
-    for (let i = 0; i < 26; i++) dot(cx + (rnd() - 0.5) * 90, cy + (rnd() - 0.5) * 90, 5 + rnd() * 14);
-    out.push(c);
+    for (let i = 0; i < 70; i++) {                      // a fine mist of specks
+      const a = (rnd() - 0.5) * 1.6, d = 30 + rnd() * 190, x = cx + Math.cos(a) * d, y = cy + Math.sin(a) * d;
+      if (x < 250 && y > 4 && y < 252) prims.push(ell(x, y, 0.6 + rnd() * 0.9, 0.5 + rnd() * 0.7, a));
+    }
+    paint(c, prims);
+    const g = c.getContext('2d'); g.globalCompositeOperation = 'source-atop';
+    for (const [x, y, r] of glint) { const gr = g.createRadialGradient(x, y, 0, x, y, r); gr.addColorStop(0, 'rgba(255,225,215,0.32)'); gr.addColorStop(1, 'rgba(255,225,215,0)'); g.fillStyle = gr; g.fillRect(x - r, y - r, r * 2, r * 2); }
+    splash.push(c);
   }
-  return out;
+  for (let k = 0; k < 4; k++) {                          // runs: a thin trickle, wandering a little, a bead at its end
+    const c = document.createElement('canvas'); c.width = 64; c.height = 256; const prims = [];
+    for (let j = 0, n = 1 + (k % 2); j < n; j++) {
+      let x = 20 + j * 22 + rnd() * 6, y = 8, w = 3 + rnd() * 2.2; const L = 120 + rnd() * 110;
+      prims.push(ell(x, y + 2, w * 1.6, w * 1.3, 0));
+      for (; y < L; y += 1.6) { x += (rnd() - 0.5) * 0.7; w = Math.max(1.3, w * 0.996); prims.push(ell(x, y, w, w * 1.2, 0)); }
+      prims.push(ell(x, y + w, w * 1.45, w * 1.8, 0));
+    }
+    paint(c, prims); drip.push(c);
+  }
+  return { splash, drip };
 }
 
 // ----- pools
@@ -190,7 +252,7 @@ function makeSplats() {
     sh.uniforms.uPulse = SPU.uPulse;
     sh.vertexShader = 'attribute vec3 aSp;\nvarying vec3 vSp;\n' + sh.vertexShader.replace('#include <uv_vertex>', `#include <uv_vertex>
   vSp = aSp;
-  vMapUv = vec2((uv.x + mod(aSp.x, 4.0)) * 0.25, (uv.y + 1.0 - floor(aSp.x / 4.0)) * 0.5);   // 4 x 2 atlas, row 0 on top`);
+  vMapUv = vec2((uv.x + mod(aSp.x, 4.0)) * 0.25, (uv.y + 2.0 - floor(aSp.x / 4.0)) / 3.0);   // 4 x 3 atlas, row 0 on top (GC-FIX7)`);
     sh.fragmentShader = 'uniform float uPulse;\nvarying vec3 vSp;\n' + sh.fragmentShader
       .replace('#include <alphamap_fragment>', '#include <alphamap_fragment>\n  diffuseColor.a *= vSp.y;')
       .replace('#include <roughnessmap_fragment>', '#include <roughnessmap_fragment>\n  roughnessFactor = mix(0.9, 0.6, vSp.z);')   // FIX gore-cmb: a wet sheen, never a mirror (0.18 caught the low sun as white blobs)
@@ -339,13 +401,13 @@ export function groundSplat(x, z, size, kind = 'blood', o = {}) {
   if (!SP.live[i]) SP.count++;
   const k = KIND[kind] ?? 0;
   SP.x[i] = x; SP.z[i] = z; SP.h[i] = y; SP.y[i] = y + 0.025 + (SP.seqN % 7) * 0.0015;   // tiny offsets stop overlapping splats from z-fighting
-  SP.rot[i] = o.dir != null ? o.dir + (rnd() - 0.5) * 0.3 : rnd() * 6.2832; SP.st[i] = o.dir != null ? (o.stretch || 1.5) : 1; SP.kind[i] = k;   // FIX gore-cmb: o.dir (heading) + o.stretch
+  SP.rot[i] = o.dir != null ? o.dir + (rnd() - 0.5) * 0.3 : rnd() * 6.2832; SP.st[i] = o.dir != null ? (o.stretch || 1.5) : k === 2 ? 1.05 + rnd() * 0.3 : 1; SP.kind[i] = k;   // FIX gore-cmb: o.dir (heading) + o.stretch · GC-FIX7: a pool is never round
   SP.born[i] = now; SP.age[i] = 0; SP.alpha[i] = kind === 'scuff' ? 0.7 : 0.95;
   SP.trail[i] = o.trail || 0; SP.seq[i] = ++SP.seqN; SP.live[i] = 1; SP.focus[i] = 0;
   const sz = size * (kind === 'scuff' ? 1 : cfg.k.size);
   if (o.grow) { SP.s0[i] = sz; SP.s1[i] = o.grow[0] * cfg.k.size; SP.gt[i] = 0; SP.gd[i] = o.grow[1]; } else SP.gd[i] = 0;
   SP.size[i] = sz;
-  const tile = k === 0 ? (rnd() * 4) | 0 : k === 1 ? 4 + ((rnd() * 2) | 0) : k === 2 ? 6 : 7;
+  const tile = k === 0 ? (rnd() * 4) | 0 : k === 1 ? 4 + ((rnd() * 2) | 0) : k === 2 ? [6, 8, 9, 10, 11][(rnd() * 5) | 0] : 7;   // GC-FIX7: five pool shapes
   SP.aSp.setXYZ(i, tile, SP.alpha[i], 1); SP.aSp.needsUpdate = true;
   splatMatrix(i); splatColor(i);
   SP.m.instanceMatrix.needsUpdate = true; if (SP.m.instanceColor) SP.m.instanceColor.needsUpdate = true;
@@ -361,7 +423,7 @@ export function clearAll() {
   for (let i = 0; i < SP.n; i++) if (SP.live[i]) killSplat(i);
   for (let i = 0; i < DR.n; i++) if (DR.live[i]) killDrop(i);
   for (const f of MIST.list) f.s.visible = false;
-  emitters.length = 0; clearPieces(); while (carcasses.length) dropCarcass(carcasses[0]); clearScreen();
+  emitters.length = 0; poolQ.length = 0; clearPieces(); while (carcasses.length) dropCarcass(carcasses[0]); clearScreen();   // GC-FIX7: and pending pools
 }
 export function piecesNear(x, z, r) { return pieces.some((p) => Math.hypot(p.pivot.position.x - x, p.pivot.position.z - z) < r); }
 export function clearPiecesNear(x, z, r) { for (const p of pieces.slice()) if (Math.hypot(p.pivot.position.x - x, p.pivot.position.z - z) < r) dropPiece(p); }
@@ -842,6 +904,9 @@ export function sever(model, seg, { dir = null, sceneRoot = null } = {}) {
     const ax = center.clone().sub(jp); if (ax.lengthSq() < 1e-4) ax.copy(out); ax.normalize();
     const top = new THREE.Vector3(0, 1, 0).addScaledVector(ax, -ax.y); if (top.lengthSq() < 0.02) top.set(0, 0, 1).addScaledVector(ax, -ax.z); top.normalize();
     head = { up: ax, fw: top, cheek: true };
+    // GC-FIX7: the ears go limp, laid back along the neck (they propped the head up like pegs), and the contact points
+    // are taken again from the copy as it now is
+    if (foldEars(copy, ax, top)) { const s2 = copySamples(copy, seg); if (s2.length > 8) { loc.length = 0; for (const q of s2) loc.push(q.sub(center)); } }
     // rigid parts that ride the head (antlers) count for ground contact, so the tines prop it instead of sinking in
     if (pb) { const tmp = new THREE.Vector3(); bone.traverse((o) => { if (!o.isMesh || o.isSkinnedMesh || !under(o, bone) || !o.geometry?.attributes?.position) return;
       const pos = o.geometry.attributes.position, st = Math.max(1, Math.floor(pos.count / 24)); o.updateWorldMatrix(true, false);
@@ -850,8 +915,78 @@ export function sever(model, seg, { dir = null, sceneRoot = null } = {}) {
   pieces.push({ pivot, copy, u: u2, vel, spin, rest: false, t: 0, r: Math.max(0.06, len * 0.25), drip: 0, loc, axis, settle: 0, q0: null, q1: null, head });
   while (pieces.length > POOL.pieces) dropPiece(pieces[0]);
   bloodBurst(jp, out, burstCount('high', true, true) * 0.8, { heavy: true, kill: true });
-  groundSplat(jp.x, jp.z, 0.5, 'pool', { grow: [1.3, 5] });
+  // GC-FIX7: the spray lands where it was cut; the pool forms under the stump once the body has fallen and lies still
+  // (it formed where the neck was while he stood, so it ended up under his legs)
+  groundSplat(jp.x, jp.z, 0.32, 'blood');
+  poolQ.push({ obj: cap, t: 0, at: jp.clone(), size: seg === 1 ? 1.3 : seg === 6 ? 0.5 : 0.9 });
   return { seg, pivot, cap };
+}
+// GC-FIX7: stump pools waiting for the body to come to rest (cap still for 0.25 s, or 3.5 s at most)
+const poolQ = [];
+function poolTick(dt) {
+  for (let i = poolQ.length - 1; i >= 0; i--) {
+    const q = poolQ[i]; q.t += dt;
+    if (!q.obj.parent) { poolQ.splice(i, 1); continue; }
+    q.obj.getWorldPosition(_v); const mv = _v.distanceTo(q.at); q.at.copy(_v);
+    q.still = mv < 0.25 * dt ? (q.still || 0) + dt : 0;
+    if ((q.t > 0.8 && q.still > 0.25) || q.t > 3.5) {
+      poolQ.splice(i, 1);
+      if (!cfg.blood) continue;
+      _v2.set(0, 1, 0).applyQuaternion(q.obj.getWorldQuaternion(_q)); _v2.y = 0;   // it runs out of the stump: centred a little past the cut
+      const l = _v2.length(); if (l > 0.2) _v.addScaledVector(_v2, 0.22 / l);
+      groundSplat(_v.x, _v.z, 0.3, 'pool', { grow: [q.size, 6], dir: l > 0.2 ? Math.atan2(_v2.x, _v2.z) : undefined, stretch: 1.3 });
+    }
+  }
+}
+// GC-FIX7: lay a severed animal head's ears back along the neck (Ear1L/Ear1R chains of the quad rig). ax: stump → piece
+// centre, top: the skull's up; both world, the copy unrotated in its pivot. Returns true when it folded any.
+function foldEars(copy, ax, top) {
+  copy.updateMatrixWorld(true);
+  const a = new THREE.Vector3(), b = new THREE.Vector3(), pq = new THREE.Quaternion(), wq = new THREE.Quaternion(), q = new THREE.Quaternion();
+  const roots = []; copy.traverse((o) => { if (o.isBone && /^Ear1[LR]$/.test(o.name.replace(/\./g, ''))) roots.push(o); });
+  for (const bn of roots) {
+    let tip = bn; for (let k = 0; k < 8; k++) { const c = tip.children.find((x) => x.isBone); if (!c) break; tip = c; }
+    if (tip === bn) continue;
+    bn.getWorldPosition(a); tip.getWorldPosition(b); const cur = b.sub(a).normalize();
+    const side = cur.clone().addScaledVector(top, -cur.dot(top)).addScaledVector(ax, -cur.dot(ax)); if (side.lengthSq() < 1e-4) side.crossVectors(ax, top); side.normalize();
+    const want = ax.clone().negate().addScaledVector(side, 0.3).addScaledVector(top, 0.12).normalize();
+    q.setFromUnitVectors(cur, want);
+    bn.parent.getWorldQuaternion(pq); bn.getWorldQuaternion(wq);
+    bn.quaternion.copy(pq.invert().multiply(q.multiply(wq)));
+    copy.updateMatrixWorld(true);
+  }
+  return roots.length > 0;
+}
+// GC-FIX7: posed world points of segment seg on a copy's skinned meshes (as segSamples, for a copy)
+function copySamples(copy, seg) {
+  const all = [], out = [];
+  copy.updateMatrixWorld(true);
+  copy.traverse((m) => { if (!m.isSkinnedMesh) return; const sg = m.geometry.attributes.aSeg; if (!sg) return; const n = m.geometry.attributes.position.count; for (let i = 0; i < n; i++) if (Math.round(sg.getX(i)) === seg) all.push([m, i]); });
+  const st = Math.max(1, Math.floor(all.length / 220));
+  for (let k = 0; k < all.length; k += st) { const [m, i] = all[k]; const v = new THREE.Vector3().fromBufferAttribute(m.geometry.attributes.position, i); m.applyBoneTransform(i, v); out.push(v.applyMatrix4(m.matrixWorld)); }
+  return out;
+}
+// GC-FIX7: the stable rest of a severed animal head: of ~120 ways down (and the cheek turn from headRest), the one
+// where its centre sits lowest over its own lowest point, with the neck lying along the ground (a stood-up neck, stump
+// to the sky or chin down like a bust, costs extra), then rolled about the level axes to the bottom of that basin.
+function settleLow(p, n, q1) {
+  const ax = p.head.up, u = new THREE.Vector3();
+  const h = (qq) => { let lo = 1e9; for (const l of p.loc) { const d = _v.copy(l).applyQuaternion(qq).dot(n); if (d < lo) lo = d; } u.copy(ax).applyQuaternion(qq); return -lo + 0.3 * Math.max(0, Math.abs(u.dot(n)) - 0.3); };
+  const q0 = p.q0, d = new THREE.Vector3(), w = new THREE.Vector3(), down = n.clone().negate(), t = new THREE.Quaternion();
+  let best = q1.clone(), bh = h(best);
+  for (let i = 0, N = 120; i < N; i++) {                // a Fibonacci sphere of piece-frame directions to put down
+    const y = 1 - (2 * (i + 0.5)) / N, r = Math.sqrt(1 - y * y), ph = i * 2.39996;
+    d.set(Math.cos(ph) * r, y, Math.sin(ph) * r); w.copy(d).applyQuaternion(q0);
+    t.setFromUnitVectors(w, down).multiply(q0); const ht = h(t); if (ht < bh) { bh = ht; best.copy(t); }
+  }
+  const e1 = new THREE.Vector3(1, 0, 0).addScaledVector(n, -n.x).normalize(), e2 = new THREE.Vector3().crossVectors(n, e1);
+  for (const step of [0.2, 0.1, 0.05, 0.025]) {
+    for (let guard = 0, better = true; better && guard < 14; guard++) {
+      better = false;
+      for (const e of [e1, e2]) for (const s of [1, -1]) { t.setFromAxisAngle(e, step * s).multiply(best); const ht = h(t); if (ht < bh - 1e-4) { best.copy(t); bh = ht; better = true; } }
+    }
+  }
+  return best;
 }
 // GORE-FIX4: the resting turn of a severed head: the crown points along the ground (keeping its heading), and it lies on
 // whichever side it fell nearest to: a cheek (most), the back of the skull, never the neck stump or the face.
@@ -981,13 +1116,15 @@ function screenInit() {
 export function screenSplat(angle, amt = 0.5) {
   if (!ready || !cfg.screen || !cfg.blood) return 0;
   SC ||= screenInit(); if (!SC) return 0;
-  const n = Math.min(6, Math.max(1, Math.round(1 + amt * 3)));
+  const n = Math.min(4, Math.max(1, Math.round(0.6 + amt * 2.2)));   // GC-FIX7: fewer, bigger, each thrown inward from its edge
+  const al = Math.min(1, 0.6 + amt * 0.4) * (cfg.reduceFlash ? 0.5 : 1);
   for (let k = 0; k < n; k++) {
-    const a = angle + (rnd() - 0.5) * 0.9, rx = 0.43 + rnd() * 0.06, ry = 0.40 + rnd() * 0.08;
-    SC.list.push({ img: SC.sprites[(rnd() * SC.sprites.length) | 0], x: 0.5 + Math.sin(a) * rx, y: 0.5 - Math.cos(a) * ry, rot: rnd() * 6.28,
-      s: (0.2 + rnd() * 0.16) * (0.8 + Math.min(1.5, amt) * 0.45), t: 0, life: 2.4 + rnd() * 0.8, a: Math.min(1, 0.55 + amt * 0.45) * (cfg.reduceFlash ? 0.5 : 1) });
+    const a = angle + (rnd() - 0.5) * 0.9, rx = 0.4 + rnd() * 0.08, ry = 0.36 + rnd() * 0.1, x = 0.5 + Math.sin(a) * rx, y = 0.5 - Math.cos(a) * ry;
+    const s = (0.24 + rnd() * 0.16) * (0.8 + Math.min(1.5, amt) * 0.4), life = 2.6 + rnd() * 1.0;
+    SC.list.push({ img: SC.sprites.splash[(rnd() * SC.sprites.splash.length) | 0], x, y, rot: Math.atan2((0.5 - y) * 0.56, 0.5 - x) + (rnd() - 0.5) * 0.7, s, t: 0, life, a: al, sl: 6 });
+    if (rnd() < 0.55) SC.list.push({ img: SC.sprites.drip[(rnd() * SC.sprites.drip.length) | 0], x: x + (rnd() - 0.5) * 0.03, y: y + 0.02, rot: 0, s: s * (0.6 + rnd() * 0.4), drip: true, t: 0, life: life + 0.6, a: al * 0.95, sl: 26 });   // a run down the glass
   }
-  while (SC.list.length > 14) SC.list.shift();
+  while (SC.list.length > 16) SC.list.shift();
   counters.screen += n;
   return n;
 }
@@ -998,9 +1135,11 @@ function screenUpdate(dt) {
   for (let i = SC.list.length - 1; i >= 0; i--) {
     const p = SC.list[i]; p.t += dt;
     if (p.t >= p.life) { SC.list.splice(i, 1); SC.dirty = true; continue; }
-    const fade = 1 - smooth((p.t - p.life * 0.45) / (p.life * 0.55)), slide = Math.min(1, p.t / 2) * 15;   // 30 px at full res
-    const sz = p.s * Math.min(w, h) * (1 + Math.min(0.12, p.t * 0.4));
-    g.save(); g.globalAlpha = p.a * fade; g.translate(p.x * w, p.y * h + slide); g.rotate(p.rot); g.drawImage(p.img, -sz / 2, -sz / 2, sz, sz); g.restore();
+    const fade = 1 - smooth((p.t - p.life * 0.45) / (p.life * 0.55)), slide = Math.min(1, p.t / 2.4) * (p.sl ?? 15);   // GC-FIX7: runs creep further
+    const sz = p.s * Math.min(w, h) * (p.drip ? 1 : 1 + Math.min(0.06, p.t * 0.2));
+    g.save(); g.globalAlpha = p.a * fade; g.translate(p.x * w, p.y * h + slide); g.rotate(p.rot);
+    if (p.drip) { const k = Math.min(1, 0.2 + p.t / 1.8); g.drawImage(p.img, 0, 0, 64, 256 * k, -sz / 8, 0, sz / 4, sz * k); } else g.drawImage(p.img, -sz / 2, -sz / 2, sz, sz);   // a run grows down as it flows
+    g.restore();
   }
   if (SC.list.length) SC.dirty = true;
 }
@@ -1080,6 +1219,7 @@ export function updateGore(dt, env = {}) {
       }
     }
   }
+  if (poolQ.length) poolTick(dt);                     // GC-FIX7: stump pools once the body lies still
   // severed pieces: a simple tumbling body that settles on the terrain and drips
   // FIX gore-cmb: contact by the piece's lowest real point (not its centre), then it settles lying along the ground
   for (const p of pieces) {
@@ -1101,6 +1241,7 @@ export function updateGore(dt, env = {}) {
           h.addScaledVector(n, -h.dot(n)).normalize();
           p.q1 = new THREE.Quaternion().setFromUnitVectors(aw.normalize(), h).multiply(p.q0);
           if (p.head) p.q1 = headRest(p, n);
+          if (p.head?.cheek) p.q1 = settleLow(p, n, p.q1);   // GC-FIX7: an animal's head settles to its lowest, stable rest
           if (cfg.blood) groundSplat(p.pivot.position.x, p.pivot.position.z, 0.3, 'pool', { grow: [0.6, 6] });
         }
       }

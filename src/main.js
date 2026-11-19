@@ -1894,7 +1894,7 @@ function wpnChop(n) {
 function aimSolve(charge, spawn, dir) {             // the same numbers for the arc and the throw, so the arc never lies
   camera.getWorldDirection(_w4);
   P.h.bones.hand_r.getWorldPosition(spawn); spawn.addScaledVector(_w4, 0.35);
-  const v = BOW.on ? 30 + 28 * charge : 22 + 16 * charge;   // BOW: arrows fly faster and flatter
+  const v = BOW.on ? 24 + 21 * charge : 22 + 16 * charge;   // BOW: arrows fly faster and flatter (BOW-A3: 45 m/s at full draw, spec §4)
   if (BOW.on) bowAimAt(spawn, dir, v);               // BOW-AIM: onto the thing under the crosshair, at any range
   else { dir.copy(camera.position).addScaledVector(_w4, 40).sub(spawn).normalize(); dir.y += 0.035; dir.normalize(); }
   survWobble(dir);                                   // SURV: hurt arms, fever and cold shake the aim
@@ -2239,7 +2239,9 @@ function bowTrim() {                                  // at most 40 loose arrows
   const loose = BOW.arrows.filter((a) => a.st !== 'air');
   for (let i = 0; i < loose.length - 40; i++) bowRemove(loose[i]);
 }
-function bowRemove(ar) { ar.m.removeFromParent(); const i = BOW.arrows.indexOf(ar); if (i >= 0) BOW.arrows.splice(i, 1); }
+// BOW-A3: trimmed when each arrow comes to rest too (bowRecord), not only at the loose: a burst of shots still in the
+// air used to land on top of the cap (50 lay in the grass after 50 quick shots). gone: bowTick skips a removed arrow.
+function bowRemove(ar) { ar.gone = true; ar.m.removeFromParent(); const i = BOW.arrows.indexOf(ar); if (i >= 0) BOW.arrows.splice(i, 1); }
 function bowLandGround(ar) {
   const gy = tipToGround(ar.pos, ar.vel, ar.tip);
   if (gy < -0.25) { A.hit(1800, 0.25, 0.25); wpnPuff(ar.tip.x, 0, ar.tip.z, 0x9ab0b8); bowRemove(ar); return; }   // lost in the water
@@ -2372,7 +2374,8 @@ function bowLandAnimal(ar, o) {
   ar.st = 'animal'; ar.o = o;
   const dist = Math.hypot(o.root.position.x - ar.from.x, o.root.position.z - ar.from.z);
   const live = o.state === 'live';
-  wpnHitFx(o, ar.dmg, 'thrown', { kind: 'pierce', weapon: 'thrown', arrow: true, from: P, point: (ar.hitPt || ar.tip).clone(), dir: _bA.clone(), vel: ar.vel.clone(), dist });   // GORE: the true entry point, arrow flag
+  ar.zone = goreBoneZone(ar.bone);                   // GC-FIX7: the bone it stuck in names the zone (neck = head, tail = hindquarters, lower leg = leg)
+  wpnHitFx(o, ar.dmg, 'thrown', { kind: 'pierce', weapon: 'thrown', arrow: true, from: P, point: (ar.hitPt || ar.tip).clone(), dir: _bA.clone(), vel: ar.vel.clone(), dist, zone: ar.zone });   // GORE: the true entry point, arrow flag
   goreArrowAfter(ar, o);                             // GORE: a raider's block turns the arrow aside
   wpnKnock(o, _bB.copy(o.root.position).addScaledVector(_bA, -1));
   A.hit(260, 0.1, 0.3);
@@ -2382,6 +2385,7 @@ function bowLandAnimal(ar, o) {
 }
 function bowTick(dt) {
   for (const ar of BOW.arrows.slice()) {
+    if (ar.gone) continue;                           // BOW-A3: trimmed by an earlier arrow's landing this frame
     if (ar.st === 'air') {
       ar.acc += dt;
       while (ar.acc >= SP_DT && ar.st === 'air') {
@@ -2413,11 +2417,22 @@ function bowTarget(p) {
 function bowPickup() {
   let got = 0, full = false;
   for (const a of bowNear(P.pos)) { if (S.inv.arrow >= bowCap()) { full = true; break; } bowRemove(a); S.inv.arrow++; got++; }
-  if (got) { bump('arrow_pick', got); A.hit(2200, 0.05, 0.05); toast(`+${got} arrows${full ? ' · quiver full' : ''}`); if (!P.ride && !P.swim) P.h.swing('pickU', 1.6); }
+  const fullMsg = S.tools.quiver ? 'quiver full' : `no quiver: you carry only ${bowCap()}`;   // BOW-A3: no "quiver" without one, and "1 arrow"
+  if (got) { bump('arrow_pick', got); A.hit(2200, 0.05, 0.05); toast(`+${got} arrow${got === 1 ? '' : 's'}${full ? ' · ' + fullMsg : ''}`); if (!P.ride && !P.swim) P.h.swing('pickU', 1.6); }
   else if (full) toast(S.tools.quiver ? 'Quiver full' : 'You can carry only 8 arrows without a quiver');
   bowRecord(); drawInv(); drawQuest();
 }
+function bowDropMade(k) {                             // BOW-A3: crafted arrows that did not fit, laid side by side in front of him
+  for (let i = 0; i < k; i++) {
+    const ar = { m: makeArrow(), pos: new THREE.Vector3(), vel: new THREE.Vector3(), tip: new THREE.Vector3(), st: 'ground', acc: 0, steps: 0, o: null };
+    scene.add(ar.m); BOW.arrows.push(ar);
+    const f = P.face, x = P.pos.x + Math.sin(f) * 0.7 - Math.cos(f) * (i - (k - 1) / 2) * 0.12, z = P.pos.z + Math.cos(f) * 0.7 + Math.sin(f) * (i - (k - 1) / 2) * 0.12;
+    ar.m.position.set(x, getHeight(x, z) + 0.025, z); ar.m.rotation.set(0.035, f + Math.PI / 2 + (rand() - 0.5) * 0.15, 0.3, 'YXZ');
+  }
+  bowRecord();
+}
 function bowRecord() {
+  bowTrim();                                         // BOW-A3: the cap holds as each arrow lands
   S.arrowsAt = BOW.arrows.filter((a) => a.st === 'ground').map((a) => { a.m.getWorldPosition(_bA); a.m.getWorldQuaternion(_bQ); return [_bA.x, _bA.y, _bA.z, _bQ.x, _bQ.y, _bQ.z, _bQ.w].map((v) => +v.toFixed(3)); });
 }
 function bowLoad() {
@@ -3018,8 +3033,15 @@ function craft(r) {
   if (r.up) { homeUpgrade(r); return; }                                   // WP2 house upgrades
   for (const k in r.cost) S.inv[k] -= r.cost[k];
   if (r.item === 'arrow' && (S.inv.arrow || 0) >= bowCap()) { for (const k in r.cost) S.inv[k] += r.cost[k]; toast(S.tools.quiver ? 'Your quiver is full' : 'You can carry only 8 arrows without a quiver'); drawInv(); return; }   // BOW
-  if (r.item) { const n = r.item === 'arrow' ? Math.min(r.n || 1, bowCap() - (S.inv.arrow || 0)) : 1; S.inv[r.item] = (S.inv[r.item] || 0) + n; if (r.item === 'arrow') bump('arrow_made', n); } else S.tools[r.id] = true;   // BOW: arrows come 3 at a time, up to the carry cap
-  toast(`Crafted: ${r.name}`); A.hit(900, 0.2, 0.4);
+  let msg = `Crafted: ${r.name}`;
+  if (r.item === 'arrow') {                          // BOW: arrows come 3 at a time, up to the carry cap
+    // BOW-A3: the materials make all three; what does not fit is laid on the ground at his feet (pick it up later),
+    // and the toast says what really went where
+    const made = r.n || 1, n = Math.min(made, bowCap() - (S.inv.arrow || 0)), left = made - n;
+    S.inv.arrow = (S.inv.arrow || 0) + n; bump('arrow_made', made);
+    if (left > 0) { bowDropMade(left); msg = `Crafted ${made} flint arrows: ${n} to the ${S.tools.quiver ? 'quiver (now full)' : 'hand (you carry 8 without a quiver)'}, ${left} laid at your feet`; }
+  } else if (r.item) { S.inv[r.item] = (S.inv[r.item] || 0) + 1; } else S.tools[r.id] = true;
+  toast(msg); A.hit(900, 0.2, 0.4);
   drawInv(); drawQuest(); save();
 }
 // Recipes the craft menu offers now: chapter reached, not yet owned (tools), and actually buildable in this build.
@@ -3858,13 +3880,17 @@ const rstMins = (c) => { const m = (120 + 30 * c) / 60, w = m | 0; return w + (m
 const rstTogether = (s) => !!(s && s.bedPts && Math.hypot(N.pos.x - s.x, N.pos.z - s.z) < 40 && !N.ride && !romApart());   // ROM: a rift, she sleeps by the fire
 // null when resting is allowed; else why not (wolves, just woke, or only a nap in daylight)
 function rstBlock(s) {
-  if (hostileNear(35, s ? { x: s.x, z: s.z } : P.pos)) return 'wolves';
+  if (ARCS.scene === 'raid' || ARCS.raidFight) return 'raid';   // GC-FIX7: the alarm is up: no rest, raiders spawned or not
+  const at = s ? { x: s.x, z: s.z } : P.pos;
+  if (foes.some((f) => f.live && !f.fled && Math.hypot(f.pos.x - at.x, f.pos.z - at.z) < 35)) return 'raiders';
+  if (hostileNear(35, at)) return 'wolves';
   if (clock - R.wokeAt < 90) return 'recent';
   return rstNight() ? null : 'nap-only';
 }
 function rstPrompt(s, t) {
   const b = rstBlock(s);
   if (b === 'recent') return null;                          // just woke: no rest prompt at all
+  if (b === 'raid' || b === 'raiders') return t(b === 'raid' ? 'No rest tonight: raiders on the hill' : 'You can\'t rest with raiders nearby');   // GC-FIX7
   if (b === 'wolves') {
     if (R.warnDay !== S.day && Math.hypot(N.pos.x - P.pos.x, N.pos.z - P.pos.z) < 20) { R.warnDay = S.day; say('Sena', WOLF_LINE); }
     return t('You can\'t rest with wolves prowling nearby');
@@ -3875,7 +3901,7 @@ function rstPrompt(s, t) {
 function sleep(s) { rstOpen(s); }
 function rstOpen(s) {
   if (!s || R.on || R.menu || busy || !playing) return;
-  if (rstBlock(s) === 'wolves') { toast('You can\'t rest with wolves prowling nearby'); return; }
+  { const b = rstBlock(s); if (b === 'wolves' || b === 'raid' || b === 'raiders') { toast(b === 'wolves' ? 'You can\'t rest with wolves prowling nearby' : 'You can\'t rest with raiders about'); return; } }   // GC-FIX7
   const night = rstNight(), tog = rstTogether(s), c = rstComfort(s, tog);
   R.opts = night ? [['dawn', 'Sleep until dawn', `${rstTier(c)} · stamina returns faster for ${rstMins(c)} min`], ['nap', 'Nap 2 hours', 'a little health, no buff']]
     : [['nap', 'Nap 2 hours', 'a little health, no buff']];
@@ -4432,7 +4458,7 @@ function rstLog(ph) { R.phase = ph; R.t = 0; R.log.push([ph, +(performance.now()
 // Start the sequence. mode 'dawn' (until 06:20) or 'nap' (2 hours). o.force skips the rules (old tests, G.sleep).
 function rstBegin(s, mode = 'dawn', o = {}) {
   if (R.on || !s || !playing || busy) return false;                                       // never over a fade or another scene
-  if (!o.force && rstBlock(s) === 'wolves') { toast('You can\'t rest with wolves prowling nearby'); return false; }
+  if (!o.force) { const b = rstBlock(s); if (b === 'wolves' || b === 'raid' || b === 'raiders') { toast(b === 'wolves' ? 'You can\'t rest with wolves prowling nearby' : 'You can\'t rest with raiders about'); return false; } }   // GC-FIX7
   if (P.ride) dismount();
   if (R.nOut) { R.nOut = null; N.rest = 0; N.path = null; }                               // Sena was still on her way out from last time
   if (typeof wpnStowAll === 'function') wpnStowAll('rest', true);                       // WPN: weapons away, aim cancelled
@@ -5675,6 +5701,7 @@ on('animalHit', (e) => {
 function goreKill(o, e, kid) {
   if (o.lying) o.a.play('Death', 'hold', 1, 0.35);   // it was lying with its head up: the clip runs on from there (no standing up to fall again)
   o.drip = 0; o.wounded = false; o.bleed = 0; o.bedded = o.lying = o.frozen = false;
+  if (goreBloodOn() && !kid && !o.horse && !o.tame && e.kind !== 'blunt' && e.weapon !== 'fists' && e.point) o.killPool = { x: e.point.x, z: e.point.z };   // GC-FIX7: a blade or an arrow kill bleeds out (goreKillPool once it lies still)
   if (!goreBloodOn() || goreLevel() !== 'high' || kid || o.horse || o.tame) return;
   const axe = e.weapon === 'axe';
   let seg = 0;
@@ -5840,7 +5867,7 @@ function goreButcherStart(o) {
   GS.butch = { o, need: goreNeed(o), site, cut: o.cuts || 0, cam: null };
   o.butchT ||= 0;
   P.work = 0.5; P.workSite = site;
-  if (!o.pooled) { o.pooled = true; GR.groundSplat(o.root.position.x, o.root.position.z, 0.2, 'pool', { grow: [1.2, 6] }); }
+  if (!o.pooled) { o.killPool ||= { x: o.root.position.x, z: o.root.position.z }; goreKillPool(o, true); }   // GC-FIX7: under the body, not beside it
   const cam = goreCam(o, true); if (cam) { GS.butch.cam = cam; camShot = cam; }
 }
 function goreButcherEnd() {
@@ -5938,9 +5965,32 @@ function goreFrame(dt) {
       if (o.dripD > 2.2) { o.dripD = 0; GR.groundSplat(o.root.position.x, o.root.position.z, 0.1, 'trail', { trail: o.gid }); }
     }
     if (o.state === 'dead' && o.root.visible && o.kind !== 'bear') goreConform(o, dt);   // the bear topples on its own
+    if (o.killPool && o.state === 'dead' && o.deadT > (o.kind === 'bear' ? 1.8 : 1.15)) goreKillPool(o);   // GC-FIX7
+    if (o.kind === 'bear' && o.state === 'dead' && o.deadT < 3 && o.a.lieAs && o.root.visible) bearClearTick(o, dt);   // GC-FIX7: clear of trunks
   }
   GR.updateGore(dt, { playing: live, hp: S.hp, dead: MAT.dead || MAT.endT > 0, bleeding: typeof survBleeding === 'function' && survBleeding(), rain: world.env.storm, canvas,
     thump: (amp) => A.tone(55, 0.2, 0.06 + amp * 0.1) });
+}
+// GC-FIX7: the death pool. Once the body has fallen, blood spreads from under it: centred on the body's own ground
+// outline (not the root, which a body falling on its side leaves beside it), drawn a little toward the wound, running
+// downhill on a slope, sized to the animal. Butchering makes it at once if the kill left none.
+function goreKillPool(o, now = false) {
+  const kp = o.killPool; o.killPool = null; if (o.pooled || !kp || (!now && (!o.root.visible || goreKidNear(o.root.position)))) return;
+  o.pooled = true;
+  const gy = getHeight(o.root.position.x, o.root.position.z), f = GR.footprint(o.a.model, gy);
+  let cx = o.root.position.x, cz = o.root.position.z;
+  if (f.length >= 6) { cx = 0; cz = 0; for (let i = 0; i < f.length; i += 2) { cx += f[i]; cz += f[i + 1]; } cx /= f.length / 2; cz /= f.length / 2; }
+  const x = cx + (kp.x - cx) * 0.3, z = cz + (kp.z - cz) * 0.3, hx = getHeight(x + 0.6, z) - getHeight(x - 0.6, z), hz = getHeight(x, z + 0.6) - getHeight(x, z - 0.6), sl = Math.hypot(hx, hz) / 1.2;
+  const size = { fox: 0.65, wolf: 1.05, alpha: 1.2, deer: 1.2, stag: 1.3, boar: 1.15, aurochs: 1.75, bear: 1.85 }[o.kind] || 1.05;
+  GR.groundSplat(x, z, 0.25, 'pool', { grow: [size, now ? 6 : 10], ...(sl > 0.04 ? { dir: Math.atan2(-hx, -hz), stretch: 1.15 + Math.min(0.45, sl * 2) } : {}) });
+}
+// GC-FIX7: the hit zone from the quad-rig bone an arrow lodged in, or null (the body's bones: the point decides)
+function goreBoneZone(b) {
+  const n = b?.name?.replace(/\./g, '') || '';
+  if (/^(Neck|Head|Jaw|Ear|Eye|Nose|Mouth|Tongue)/.test(n)) return 'head';
+  if (/^Tail/.test(n)) return 'gut';
+  if (/^(BackUpperLeg|BackLowerLeg|FrontLowerLeg|BackFoot|FrontFoot|Hoof|Paw|Toe)/.test(n)) return 'leg';
+  return null;                                       // spine, chest, the front upper leg (behind the shoulder: the heart shot)
 }
 // Corpses settle onto the slope (head/tail/sides sampled), and flinch when struck.
 function goreConform(o, dt) {
@@ -6300,7 +6350,7 @@ function goreHooks() {
     splat: (x, z, s = 0.4, k = 'blood', o) => GR.groundSplat(x, z, s, k, o),
     wound: (o, p, r) => GR.addWound(goreM(o), p, r),
     woundsOf: (o) => GR.woundCount(goreM(o)),
-    clear: (o) => GR.clearWounds(goreM(o)),
+    clear: (o) => (o ? GR.clearWounds(goreM(o)) : GR.clearAll()),   // GC-FIX7: no argument = all gore
     focus: () => GS.focus, trail: (o) => GR.trailCount(o.gid), trailBright: (o, near) => GR.splatBrightness(o.gid, near ? P.pos : null), kinds: (o) => GR.splatKinds(o?.gid),
     hands: () => GS.hands.value, setHands: (v) => { GS.hands.value = v; },
     zone: (o, p) => goreZoneOf(o, p), ext: (o) => goreExt(o),
@@ -6316,7 +6366,7 @@ function goreHooks() {
     // tests: an arrow in flight from world point `from` toward `at` (no camera aim needed); arrowsIn(o): the arrows standing in a body
     arrow: (from, at, speed = 45, dmg = 14) => { const ar = { m: makeArrow(), pos: new THREE.Vector3(), vel: new THREE.Vector3().copy(at).sub(from).normalize(), tip: new THREE.Vector3().copy(from), st: 'air', acc: 0, steps: 0, o: null, from: new THREE.Vector3().copy(from), dmg };
       ar.pos.copy(from).addScaledVector(ar.vel, -SP_TIP); ar.vel.multiplyScalar(speed); scene.add(ar.m); BOW.arrows.push(ar); return ar; },
-    arrowsIn: (o) => BOW.arrows.filter((a) => a.st === 'animal' && a.o === o).map((a) => { const w = a.m.getWorldPosition(new THREE.Vector3()); return { bone: a.bone?.name || null, pos: [w.x, w.y, w.z].map((v) => +v.toFixed(2)), zone: goreZoneOf(o, w) }; }),
+    arrowsIn: (o) => BOW.arrows.filter((a) => a.st === 'animal' && a.o === o).map((a) => { const w = a.m.getWorldPosition(new THREE.Vector3()); return { bone: a.bone?.name || null, pos: [w.x, w.y, w.z].map((v) => +v.toFixed(2)), zone: a.zone || goreZoneOf(o, w) }; }),   // GC-FIX7: the zone it struck (not re-read off a fallen body)
     set: (o = {}) => { Object.assign(settings, o); setGore(); return { ...GR.goreCfg() }; },   // tests: Content settings without the pause UI
   };
 }
@@ -7204,6 +7254,7 @@ function cmbSwing(k) {
   let row;
   if (heavy) row = [...CB.HEAVY[k], 1.8];
   else { C.combo = clock - C.comboT < 1.05 ? (C.combo + 1) % 3 : 0; row = CB.COMBO[k][C.combo]; }
+  if (!heavy && k === 'axe' && row[0] === 'swordB' && cmbLowFoe(row[4] + (CB.STEP.axe ?? 1), row[5])) row = CB.LOW2;   // GC-FIX7: light 2 at a wolf is a downward chop, not a chest-high slash over its back
   const [clip, ts, cool, hit, reach, cone, mul] = row, sk = CB.swingK(S.stam);
   P.h.swing(clip, ts * sk); P.cool = cool / sk; hitT = hit / sk; hitReach = reach; hitCone = cone; hitKind = k;
   hitDmg = base * mul * (clock < C.counterUntil ? 1.5 : 1);
@@ -7215,6 +7266,20 @@ function cmbSwing(k) {
   cmbSpend(heavy ? CB.STAM.heavy : CB.STAM.light);
   cmbSnd(heavy ? 'heavy' : 'whoosh', null, heavy ? 1 : 0.7);
   return true;
+}
+// GC-FIX7: is the animal Aro would strike (in the cone, within r of its body) a low one, its back under ~1 m (a wolf,
+// a fox)? A level slash at chest height passes over it.
+function cmbLowFoe(r, cone) {
+  const face = P.wantFace ?? P.face, fx = Math.sin(face), fz = Math.cos(face);
+  let bd = r, who = null;
+  for (const o of animals) {
+    if (o.state !== 'live' || o.horse || o.tame || Math.hypot(o.root.position.x - P.pos.x, o.root.position.z - P.pos.z) > 7) continue;
+    const d = goreMeleeD(o, fx, fz, cone); if (d < bd) { bd = d; who = o; }
+  }
+  for (const f of foes) if (f.live && f.state === 'live' && !f.fled && Math.max(0, Math.hypot(f.pos.x - P.pos.x, f.pos.z - P.pos.z) - 0.3) < bd) return false;   // a man is not low
+  if (!who) return false;
+  const X = who.a.bone?.('Head') ? goreExt(who) : null;
+  return !!X && X.top * (who.root.scale.y || 1) < CB.LOW_TOP;
 }
 // ----- GC-FIX5: the step in. The blade only reaches as far as it really does (COMBO reach), so a swing at something a
 // little further off carries Aro forward during the wind-up: he closes to just inside the reach, and the blow lands
@@ -7503,6 +7568,33 @@ function cmbFoeHitPre(e) {
 }
 on('animalHit', (e) => { if (e.o?.kind === 'aurochs') PRED.aurochsHit(e); if (e.o?.kind === 'wolf' && !e.kill && e.o.pack?.alpha && e.o.pack.alpha.state === 'live') e.o.go = Math.max(e.o.go || 0, 2); }, 60);
 on('animalDie', (e) => { const o = e.o; if (o.kind === 'wolf') PRED.wolfDied(o); if (o.kind === 'bear') PRED.bearDied(o); if (o === C.fin?.o) C.fin.done = true; }, 60);
+// GC-FIX7: a dying bear topples onto the flank that is clear of tree trunks (and walls); if neither is, the body is eased
+// off the trunk while it falls (the push its fallen pose needs, spread over the fall), then held clear frame by frame.
+const _bt1 = new THREE.Vector3(), _bt2 = new THREE.Vector3();
+function bearTrunkPush(o) {
+  const m = o.a.mesh; if (!m?.geometry) return { x: 0, z: 0, d: 0 };
+  m.updateWorldMatrix(true, false);
+  const pos = m.geometry.attributes.position, gy = getHeight(o.root.position.x, o.root.position.z); let bx = 0, bz = 0, bd = 0;
+  for (let i = 0; i < pos.count; i += 2) {
+    m.getVertexPosition(i, _bt1).applyMatrix4(m.matrixWorld); if (_bt1.y - gy > 2.6) continue;
+    _bt2.set(_bt1.x, 0, _bt1.z); collide(_bt2, 0.06, false, true);
+    const dx = _bt2.x - _bt1.x, dz = _bt2.z - _bt1.z, d = Math.hypot(dx, dz); if (d > bd) { bd = d; bx = dx; bz = dz; }
+  }
+  return { x: bx, z: bz, d: bd };
+}
+on('animalDie', (e) => {
+  const o = e.o; if (o.kind !== 'bear' || !o.a?.lieAs) return;
+  let side = 1, best = null;
+  for (const s of [1, -1]) { o.a.lieAs(s); const p = bearTrunkPush(o); if (!best || p.d < best.d - 0.01) { best = p; side = s; } }
+  o.a.lieAs(1, 0); o.a.side = side;
+  o.bearShift = best && best.d > 0.005 ? { x: best.x * 1.15, z: best.z * 1.15, t: 0, done: 0 } : null;
+}, 58);
+function bearClearTick(o, dt) {
+  const b = o.bearShift, p = o.root.position;
+  if (b && b.t < 0.7) { b.t = Math.min(0.7, b.t + dt); const k = smooth01(b.t / 0.7), m = k - b.done; b.done = k; p.x += b.x * m; p.z += b.z * m; p.y = getHeight(p.x, p.z); }
+  if ((o.btk = (o.btk || 0) + 1) % 2) return;
+  const q = bearTrunkPush(o); if (q.d > 0.01) { p.x += q.x; p.z += q.z; p.y = getHeight(p.x, p.z); }
+}
 // melee reach and the thrown spear also find raiders (landHit / spearStep hooks)
 function cmbFoeInReach(best, bd, fx, fz) {
   for (const f of foes) {
@@ -8997,9 +9089,11 @@ async function arcRaidFight(resumed) {
       if (!list.length) { RD.left = 0; break; }
       if (wave === 1 && !resumed) {                  // a look up the hill at the torches coming down
         const f0 = list[0], gy = getHeight(P.pos.x, P.pos.z);
+        const lookCine = !$('hud').classList.contains('cine');   // GC-FIX7: a letterboxed beat, HUD away (also in first person: the bars frame Sena's line)
+        if (lookCine) cine(true);
         if (view !== 'fpp') camShot = ARCS.shot = { pos: new THREE.Vector3(P.pos.x - Math.sin(a0) * 4, gy + 2.6, P.pos.z - Math.cos(a0) * 4), look: new THREE.Vector3(f0.pos.x, getHeight(f0.pos.x, f0.pos.z) + 1.4, f0.pos.z), t: 3.5 };
         say('Sena', RD.lit >= 4 ? 'The braziers! I can see them coming. Aro, there!' : 'I cannot see them, Aro. Only the torches.');
-        await arcWait(3.2);
+        try { await arcWait(3.2); } finally { if (lookCine) cine(false); }
         if (camShot === ARCS.shot) camShot = null; ARCS.shot = null;
       }
       RD.left = list.length + rest; save();
@@ -12451,6 +12545,7 @@ const BOWFP = { on: false, sx: 0, sy: 0, yaw: 0, pitch: 0,
   tip: [-0.012, -0.075],                                                    // where the flint point sits on screen (NDC): just under the crosshair
   clavR: new THREE.Vector3(0.02, 0.04, 0.3),                               // the drawing shoulder, back while raised
   draw: 0.6, arm: 0.3,                                                       // nock to the arrow rest at full draw; the arms' step forward when raised
+  rest: [0.068, 0.012],                                                      // BOW-A3: the arrow rest above (up) and left of the grip centre
   shL: new THREE.Vector3(-0.2, -0.3, 0.12) };                               // where the bow arm comes from
 const _bv = [0, 1, 2, 3, 4, 5, 6, 7, 8].map(() => new THREE.Vector3()), _bvq = new THREE.Quaternion();
 // The arrow's line at full draw: from the nock n toward the screen point BOWFP.tip, one arrow length long.
@@ -12476,7 +12571,7 @@ function bowFpp(dt) {
   // the raised pose from the anchor and the aim point: the arrow's line, the stave's frame, then the grip under the rest
   const nockFull = _bv[1].copy(BOWFP.nock), ad0 = bowFpLine(nockFull, _bv[7]);
   const upA = _bv[3].set(-Math.sin(BOWFP.cant), Math.cos(BOWFP.cant), 0), xA = _bv[4].crossVectors(upA, ad0).normalize(); upA.crossVectors(ad0, xA).normalize();
-  const gUp = _bv[8].copy(nockFull).addScaledVector(ad0, BOWFP.draw).addScaledVector(upA, -0.035).addScaledVector(xA, -0.018);
+  const gUp = _bv[8].copy(nockFull).addScaledVector(ad0, BOWFP.draw).addScaledVector(upA, -BOWFP.rest[0]).addScaledVector(xA, -BOWFP.rest[1]);
   const g = _bv[0].lerpVectors(BOWFP.low.g, gUp, a);
   const sw = _bv[6].set(BOWFP.sx + bx + Math.sin(clock * 23) * shake, BOWFP.sy + bob + Math.sin(clock * 19 + 1) * shake, 0);
   g.add(sw);
@@ -12499,7 +12594,7 @@ function bowFpp(dt) {
   BOWFP.wantL = L[0];
   // the string: drawn back along the arrow's line (from its rest on the fist toward the cheek) with the charge; let
   // down or loosed, it is back on the bow at once
-  const restPt = _bv[6].copy(g).addScaledVector(up, 0.035).addScaledVector(xAx, 0.018);   // the arrow passes the stave above the fist
+  const restPt = _bv[6].copy(g).addScaledVector(up, BOWFP.rest[0]).addScaledVector(xAx, BOWFP.rest[1]);   // the arrow passes the stave above the fist
   const full = restPt.distanceTo(nockFull), ad = _fc.copy(restPt).sub(nockFull).normalize();
   const drawn = !!W.aim, k = drawn ? ch * a : 0;
   const nock = _bv[5].copy(restPt).addScaledVector(ad, -lerp(-BOW_TIPZ + 0.01, full, k));
