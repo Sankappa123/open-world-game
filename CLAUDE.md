@@ -66,7 +66,16 @@ The user asked for a 21+ game.
 - They tend to restart or close sessions. Commit WIP before long runs, and commit again at checkpoints.
 - Never start a new game or click "New story" without `/api/` interception. Never touch their real save except at their explicit request.
 
-## Status (updated 2026-11-18 ~07:50, M4 Air; paused so the user can switch accounts). RESUME HERE
+## Status (updated 2026-11-19 ~06:30, M4 Air; STOPPED by the user). RESUME HERE
+**Workflow A is about 96% done.** Only the final round is left: script `docs/dev/workflows/A3-final.js`.
+- It runs an independent verify of 4 areas (gore-cmb, arc-rom-mus, mat-surv, bow-limits), then at most 2 fix and re-verify rounds, then the wrap-up (build, play/play_survivor/bow/old tests, update this file, write `docs/dev/a-open-items.md`).
+- On "continue": run it fresh with the Workflow tool (scriptPath = that file). Nothing from the cut-off runs is cached; the agents reuse the harnesses and shots in `../hb-scratch/tests` and `../hb-scratch/shots` (a3story, a3ms, a3bow, v8gc, v9gc, a3vb).
+- Two attempts (2026-11-18 21:45 and 2026-11-19 05:56) were cut by the 5-hour usage limit and by a user stop. Both were read-only, so no code was lost. Each verifier takes about 2 h on this machine.
+- Before relaunching, check for stale test servers and headless Chrome (`ps -eo pid,args | grep -E "hb-scratch/tests|remote-debugging-port=94"`) and stop them by PID. They slow the Mac badly and hold ports.
+- Early finding to fix: after a revive, Sena stands inside Aro's body (mat-surv).
+- Known open items per area are listed in A3-final.js (the `open:` fields).
+
+### Older status, kept for history
 **Workflow A is about 90% done and PAUSED.** On "continue", relaunch it. Do not ask any questions first.
 - Script: `docs/dev/workflows/A2-mature-finish-pro.js`. In the same Claude session, use `resumeFromRunId: "wf_667b3159-507"`. In a NEW session or account, run it fresh: finished packages re-check the code on disk quickly and continue.
 - Agents run on the session model (Opus). **Fable needs paid usage credits now. Do not use Fable unless the user buys credits.**
