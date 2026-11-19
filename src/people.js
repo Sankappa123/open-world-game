@@ -202,6 +202,8 @@ export function makeHuman({ female = false, light = false, tint = 0xffffff, hair
   // Closed fists: Sword_Idle fingers on the right, Idle_Torch_Loop fingers on the left, weighted by gripR / gripL.
   h.fist = { r: samplePose(who, 'ready', 0, BONESETS.fingersR), l: samplePose(who, 'torchHold', 0, BONESETS.fingersL) };
   h.useGrip = () => h.addOverride('fingers', 20, (hh) => { applyPose(hh, hh.fist.r, hh.gripR); applyPose(hh, hh.fist.l, hh.gripL); });
+  // ARC-A3r7: jump the loop weights straight to one state (a cut: no 0.3 s crossfade out of the previous pose)
+  h.snapLoop = (key = 'idle') => { for (const k in LOOPS) if (act[k]) { w[k] = k === key ? 1 : 0; act[k].setEffectiveWeight(w[k]); } };
   h.animate = (dt, speed, crouch = false, swim = false, air = false) => {
     const moving = speed > 0.1;
     // SENA-SIT A3 (content limit, verifier A3): the seated talking clip's gestures land on a woman's chest (Sena seemed to
@@ -1050,8 +1052,17 @@ function adultDress(model, body, bones, who, color, style = null) {
   }
   if (two) { const y2 = bw('spine_02').y; const lo = senaLoin(body, cache, 'loin', (i) => wy[i] < y2, 260, unit, mat(1.05)); if (lo) out.parts.push(lo); }   // SENA-LOOK A3: the hide loincloth under the skirt
   if (two) {   // SENA-LOOK A3b (verifier a3vfin): the base mesh's painted bra showed as a dark lace strip above the breast band; a hide under-band over every bra texel
-    const y2 = bw('spine_02').y, yN = bw('neck_01').y, NOT = /^(upperarm|lowerarm|hand|neck|head)/;
-    const br = senaLoin(body, cache, 'bra', (i) => wy[i] > y2 && wy[i] < yN && !NOT.test(main[i]), 330, unit, mat(1)); if (br) { br.name = 'dressBra'; out.parts.push(br); }
+    const y2 = bw('spine_02').y, yN = bw('neck_01').y, yLo = (bw('spine_01').y + y2) / 2, NOT = /^(lowerarm|hand|neck|head|index|middle|pinky|ring|thumb)/i;   // A3c: the band's sides under the arm and its lower edge (upperarm-weighted, or just below spine_02) carry bra paint too
+    // SENA-LOOK A3c (a3l2a): exact cover. Every triangle whose UV footprint holds any bra texel (3x3 avg < 250, plus a
+    // 2-texel halo for the grey lace edge) is taken, not only those whose corners or midpoints sample dark: the sampled
+    // test missed thin slivers at the cleavage notch and the band's sides (a few hundred bra pixels in close views).
+    // A3c: 1 mm off the skin, not 5: at the deep cleavage and under the arm the 5 mm shell went into the facing skin and
+    // the bra showed through the gap. A depth bias keeps the thin shell in front of the skin at a distance.
+    const braMat = mat(1); braMat.polygonOffset = true; braMat.polygonOffsetFactor = -1; braMat.polygonOffsetUnits = -4;
+    const br = senaLoin(body, cache, 'bra', (i) => wy[i] > yLo && wy[i] < yN && !NOT.test(main[i]), 250, unit, braMat, 6, 0.001, [86, 58, 38]); if (br) { br.name = 'dressBra'; out.parts.push(br); }
+    // A3c: and the bra texels themselves are repainted hide brown in Sena's own copy of the skin map, so that where the arm
+    // presses into her side and hides the shell (a few pixels in close side views), hide shows, never the lace.
+    if (cache.braTex) { body.userData.skinMap0 = body.material.map; body.material.map = cache.braTex; }   // skinMap0: the unpainted map (tests)
   }
   if (two) out.parts.push(...senaTrinkets(bones));     // SENA-LOOK: bone-bead necklace and arm cords
   return out;
@@ -1061,7 +1072,9 @@ function adultDress(model, body, bones, who, color, style = null) {
 // triangle below the ribs that touches the painted brief (dark texels in the body texture), lifted 5 mm off the skin
 // along the welded normals. It moves with the body in every pose, so the brief is never seen: under the skirt there is
 // only hide. The skirt and the bare midriff and thighs (the two-piece look) are unchanged.
-function senaLoin(body, cache, key, sel, thr, unit, material) {
+// halo (A3c): exact mode. A texel bitmap (3x3 average < thr, dilated by halo texels) and a triangle is taken when any
+// bitmap texel lies inside its UV footprint (or within one texel of it).
+function senaLoin(body, cache, key, sel, thr, unit, material, halo = 0, lift = 0.005, paint = null) {
   let g = cache[key];
   if (g === undefined) {
     g = cache[key] = null;
@@ -1077,17 +1090,52 @@ function senaLoin(body, cache, key, sel, thr, unit, material) {
     const g0 = body.geometry, uv = g0.attributes.uv, n = g0.attributes.position.count;
     const src = g0.index ? g0.index.array : Array.from({ length: n }, (_, i) => i), idx = [];
     const low = sel;
+    let dk = null;
+    if (halo > 0) {                                                    // exact mode: the dark-texel bitmap, dilated
+      const d0 = new Uint8Array(W * H); dk = new Uint8Array(W * H);
+      for (let y = 1; y < H - 1; y++) for (let x = 1; x < W - 1; x++) { let s = 0; for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) { const o = ((y + dy) * W + x + dx) * 4; s += px[o] + px[o + 1] + px[o + 2]; } if (s / 9 < thr) d0[y * W + x] = 1; }
+      for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) { if (!d0[y * W + x]) continue; for (let dy = -halo; dy <= halo; dy++) for (let dx = -halo; dx <= halo; dx++) { const yy = y + dy, xx = x + dx; if (yy >= 0 && yy < H && xx >= 0 && xx < W) dk[yy * W + xx] = dk[yy * W + xx] || (Math.abs(dx) <= 2 && Math.abs(dy) <= 2 ? 2 : 1); } }
+    }
+    const covers = (ua, va, ub, vb, uc, vc) => {                       // any bitmap texel within 1 texel of the UV triangle
+      const P = [[ua * W, (flip ? 1 - va : va) * H], [ub * W, (flip ? 1 - vb : vb) * H], [uc * W, (flip ? 1 - vc : vc) * H]];
+      const ar = (P[1][0] - P[0][0]) * (P[2][1] - P[0][1]) - (P[1][1] - P[0][1]) * (P[2][0] - P[0][0]), sg = ar < 0 ? -1 : 1;
+      const E = [0, 1, 2].map((k) => { const p = P[k], q = P[(k + 1) % 3], l = Math.hypot(q[0] - p[0], q[1] - p[1]) || 1; return [p, q, l]; });
+      const x0 = Math.max(0, Math.floor(Math.min(P[0][0], P[1][0], P[2][0]) - 1)), x1 = Math.min(W - 1, Math.ceil(Math.max(P[0][0], P[1][0], P[2][0]) + 1));
+      const y0 = Math.max(0, Math.floor(Math.min(P[0][1], P[1][1], P[2][1]) - 1)), y1 = Math.min(H - 1, Math.ceil(Math.max(P[0][1], P[1][1], P[2][1]) + 1));
+      for (let y = y0; y <= y1; y++) for (let x = x0; x <= x1; x++) {
+        if (!dk[y * W + x]) continue; const cx0 = x + 0.5, cy0 = y + 0.5; let ok = true;
+        for (const [p, q, l] of E) if (sg * ((q[0] - p[0]) * (cy0 - p[1]) - (q[1] - p[1]) * (cx0 - p[0])) / l < -1) { ok = false; break; }
+        if (ok) return true;
+      }
+      return false;
+    };
     for (let t = 0; t < src.length; t += 3) {
       const a = src[t], b = src[t + 1], c = src[t + 2];
       if (!(low(a) && low(b) && low(c))) continue;
       const ua = uv.getX(a), va = uv.getY(a), ub = uv.getX(b), vb = uv.getY(b), uc = uv.getX(c), vc = uv.getY(c);
+      if (dk) { if (covers(ua, va, ub, vb, uc, vc)) idx.push(a, b, c); continue; }
       if (dark(ua, va) || dark(ub, vb) || dark(uc, vc) || dark((ua + ub + uc) / 3, (va + vb + vc) / 3) || dark((ua + ub) / 2, (va + vb) / 2) || dark((ub + uc) / 2, (vb + vc) / 2) || dark((ua + uc) / 2, (va + vc) / 2)) idx.push(a, b, c);
     }
     if (!idx.length) return null;
+    if (dk && paint) {                                                 // A3c: the painted texels under the shell, repainted hide brown in a copy of the map
+      const pc = document.createElement('canvas'); pc.width = W; pc.height = H; const pg = pc.getContext('2d', { willReadFrequently: true }); pg.drawImage(im, 0, 0);
+      const id = pg.getImageData(0, 0, W, H), D = id.data, hit = new Uint8Array(W * H);
+      for (let t = 0; t < idx.length; t += 3) {
+        const P = [idx[t], idx[t + 1], idx[t + 2]].map((i) => [uv.getX(i) * W, (flip ? 1 - uv.getY(i) : uv.getY(i)) * H]);
+        const x0 = Math.max(0, Math.floor(Math.min(P[0][0], P[1][0], P[2][0]) - 2)), x1 = Math.min(W - 1, Math.ceil(Math.max(P[0][0], P[1][0], P[2][0]) + 2));
+        const y0 = Math.max(0, Math.floor(Math.min(P[0][1], P[1][1], P[2][1]) - 2)), y1 = Math.min(H - 1, Math.ceil(Math.max(P[0][1], P[1][1], P[2][1]) + 2));
+        for (let y = y0; y <= y1; y++) for (let x = x0; x <= x1; x++) if (dk[y * W + x] === 2) hit[y * W + x] = 1;
+      }
+      for (let i = 0; i < W * H; i++) if (hit[i]) { D[i * 4] = paint[0]; D[i * 4 + 1] = paint[1]; D[i * 4 + 2] = paint[2]; }
+      pg.putImageData(id, 0, 0);
+      const src0 = body.material.map, tx = new THREE.CanvasTexture(pc);
+      tx.flipY = src0.flipY; tx.colorSpace = src0.colorSpace; tx.wrapS = src0.wrapS; tx.wrapT = src0.wrapT; tx.anisotropy = src0.anisotropy; tx.channel = src0.channel;
+      cache[key + 'Tex'] = tx;
+    }
     // one normal per welded position (no cracks at the UV seams), 5 mm out
     g = g0.clone(); const p = g.attributes.position, nr = g.attributes.normal, q = 0.0005 * unit, acc = new Map(), keyOf = (i) => Math.round(p.getX(i) / q) + ',' + Math.round(p.getY(i) / q) + ',' + Math.round(p.getZ(i) / q);
     for (let i = 0; i < n; i++) { const k = keyOf(i); let a = acc.get(k); if (!a) acc.set(k, (a = [0, 0, 0])); a[0] += nr.getX(i); a[1] += nr.getY(i); a[2] += nr.getZ(i); }
-    const off = 0.005 * unit;
+    const off = lift * unit;
     for (let i = 0; i < n; i++) { const a = acc.get(keyOf(i)), l = Math.hypot(a[0], a[1], a[2]) || 1; p.setXYZ(i, p.getX(i) + a[0] / l * off, p.getY(i) + a[1] / l * off, p.getZ(i) + a[2] / l * off); }
     g.setIndex(idx); g.computeBoundingSphere(); weldNormals(g);
     cache[key] = g;

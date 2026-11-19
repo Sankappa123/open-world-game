@@ -1,3 +1,11 @@
+# UPDATE 2026-11-20 (final): ALL A blockers, fails and majors are CLOSED
+- Final pass "A-last-two", checked by an independent verifier:
+  - bra strip: PASS. SENA-LOOK A3c: an exact-texel hide layer, and the bra texels are repainted hide in Sena's own skin copy.
+  - romance-night morning: PASS. ARC-A3r7: one dip cut to both standing, `h.snapLoop()`, `R.upHold` on the birth morning.
+- Tests: build passes; play.json 45/45, errors=0.
+- Evidence: `../hb-scratch/shots/a3l2a/`, `a3l2b/`, `a3l2v/`.
+- What remains is only the minor polish items listed below.
+
 # UPDATE 2026-11-20: last fix pass (workflow "A-last-five")
 A focused pass targeted the 5 open items. An independent verifier then re-checked them (evidence in `../hb-scratch/shots/a3vfin/`).
 - **FIXED, verified:**

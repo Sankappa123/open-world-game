@@ -4533,7 +4533,7 @@ function rstBegin(s, mode = 'dawn', o = {}) {
   rstAbort();
   const together = rstTogether(s), L = rstLayout(s);
   Object.assign(R, { on: true, s, mode, together, L, applied: false, skip: false, hold4: 0, line: null, log: [], storm: world.env.storm > 0.5, speed: 1,
-    t0: S.time, hours: mode === 'nap' ? 2 : (((6.3 - S.time) % 24) + 24) % 24 || 24, dayDone: false, dream: false, morning: false, wpnWoke: false, upCut: false,
+    t0: S.time, hours: mode === 'nap' ? 2 : (((6.3 - S.time) % 24) + 24) % 24 || 24, dayDone: false, dream: false, morning: false, wpnWoke: false, upCut: false, upHold: false,
     hp0: S.hp, close0: S.close, eve: S.c.mealDay === S.day || S.c.satDay === S.day, first: !S.c.restSeen, out: null, nOut: null, comfort: rstComfort(s, together),
     dolly: false, skipping: false, dip: 0, holdPt: null, lastLook: null, kidsIn: false, released: false, hutOut: false, glowPos: null, skipSpeed: 0, lastNow: 0, ext: false });
   R.t1 = (R.t0 + R.hours) % 24; R.tier = rstTier(R.comfort);
@@ -4701,7 +4701,9 @@ function rstStartWake() {
     // round 2: from the front corner of the room, inside the walls: Lio in her cradle in the foreground, the hearth, and
     // her parents waking in the bed behind (the old close shot showed a closed box in a dark corner and no one else)
     rstShot(toWorld(R.s, [2.72, 1.6, 2.15]), toWorld(R.s, [0.85, 0.48, 0.15]), 0.01, true);
-    setTimeout(() => { if (R.on && R.phase === 'wake') rstShot(R.L.cam.wake, R.L.cam.wakeLook, 0.01, true); }, 3200);   // then a cut back to the parents (round 3: a slow move crossed Sena's path to the door: a frame of her hair)
+    // ARC-A3r7: on the raised bed the parents stay lying behind the cradle until the cut back, which is also their get-up cut
+    R.upHold = true;
+    setTimeout(() => { if (R.on && R.phase === 'wake') { R.upHold = false; R.t = Math.max(R.t, RST_UPCUT); rstShot(R.L.cam.wake, R.L.cam.wakeLook, 0.01, true); } }, 3200);   // then a cut back to the parents (round 3: a slow move crossed Sena's path to the door: a frame of her hair)
   }
   if (R.ext) { $('restdip').classList.add('on'); setTimeout(() => $('restdip').classList.remove('on'), 120); }
 }
@@ -4715,12 +4717,13 @@ function rstWakeTick(dt) {
   // them already standing beside the bed, turned to the room. Low beds (hut, floor, cave) keep the kneel-up.
   if (!L.low && !R.upCut) {
     for (const e of tog ? [P, N] : [P]) if (e.lie) { e.lieW = 1; e.L.hold = Math.max(0, e.L.hold - dt * 4); }
-    if (t < RST_UPCUT) { rstDrape(1); return rstWakeRest(dt, t, L); }
+    if (t < RST_UPCUT || (R.upHold && t < 6)) { rstDrape(1); return rstWakeRest(dt, t, L); }
     R.upCut = true; dipCut();
     for (const e of tog ? [P, N] : [P]) {
       const pl = e.L; if (!e.lie && pl.up) continue;
       e.lie = false; e.lieW = 0; e.pos.copy(pl.sitPos); e.pos.y = L.floorY; e.face = L.yaw; e.speed = 0; e.path = null;
-      e.h.pose = null; pl.up = true; if (pl.rollW != null) pl.rollW = 0;
+      e.pos.addScaledVector(L.right, pl.i === 0 ? -0.08 : 0.15);   // ARC-A3r7: a step clear of the frame (her knee stood 3 cm off the bed's side, Aro's 7 cm)
+      e.h.pose = null; e.h.snapLoop?.('idle'); pl.up = true; if (pl.rollW != null) pl.rollW = 0;   // ARC-A3r7: no half-sit in mid-air through the dip
     }
   }
   for (const [e, t0] of tog ? [[P, 0], [N, 0.6]] : [[P, 0]]) {
@@ -4749,7 +4752,7 @@ function rstWakeTick(dt) {
   return rstWakeRest(dt, t, L);
 }
 function rstWakeRest(dt, t, L) {
-  if (!R.wpnWoke && (P.L.exit || t > 3.2)) { R.wpnWoke = true; if (typeof wpnWake === 'function') wpnWake(); }   // WPN: he gathers his things as he heads out
+  if (!R.wpnWoke && !R.upHold && (P.L.exit || t > 3.2)) { R.wpnWoke = true; if (typeof wpnWake === 'function') wpnWake(); }   // WPN: he gathers his things as he heads out
   if (!R.morning && t > 1.5) {
     R.morning = true;
     if (R.birth) birthLines();                                                       // STORY: the birth morning
@@ -7170,7 +7173,9 @@ async function romNight(s) {
     const m = ROM.nightLine; ROM.nightLine = null;
     if (m) say('Sena', m);
     await romWaitSubs(16000); await romSleep(500);   // ARC-A3r4: every queued morning line ends in bed (a 9 s cap got them up mid-line)
-    if (R.on && R.phase === 'wake') { R.speed = 1; R.lastLook = null; rstShot(R.L.cam.wake, R.L.cam.wakeLook, 0.01, true); }
+    // ARC-A3r7: the cut to the wake shot is also the get-up cut (RST_UPCUT): one dip to black, and the wide shot opens on
+    // the two of them already on their feet beside the bed (a second dip 0.9 s later read as a jump cut)
+    if (R.on && R.phase === 'wake') { R.speed = 1; R.lastLook = null; if (!R.L.low) R.t = Math.max(R.t, RST_UPCUT); rstShot(R.L.cam.wake, R.L.cam.wakeLook, 0.01, true); }
   }
   return ok;
 }

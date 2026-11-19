@@ -67,30 +67,21 @@ The user asked for a 21+ game.
 - Never start a new game or click "New story" without `/api/` interception. Never touch their real save except at their explicit request.
 
 ## Status (updated 2026-11-20, M4 Air). RESUME HERE
-**Workflow A is finished: all 3 verify rounds ran. 2 of the 4 areas pass; 3 items are still open.** The full list is in **`docs/dev/a-open-items.md`**.
-- **Passed:**
-  - gore-cmb: all known items, plus the M2 and M4 acceptance items;
-  - mat-surv: rescue, Hardcore reload, the 21+ gate, the grief camera and the water-down shot.
-- **Still failing:**
-  - **Blocker (SENA-LOOK):** when Sena jogs toward a hip-height camera, the black base-mesh brief shows under the flared skirt front. The skirt front also reads as a stiff card.
-  - Romance-night morning (arc-rom-mus): Sena sinks about 0.3 m through the bed as she gets up.
-  - Jealousy scene (arc-rom-mus): Tamu sits in mid-air.
-- **New majors:**
-  - the romance-night kiss camera is blocked or dark;
-  - at a cave fire, Sena's shins pass through the seat log.
-- There are about 16 minor polish items, listed by area in `a-open-items.md`.
-- **Tests at the wrap-up** (snapshot of the working tree, ports 5225 and 9425, all /api/ intercepted):
-  - `npm run build` passes;
-  - play.json 45/45, play_survivor.json 54/54, bow.json 10/10 and old.json 9/9, all with errors=0 and fails=0.
-  - play.json has a known flaky step: "smoke -> outcast" failed in 1 of 2 runs during verification.
-- The agent log for all A rounds is in `docs/dev/progress-log-mature.md`, a copy of `../hb-scratch/progress.md`.
+**Workflow A is COMPLETE.** Every blocker, fail and major is fixed and independently verified. Only about 16 minor polish items remain, in **`docs/dev/a-open-items.md`**.
+- The last passes (A-last-five, A-last-two) fixed:
+  - SENA-LOOK jog brief: a hide loincloth layer, `senaLoin()`;
+  - the bra strip above the band (A3c);
+  - the cave-fire seat (`CAVE-SIT`);
+  - Tamu's bench;
+  - the romance-night kiss camera;
+  - the romance-night morning get-up (ARC-A3r7).
+- Tests: `npm run build` passes; play.json 45/45 with errors=0. Earlier: survivor 54/54, bow 10/10, old 9/9.
 - **NEXT:**
-  1. A short fix pass for the 3 fails and 2 majors above, starting with the SENA-LOOK blocker. Ask the user whether to run it now.
-  2. Then the **Viking "Book II: The Sea Road"** (`docs/dev/spec-viking.md`). **Ask the user the 4 questions in §0 first.**
-  3. Then the backlog (`docs/dev/spec-mature.md` §1.2).
+  1. Viking **"Book II: The Sea Road"** (`docs/dev/spec-viking.md`). **Ask the user the 4 questions in §0 first.**
+  2. Or the minor polish items, then the backlog (`docs/dev/spec-mature.md` §1.2).
 - Before any test run, stop stale test servers and headless Chrome by PID. Find them with `ps -eo pid,args | grep -E "hb-scratch/tests|remote-debugging-port=94"`.
-- **Sena's look (USER DECISION, 2026-11-17):** a revealing hide two-piece, not the dress. It is `SENA-LOOK` in people.js and main.js: a breast-band, a hip-slung mid-thigh skirt and a bead necklace. It stays within the content limits. Never revert her to the dress. No base-mesh underwear may show in any pose.
-- Agents run on the session model (Opus). Fable needs paid usage credits; do not use it unless the user buys credits. On the user's plan, run about 2 agents at a time.
+- **Sena's look (USER DECISION, 2026-11-17):** a revealing hide two-piece, not the dress (`SENA-LOOK`). Never revert her to the dress. No base-mesh underwear may show in any pose; the hide layers enforce this.
+- Agents run on Opus; Fable needs paid credits. Run about 2 agents at a time.
 
 ### Older status, kept for history
 - Workflow A ran as A-mature-finish.js, then A2-mature-finish-pro.js, then A3-final.js (all in `docs/dev/workflows/`). Each was cut several times by usage limits; no code was lost.
