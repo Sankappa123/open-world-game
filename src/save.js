@@ -1,4 +1,4 @@
-// Saving: the game state goes to the server's SQLite database (saves/hearthborn.sqlite) and, as a backup,
+// Saving: the game state goes to the server's MongoDB database (server/db.mjs) and, as a backup,
 // to the browser's localStorage. Settings stay in localStorage only.
 const KEY = 'hearthborn-save-v2', OLD_KEY = 'hearthborn-save-v1', SETTINGS_KEY = 'hearthborn-settings';
 const ASIDE_KEY = 'hearthborn-save-aside';     // SAVE-PERF r3: a session set aside when the player took the server's newer story

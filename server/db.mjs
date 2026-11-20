@@ -1,20 +1,18 @@
-// Save-game storage. MongoDB (run locally with `docker compose up -d`) is the primary store; if it cannot be
-// reached the server falls back to a SQLite file in saves/ so a game is never lost. Every save also keeps a
-// short history of snapshots that can be rolled back.
-import fs from 'node:fs';
+// Save-game storage in MongoDB (run locally with `npm run db`, i.e. Docker). Every save also keeps a short history
+// of snapshots that can be rolled back. If MongoDB is down the API answers 503 and the browser keeps its own copy;
+// the connection is retried on the next request, so starting Docker later just works.
 import path from 'node:path';
 
 // Settings come from .env in the project root (committed: it holds only the local Docker MongoDB address).
 // A variable already set in the shell wins over .env.
 try { process.loadEnvFile(path.resolve('.env')); } catch { /* no .env: use the defaults below */ }
 
-const DIR = path.resolve('saves');
 const MONGO_URL = process.env.MONGO_URL || 'mongodb://127.0.0.1:27018';
 const MONGO_DB = process.env.MONGO_DB || 'hearthborn';
 // Only a server listening on the player's own port may touch the real saves. Every other port (test servers run by
-// tools and agents on 5174+) gets a separate "_test" database and SQLite file, so a test can never overwrite a game.
+// tools and agents on 5174+) gets a separate "_test" database, so a test can never overwrite a game.
 const REAL_PORTS = String(process.env.HB_SAVE_PORTS || '5173').split(',').map((p) => +p.trim());
-const KIND = { real: { mongo: MONGO_DB, sqlite: path.join(DIR, 'hearthborn.sqlite') }, test: { mongo: MONGO_DB + '_test', sqlite: path.join(DIR, 'hearthborn_test.sqlite') } };
+const KIND = { real: MONGO_DB, test: MONGO_DB + '_test' };
 const KEEP = 12;                       // snapshots kept per slot
 const handles = {}, modes = {};
 let mode = 'none';
@@ -51,40 +49,6 @@ async function openMongo(name) {
   };
 }
 
-async function openSqlite(file) {
-  const { DatabaseSync } = await import('node:sqlite');
-  const d = new DatabaseSync(file);
-  d.exec(`
-    PRAGMA journal_mode = WAL;
-    CREATE TABLE IF NOT EXISTS saves (slot TEXT PRIMARY KEY, data TEXT NOT NULL, updated_at INTEGER NOT NULL);
-    CREATE TABLE IF NOT EXISTS snapshots (id INTEGER PRIMARY KEY AUTOINCREMENT, slot TEXT NOT NULL, data TEXT NOT NULL, created_at INTEGER NOT NULL);
-    CREATE INDEX IF NOT EXISTS snapshots_slot ON snapshots (slot, id);
-  `);
-  const q = {
-    get: d.prepare('SELECT data, updated_at FROM saves WHERE slot = ?'),
-    put: d.prepare('INSERT INTO saves (slot, data, updated_at) VALUES (?, ?, ?) ON CONFLICT(slot) DO UPDATE SET data = excluded.data, updated_at = excluded.updated_at'),
-    snap: d.prepare('INSERT INTO snapshots (slot, data, created_at) VALUES (?, ?, ?)'),
-    trim: d.prepare('DELETE FROM snapshots WHERE slot = ? AND id NOT IN (SELECT id FROM snapshots WHERE slot = ? ORDER BY id DESC LIMIT ?)'),
-    del: d.prepare('DELETE FROM saves WHERE slot = ?'),
-    list: d.prepare('SELECT slot, updated_at FROM saves ORDER BY updated_at DESC'),
-    history: d.prepare('SELECT id, created_at FROM snapshots WHERE slot = ? ORDER BY id DESC'),
-    snapshot: d.prepare('SELECT data FROM snapshots WHERE id = ? AND slot = ?'),
-  };
-  return {
-    async get(slot) { const r = q.get.get(slot); return r ? { data: JSON.parse(r.data), updatedAt: r.updated_at } : null; },
-    async put(slot, data, snapshot = true) {
-      const json = JSON.stringify(data), now = Date.now();
-      q.put.run(slot, json, now);
-      if (snapshot) { q.snap.run(slot, json, now); q.trim.run(slot, slot, KEEP); }
-      return now;
-    },
-    async del(slot) { q.del.run(slot); },
-    async list() { return q.list.all(); },
-    async history(slot) { return q.history.all(slot); },
-    async restore(slot, id) { const r = q.snapshot.get(+id, slot); if (!r) return false; q.put.run(slot, r.data, Date.now()); return true; },
-  };
-}
-
 // kind: 'real' (the player's saves) or 'test'. Each is opened once and cached. Requests that arrive while it is
 // still opening share the same attempt (SAVE-PERF: two first requests used to open, and time out on, Mongo twice).
 const opening = {};
@@ -96,18 +60,16 @@ export function openDb(kind = 'real') {
 // out the Mongo connect timeout. The player's store is awaited; the test store opens in the background.
 export async function warmDb() { openDb('test').catch(() => {}); return openDb('real'); }
 async function openDbNow(kind) {
-  const K = KIND[kind];
-  let d = null, m = 'none';
-  fs.mkdirSync(DIR, { recursive: true });
-  try { d = await openMongo(K.mongo); m = 'mongodb'; }
+  const name = KIND[kind];
+  let d = null;
+  try { d = await openMongo(name); }
   catch (err) {
-    console.warn(`[hearthborn] MongoDB not reachable at ${MONGO_URL} (${err.message.split('\n')[0]}). Start it with: docker compose up -d`);
-    try { d = await openSqlite(K.sqlite); m = 'sqlite'; }
-    catch (err2) { console.warn('[hearthborn] SQLite unavailable too:', err2.message); }
+    console.warn(`[hearthborn] MongoDB not reachable at ${MONGO_URL} (${err.message.split('\n')[0]}). Start it with: npm run db`);
   }
-  handles[kind] = d; modes[kind] = m;
-  if (kind === 'real') mode = m;
-  console.log(`[hearthborn] ${kind} saves: ${m}${m === 'mongodb' ? ` (${MONGO_URL}/${K.mongo})` : m === 'sqlite' ? ` (${K.sqlite})` : ''}`);
+  modes[kind] = d ? 'mongodb' : 'none';
+  if (d) handles[kind] = d;           // a failed connect is not cached: the next request tries again
+  if (kind === 'real') mode = modes[kind];
+  console.log(`[hearthborn] ${kind} saves: ${d ? `mongodb (${MONGO_URL}/${name})` : 'none'}`);
   return d;
 }
 export const dbMode = () => mode;
@@ -119,7 +81,7 @@ export async function handleApi(req, res) {
   if (!url.pathname.startsWith('/api/')) return false;
   const send = (code, body) => { res.statusCode = code; res.setHeader('content-type', 'application/json'); res.setHeader('cache-control', 'no-store'); res.end(JSON.stringify(body)); };
   const kind = kindOf(req), d = await openDb(kind), mode = modes[kind];
-  if (!d) return send(503, { ok: false, error: 'no database available' }), true;
+  if (!d) return send(503, { ok: false, error: 'MongoDB not reachable; run npm run db' }), true;
   const slot = (url.searchParams.get('slot') || 'default').slice(0, 40);
   try {
     if (url.pathname === '/api/health') return send(200, { ok: true, db: mode, saves: kind }), true;

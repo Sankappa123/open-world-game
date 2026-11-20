@@ -1,7 +1,7 @@
 import { defineConfig } from 'vite';
 import { handleApi, warmDb, dbMode } from './server/db.mjs';
 
-// The dev server also hosts the save-game API, so progress is stored in saves/hearthborn.sqlite
+// The dev server also hosts the save-game API, so progress is stored in MongoDB (see server/db.mjs and .env)
 // on disk instead of only in the browser.
 const saveApi = () => ({
   name: 'hearthborn-save-api',

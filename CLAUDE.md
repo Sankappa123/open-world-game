@@ -7,7 +7,7 @@ This file is read at the start of every session, so work can resume on any machi
 Hearthborn is a browser 3D survival story game: Three.js r187, Vite, plain JS ES modules, no framework.
 - The player is Aro. Sena is the AI companion. Their daughter Lio arrives later in the story.
 - They found a home in a prehistoric valley.
-- Saves: a Node API (`server/`) stores them in MongoDB (Docker, port **27018**), with a SQLite fallback in `saves/`. The browser keeps a localStorage copy.
+- Saves: a Node API (`server/`) stores them in MongoDB (Docker, port **27018**). MongoDB only (the SQLite fallback was removed 2026-11-20); settings in the committed `.env`. The browser keeps a localStorage copy.
 - The user wants a **professional, complete, polished** game, not quick versions. They prefer realistic visuals from free CC0 assets, chosen by Claude. They check progress often, so give clear percentage and status updates.
 
 ## Run
@@ -33,7 +33,7 @@ npm run build   # must always pass
 
 ## Testing rules (important)
 - **Never touch the user's real save.** Test servers use ports **5174+**, never 5173.
-- **Hard protection** in `server/db.mjs`: only requests that arrive on port 5173 (or the ports in `HB_SAVE_PORTS`) use the real `hearthborn` database. Every other port gets `hearthborn_test` and `saves/hearthborn_test.sqlite`.
+- **Hard protection** in `server/db.mjs`: only requests that arrive on port 5173 (or the ports in `HB_SAVE_PORTS`) use the real `hearthborn` database. Every other port gets the `hearthborn_test` database.
   - Added on 2026-11-13, after a test run overwrote the real save. It was restored from a snapshot; backup copy at `~/.claude/projects/-home-ashish-Desktop-game/hearthborn-notes/save_backup_day13.json`.
   - If you run the production server on another port, set `HB_SAVE_PORTS`.
 - Drive the game in headless Chrome with every `/api/` request intercepted: `tools/test/run.mjs`.

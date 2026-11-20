@@ -12,7 +12,8 @@ farming, a daughter, and finally a village.
 
 Then open http://localhost:5173 in Chrome or Firefox. Progress is saved automatically (every 20 s, after
 every build/craft/sleep, and when the tab is hidden or closed) to MongoDB, with a copy in the browser.
-If Docker is not running the server falls back to a SQLite file in `saves/`, so nothing is lost either way.
+MongoDB must be running (`npm run db`). If it is down, the browser keeps its own copy and the server reconnects
+as soon as the database is back.
 
 `npm run db:stop` stops the database container (saves are kept in the `hearthborn-mongo` volume).
 The container listens on port 27018. The connection string is in `.env` (`MONGO_URL`, `MONGO_DB`); edit it there
