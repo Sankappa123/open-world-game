@@ -2,3 +2,4 @@ _assets_src/
 node_modules/
 dist/
 saves/
+.DS_Store
