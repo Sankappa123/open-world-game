@@ -4,6 +4,10 @@
 import fs from 'node:fs';
 import path from 'node:path';
 
+// Settings come from .env in the project root (committed: it holds only the local Docker MongoDB address).
+// A variable already set in the shell wins over .env.
+try { process.loadEnvFile(path.resolve('.env')); } catch { /* no .env: use the defaults below */ }
+
 const DIR = path.resolve('saves');
 const MONGO_URL = process.env.MONGO_URL || 'mongodb://127.0.0.1:27018';
 const MONGO_DB = process.env.MONGO_DB || 'hearthborn';

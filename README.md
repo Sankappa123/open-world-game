@@ -15,7 +15,8 @@ every build/craft/sleep, and when the tab is hidden or closed) to MongoDB, with 
 If Docker is not running the server falls back to a SQLite file in `saves/`, so nothing is lost either way.
 
 `npm run db:stop` stops the database container (saves are kept in the `hearthborn-mongo` volume).
-The container listens on port 27018; set `MONGO_URL` to point the server elsewhere.
+The container listens on port 27018. The connection string is in `.env` (`MONGO_URL`, `MONGO_DB`); edit it there
+to point the server at another database. A variable set in the shell overrides `.env`.
 
 Production: `npm run build && npm start` serves the built game plus the save API on one port.
 
