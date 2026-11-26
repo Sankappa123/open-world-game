@@ -5,6 +5,7 @@ import { loadAnimals, makeAnimal } from './animals.js';
 import { makeSpear, makeAxe, makeTorch, makeStructure, glowM, BUILD, makeScaffold, makeCarryBasket, windowLight } from './entities.js';
 import { makeBlanket, makeBedroll } from './entities.js';   // RST bed props
 import { makeBow, makeArrow, makeQuiver, ARROW_LEN, BOW_TIPZ } from './bow.js';   // BOW
+import { icon, iconKey } from './icons.js';   // CRAFT-UI
 import { loadPeople, makeHuman, samplePose, applyPose, clipDuration, BONESETS, ik2, ikLeg, FIT } from './people.js';   // WH ikLeg: riders' legs
 import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';   // WPN viewmodel fists
 import { clamp, lerp, mat } from './util.js';
@@ -339,14 +340,14 @@ function updateSubs(dt) {
 }
 function drawInv() {
   let h = '';
-  if (hasSpear()) h += `<span class="tool">${S.tools.flintspear ? 'Flint spear' : 'Spear'}${W.spearOut && spearWhere() ? ' · ' + spearWhere() : ''}</span>`;   // FPP-world: flint tools are named too; WH: the thrown spear
-  if (hasAxe()) h += `<span class="tool">${S.tools.flintaxe ? 'Flint axe' : 'Axe'}</span>`;
-  if (S.tools.bow) h += `<span class="tool">Bow${BOW.on ? ' (ready)' : ''} <b>${S.inv.arrow || 0}${(S.inv.arrow || 0) > bowCap() ? '' : '/' + bowCap()}</b> arrows</span>`;   // BOW: a stock above the carry cap shows just the count
-  if (S.tools.torch) h += `<span class="tool">Torch${torchOn ? ` · lit ${Math.ceil(S.fuel)}s` : ''}</span>`;
-  if (S.tools.cloak) h += '<span class="tool">Fur cloak</span>';
-  if (S.tools.waterskin) h += `<span class="tool">Waterskin<b>${S.skin}/3</b>${survSkinTag()}</span>`;   // SURV: where the water came from
+  if (hasSpear()) h += `<span class="tool">${icon(S.tools.flintspear ? 'flintspear' : 'spear', 'ii')}${S.tools.flintspear ? 'Flint spear' : 'Spear'}${W.spearOut && spearWhere() ? ' · ' + spearWhere() : ''}</span>`;   // FPP-world: flint tools are named too; WH: the thrown spear
+  if (hasAxe()) h += `<span class="tool">${icon(S.tools.flintaxe ? 'flintaxe' : 'axe', 'ii')}${S.tools.flintaxe ? 'Flint axe' : 'Axe'}</span>`;
+  if (S.tools.bow) h += `<span class="tool">${icon('bow', 'ii')}Bow${BOW.on ? ' (ready)' : ''} <b>${S.inv.arrow || 0}${(S.inv.arrow || 0) > bowCap() ? '' : '/' + bowCap()}</b> arrows</span>`;   // BOW: a stock above the carry cap shows just the count
+  if (S.tools.torch) h += `<span class="tool">${icon('torch', 'ii')}Torch${torchOn ? ` · lit ${Math.ceil(S.fuel)}s` : ''}</span>`;
+  if (S.tools.cloak) h += `<span class="tool">${icon('cloak', 'ii')}Fur cloak</span>`;
+  if (S.tools.waterskin) h += `<span class="tool">${icon('waterskin', 'ii')}Waterskin<b>${S.skin}/3</b>${survSkinTag()}</span>`;   // SURV: where the water came from
   h += matToolsHud();                                // MAT: the mature packages' tools (boil bag, pot, mantle, bear cloak)
-  for (const k in ITEMS) if (S.inv[k] > 0 && !(k === 'arrow' && S.tools.bow)) h += `<span>${ITEMS[k]}<b>${S.inv[k]}</b></span>`;   // BOW: with a bow the arrows show on its chip only
+  for (const k in ITEMS) if (S.inv[k] > 0 && !(k === 'arrow' && S.tools.bow)) h += `<span>${icon(k, 'ii')}${ITEMS[k]}<b>${S.inv[k]}</b></span>`;   // CRAFT-UI: with its icon   // BOW: with a bow the arrows show on its chip only
   $('inv').innerHTML = h || '<span>Nothing carried</span>';   // FPP-world: describes the pack, not the hands (fists may be raised)
   const sig = h.replace(/<b>[^<]*<\/b>/g, '').replace(/lit \d+s/, 'lit');   // FHW-r4: an entry appearing or running out shows the stowed first-person pack (counts already toast, e.g. Sena's gathering)
   if (sig !== FPH.sig) { FPH.sig = sig; FPH.until = clock + 4; const bg = $('bag'); bg.classList.remove('pulse'); void bg.offsetWidth; bg.classList.add('pulse'); }   // BOW-UI: a new kind of thing in the bag pulses the icon
@@ -3206,18 +3207,87 @@ function toggleMenu(on = !menuOpen) {
   if (!playing || busy || mapOpen) return;
   menuOpen = on;
   $('craft').classList.toggle('on', on);
-  if (on) {
-    document.exitPointerLock?.();
-    const box = $('recipes'); box.innerHTML = '';
-    for (const r of menuRecipes()) {
-      const b = document.createElement('button');
-      b.className = 'recipe'; b.disabled = !canAfford(r);
-      b.innerHTML = `<strong>${r.name}</strong><em>${r.desc}</em><span class="cost">${Object.entries(r.cost).map(([k, n]) => `<span class="${S.inv[k] >= n ? 'ok' : 'no'}">${ITEMS[k]} ${S.inv[k]}/${n}</span>`).join('<br>')}</span>`;
-      b.onclick = () => craft(r);
-      box.append(b);
-    }
-    if (!box.children.length) box.innerHTML = '<p style="color:var(--dim)">Nothing to make yet. Follow the story — new ideas will come.</p>';
-  } else lock();
+  if (on) { document.exitPointerLock?.(); CRAFT.note = ''; craftDraw(); } else lock();
+}
+// ----- CRAFT-UI: the craft menu (Tab). Cards with a drawn icon (src/icons.js), the name, what it does and each material
+// as a chip with its icon and have/need. Tabs filter by kind. Clicking a material drops the map pin (beacon, minimap,
+// G to auto-walk) on the nearest place to get it: a node in the field, a tree, live game, the kiln for bricks.
+const CRAFT = { tab: 'all', note: '' };
+const CRAFT_TABS = [['all', 'All'], ['gear', 'Tools & gear'], ['supply', 'Supplies'], ['build', 'Build'], ['home', 'Home']];
+const craftCat = (r) => (r.place ? 'build' : r.up ? 'home' : r.item ? 'supply' : 'gear');
+function craftDraw() {
+  const list = menuRecipes();
+  const tabs = CRAFT_TABS.filter(([k]) => k === 'all' || list.some((r) => craftCat(r) === k));
+  if (!tabs.some(([k]) => k === CRAFT.tab)) CRAFT.tab = 'all';
+  const of = (k) => (k === 'all' ? list : list.filter((r) => craftCat(r) === k));
+  $('craft-tabs').innerHTML = tabs.map(([k, name]) => { const L = of(k), n = L.filter(canAfford).length; return `<button class="ct${k === CRAFT.tab ? ' on' : ''}" data-tab="${k}">${name}<span title="ready to make / all">${n}/${L.length}</span></button>`; }).join('');
+  const shown = of(CRAFT.tab);
+  $('recipes').innerHTML = shown.map(craftCard).join('') || '<p class="rc-empty">Nothing to make yet. Follow the story: new ideas will come.</p>';
+  $('craft-note').innerHTML = CRAFT.note || `${icon('pin', 'np')}<span>Short of something? Click a material to mark the nearest place to get it on your map.</span>`;
+}
+function craftCard(r) {
+  const ok = canAfford(r), verb = r.place ? 'Build' : r.up ? 'Add' : 'Make', have = r.item ? S.inv[r.item] || 0 : 0;
+  const mats = Object.entries(r.cost).map(([k, n]) => {
+    const got = S.inv[k] || 0, cls = got >= n ? 'ok' : 'no', pinned = S.pin?.k === k ? ' pinned' : '';
+    return `<button class="mat ${cls}${pinned}" data-find="${k}" title="${ITEMS[k]}: you have ${got}, ${n} needed. Click to mark where to find it.">${icon(k)}<span class="mn">${ITEMS[k]}</span><span class="mq">${got}<i>/${n}</i></span>${icon('pin', 'mp')}</button>`;
+  }).join('');
+  return `<div class="rc${ok ? ' ready' : ''}"><div class="rc-ico">${icon(iconKey(r))}${r.n > 1 ? `<b>×${r.n}</b>` : ''}</div>`
+    + `<div class="rc-main"><div class="rc-top"><strong>${r.name}</strong>${have ? `<span class="rc-have">have ${have}</span>` : ''}</div><p>${r.desc}</p><div class="rc-mats">${mats}</div></div>`
+    + `<button class="rc-go" data-make="${r.id}"${ok ? '' : ' disabled'}>${ok ? verb : 'Need more'}</button></div>`;
+}
+$('craft').addEventListener('click', (e) => {
+  const b = e.target.closest('[data-tab],[data-make],[data-find]'); if (!b || !menuOpen) return;
+  if (b.dataset.tab) { CRAFT.tab = b.dataset.tab; A.hit(1400, 0.03, 0.03); craftDraw(); }
+  else if (b.dataset.make) { const r = RECIPES.find((q) => q.id === b.dataset.make); if (r) craft(r); }
+  else if (b.dataset.find) craftFind(b.dataset.find);
+});
+// Where each material comes from: [field kind, how]. Trees give timber; game, the kiln and the rest are below.
+const MAT_SRC = {
+  stick: ['stick', 'pick up sticks under the trees'], stone: ['stone', 'pick up loose stones'], fiber: ['reed', 'cut reeds on the riverbank'],
+  berry: ['berry', 'pick berries from the bushes'], grain: ['grain', 'gather wild grain'], clay: ['clay', 'dig clay by the river'],
+  flint: ['flint', 'chip flint from the cave walls'], ochre: ['ochre', 'dig red ochre inside the caves'], yarrow: ['yarrow', 'pick yarrow in the meadows'],
+  mint: ['mint', 'pick mint by the river'], willow: ['willow', 'strip bark from the riverbank willows'], wood: ['tree', 'fell a tree'],
+};
+const dir8 = (dx, dz) => ['north', 'north-east', 'east', 'south-east', 'south', 'south-west', 'west', 'north-west'][((Math.round(Math.atan2(dx, -dz) / (Math.PI / 4)) % 8) + 8) % 8];
+function placeName(x, z) {                           // "in Flint Deep", "on the riverbank": the words for a spot (miniPlace for any point)
+  for (const q of CAVES) if (Math.hypot(x - q.x, z - q.z) < q.R + 8) return 'in ' + q.name;
+  if (structs.some((st) => (st.kind === 'house' || st.kind === 'hut') && Math.hypot(st.x - x, st.z - z) < 26)) return 'near home';
+  let best = null, bd = 1e9;
+  for (const q of POIS) if (q.x != null && S.found[q.id]) { const d = Math.hypot(q.x - x, q.z - z); if (d < q.r + 14 && d < bd) { bd = d; best = q.name; } }
+  if (best) return 'at ' + best;
+  if (Math.abs(x - riverX(z)) < 9) return 'on the riverbank';
+  return { meadow: 'in the open grassland', lake: 'by the lake', high: 'on the high ground', pine: 'in the pine woods', valley: 'in the valley' }[biomeAt(x, z)] || 'in the valley';
+}
+function matSource(k) {
+  let best = null, bd = Infinity;
+  const near = (x, z) => { const d = Math.hypot(x - P.pos.x, z - P.pos.z); if (d < bd) { bd = d; best = [x, z]; } };
+  const f = MAT_SRC[k];
+  if (f) {
+    for (const fl of world.fields) if (fl.kind === f[0]) for (const n of fl.nodes) if (n.alive && !n.gone && Math.abs(n.x) < LIMIT && Math.abs(n.z) < LIMIT && getHeight(n.x, n.z) > -0.3) near(n.x, n.z);
+    if (k === 'grain') for (const st of structs) if (st.kind === 'farm' && st.grow >= 1) near(st.x, st.z);
+    const how = k === 'wood' ? (hasAxe() ? 'fell a tree with your axe' : 'fell a tree (make a stone axe first)') : f[1];
+    return best ? { x: best[0], z: best[1], how } : { how: how + ': none left nearby, they grow back in time' };
+  }
+  if (k === 'hide' || k === 'pelt' || k === 'bearhide') {
+    for (const a of animals) if (a.state === 'live' && !a.tame && !a.horse && a.root.visible && (k === 'hide' ? LOOT[a.kind]?.[1] > 0 : k === 'pelt' ? a.alpha : a.kind === 'bear')) near(a.root.position.x, a.root.position.z);
+    const how = { hide: 'hunt and butcher deer, stags, foxes or wolves', pelt: 'kill the wolf pack’s alpha and butcher it', bearhide: 'kill the cave bear and butcher it' }[k];
+    return best ? { x: best[0], z: best[1], how, game: true } : { how: how + (k === 'hide' ? '. No game is about right now: try again soon' : '. It is not about right now') };
+  }
+  if (k === 'brick') {
+    const kl = structs.find((st) => st.kind === 'kiln');
+    return kl ? { x: kl.x, z: kl.z, how: 'fire bricks at your kiln: 2 clay + 1 timber make 4' } : { how: 'build a kiln (Build tab), then fire 2 clay + 1 timber in it for 4 bricks' };
+  }
+  return { how: 'it comes with the story' };
+}
+function craftFind(k) {
+  const src = matSource(k), name = ITEMS[k] || k;
+  if (src.x != null) {
+    S.pin = { x: src.x, z: src.z, label: name, k }; P.auto = false;
+    const d = Math.round(Math.hypot(src.x - P.pos.x, src.z - P.pos.z)), where = d < 6 ? 'right here' : `${d} m ${dir8(src.x - P.pos.x, src.z - P.pos.z)}, ${placeName(src.x, src.z)}`;
+    CRAFT.note = `${icon(k, 'np')}<span><b>${name}</b> marked on your map: ${where}. To get it, ${src.how}.${src.game ? ' Game moves: the pin shows where it was.' : ''} Close this (Tab) and press <kbd>G</kbd> to walk there, or <kbd>M</kbd> for the map.</span>`;
+    A.tone(660, 0.25, 0.08);
+  } else { CRAFT.note = `${icon(k, 'np')}<span><b>${name}</b>: ${src.how}.</span>`; A.hit(300, 0.05, 0.05); }
+  craftDraw();
 }
 
 // ---------- interaction ----------
@@ -4998,7 +5068,7 @@ function matStamCap() { let c = S.weakUntil > S.gh ? 70 : 100; for (const f of S
 // Afflictions grace (read by SURV): Survivor until the hunt chapter, Hardcore for the first 24 game hours.
 function matGrace() { const g = D().grace; return g === 'hunt' ? !reached('hunt') || S.gh < (S.diff.graceUntil || 0) : g === '24h' ? S.gh < (S.diff.graceUntil || 0) : false; }
 const MAT_TOOLS = { boilbag: 'Boiling bag', pot: 'Clay pot', mantle: 'Wolf-pelt mantle', bearcloak: 'Bear cloak' };
-function matToolsHud() { let h = ''; for (const k in MAT_TOOLS) if (S.tools[k]) h += `<span class="tool">${MAT_TOOLS[k]}</span>`; return h; }
+function matToolsHud() { let h = ''; for (const k in MAT_TOOLS) if (S.tools[k]) h += `<span class="tool">${icon(k, 'ii')}${MAT_TOOLS[k]}</span>`; return h; }
 const matPick = (a) => a[(rand() * a.length) | 0];
 const matPos = (x) => x?.root?.position || x?.pos || (x?.isVector3 ? x : null);
 
@@ -11959,7 +12029,7 @@ function drawMini() {
   const place = miniPlace(), qd = qw ? Math.round(Math.hypot(qw[0] - P.pos.x, qw[1] - P.pos.z)) : null;
   const locT = place + '|' + (qd != null && qd > 8 ? qd : '');
   const loc = $('miniloc'); if (loc && loc.dataset.t !== locT) { loc.dataset.t = locT; loc.innerHTML = `<span>${place}</span>${qd != null && qd > 8 ? `<b title="Quest">◆ ${qd >= 1000 ? (qd / 1000).toFixed(1) + ' km' : qd + ' m'}</b>` : ''}`; }
-  $('pinlabel').textContent = S.pin ? `Pin · ${Math.round(Math.hypot(S.pin.x - P.pos.x, S.pin.z - P.pos.z))} m${P.auto ? ' · auto-walking' : ''}` : '';
+  $('pinlabel').textContent = S.pin ? `${S.pin.label || 'Pin'} · ${Math.round(Math.hypot(S.pin.x - P.pos.x, S.pin.z - P.pos.z))} m${P.auto ? ' · auto-walking' : ''}` : '';   // CRAFT-UI: a material pin says what it marks
 }
 const TUBE_W = () => 7;                              // the entrance passage on the cave plan (m, about the tube's width)
 let mapOpen = false;
@@ -12019,7 +12089,7 @@ function drawMap() {
   // WP5 journal
   const names = POIS.filter((q) => S.found[q.id]).map((q) => q.name);
   const jr = `Discoveries ${names.length}/${POIS.length}${names.length ? ': ' + names.join(', ') : ''} · Homeliness ${homeliness()} · Closeness ${Math.round(S.close)}`;
-  const pin = S.pin ? `Pin set · ${Math.round(Math.hypot(S.pin.x - P.pos.x, S.pin.z - P.pos.z))} m away. Click it to remove, or press G in the game to auto-walk there.` : 'Click anywhere on the map to drop a pin.';
+  const pin = S.pin ? `${S.pin.label ? S.pin.label + ' marked' : 'Pin set'} · ${Math.round(Math.hypot(S.pin.x - P.pos.x, S.pin.z - P.pos.z))} m away. Click it to remove, or press G in the game to auto-walk there.` : 'Click anywhere on the map to drop a pin.';
   const el = $('mapinfo'); if (el.dataset.t !== jr + pin) { el.dataset.t = jr + pin; el.innerHTML = ''; const a = document.createElement('div'); a.className = 'journal'; a.textContent = jr; el.append(a, pin); }
 }
 function toggleMap(on = !mapOpen) {
@@ -12323,6 +12393,8 @@ function updatePlayer(dt) {
   if (can && (mx || mz)) { const fx = -Math.sin(camYaw), fz = -Math.cos(camYaw); dx = fx * mz - fz * mx; dz = fz * mz + fx * mx; }
   else if (can && P.auto && S.pin) {
     dx = S.pin.x - P.pos.x; dz = S.pin.z - P.pos.z;
+    const wp = world.caves?.route?.(P.pos.x, P.pos.z, S.pin.x, S.pin.z);   // CAVE-NAV: a pin inside a cave (flint, ochre): round by the mouth
+    if (wp) { dx = wp[0] - P.pos.x; dz = wp[1] - P.pos.z; }
     // Blocked by a wall or tree? Sidestep for a moment, then head for the pin again.
     P.chk = (P.chk || 0) + dt; P.sideT = Math.max(0, (P.sideT || 0) - dt);
     if (P.chk > 0.5) {
@@ -12363,7 +12435,7 @@ function updatePlayer(dt) {
   if (jumpTap && can && !P.air && !P.swim && S.stam > 8) { P.vy = 4.4; P.air = true; P.sneak = false; S.stam -= 7; A.hit(320, 0.1, 0.2); }   // FPP: a 0.65 m human jump (was 5.6, 1.05 m)
   jumpTap = false;
   if (P.air) { P.vy -= 15 * dt; P.jy += P.vy * dt; matAirTrack(); if (P.jy <= 0) { P.jy = 0; P.air = false; A.hit(150, 0.12, 0.35); matLand(); } }   // MAT: 'land' event {drop, speed, water}
-  if (S.pin && Math.hypot(S.pin.x - P.pos.x, S.pin.z - P.pos.z) < 5) { S.pin = null; P.auto = false; toast('You have reached your pin'); A.tone(523, 0.6, 0.1); }
+  if (S.pin && Math.hypot(S.pin.x - P.pos.x, S.pin.z - P.pos.z) < 5) { const lb = S.pin.label; S.pin = null; P.auto = false; toast(lb ? `${lb}: you are there` : 'You have reached your pin'); A.tone(523, 0.6, 0.1); }
   P.cool = Math.max(0, P.cool - dt);
   wpnUpdate(dt);                                     // WPN draw/sheathe, aim, auto rules, carried things
   cmbStepTick(dt);                                   // GC-FIX5: the step in toward the target
