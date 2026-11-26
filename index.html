@@ -155,6 +155,10 @@
   #savenote { font-size: 12px; color: var(--dim); margin-top: 6px; text-shadow: 0 1px 4px #000; }
   #mini { display: block; width: 196px; height: 196px; margin: 0 auto 4px; }
   #pinlabel { text-align: center; font-size: 12px; color: #d2a8ff; min-height: 17px; margin-bottom: 2px; }
+  #pinlabel:empty { min-height: 0; margin: 0; }   /* MINIMAP: no blank line when there is no pin */
+  #miniloc { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; margin: -1px 4px 5px; font: italic 13px Georgia, 'Times New Roman', serif; color: var(--ink); text-shadow: 0 1px 2px #000; white-space: nowrap; }
+  #miniloc span { overflow: hidden; text-overflow: ellipsis; }
+  #miniloc b { font: 600 11.5px system-ui, sans-serif; color: var(--gold); font-variant-numeric: tabular-nums; }
   #map { position: fixed; inset: 0; display: none; place-content: center; background: rgba(0, 0, 0, 0.6); }
   #map.on { display: grid; }
   #map .box { padding: 14px 18px 12px; text-align: center; }
@@ -350,6 +354,7 @@
   <div id="sub" class="serif"></div>
   <div id="bars" class="panel">
     <canvas id="mini" width="200" height="200"></canvas>
+    <div id="miniloc"></div>
     <div id="pinlabel"></div>
     <div class="bar">Health<i><b id="b-hp" style="background:#c9584a"></b></i></div>
     <div class="bar">Stamina<i><b id="b-stam" style="background:#9ccf6a"></b></i></div>
@@ -371,7 +376,7 @@
     <kbd>E</kbd> use · sit with Sena &nbsp;<kbd>F</kbd> eat &nbsp;<kbd>Tab</kbd> craft &amp; build &nbsp;hold <kbd>B</kbd> bag<br />
     hold <kbd>E</kbd> at a site to build together · <kbd>E</kbd> at the hut, house or cave bed to rest or nap<br />
     <kbd>T</kbd> / <kbd>4</kbd> torch &nbsp;<kbd>R</kbd> waterskin &nbsp;<kbd>H</kbd> treat &nbsp;<kbd>I</kbd> body · hold <kbd>F</kbd> eat raw<br />
-    <kbd>M</kbd> map &nbsp;<kbd>G</kbd> auto-walk to pin · hold <kbd>E</kbd> on Sena: talk, hands, embrace, gift<br /><!-- ROM -->
+    <kbd>M</kbd> map &nbsp;<kbd>N</kbd> minimap zoom &nbsp;<kbd>G</kbd> auto-walk to pin · hold <kbd>E</kbd> on Sena: talk, hands, embrace, gift<br /><!-- ROM -->
     <kbd>E</kbd> ride / dismount · <kbd>W</kbd>/<kbd>Shift</kbd> trot / gallop · <kbd>Space</kbd> jump · <kbd>X</kbd> call horse<br />
     <kbd>1</kbd><kbd>2</kbd><kbd>3</kbd> fists / axe / spear · <kbd>5</kbd> bow (hold right mouse to draw, click to loose) · hold <kbd>Q</kbd> draw/sheathe · tap <kbd>Q</kbd> swap<br />
     <kbd>Click</kbd> attack · hold for a heavy &nbsp;<kbd>Right-click</kbd> block (axe, fists, torch) · spear: aim, release to throw<br />
@@ -427,7 +432,7 @@
   <div id="maptabs"><button data-mt="map" class="on">Map</button><button data-mt="mem">Memories</button></div><!-- ARC: the Memories tab -->
   <div id="mapview">
   <canvas id="mapcanvas" width="820" height="820"></canvas>
-  <div class="legend"><span><i style="background:#fff"></i>You</span><span><i style="background:#ff8fb8"></i>Sena</span><span id="lg-kid" style="display:none"><i style="background:#7fe0a0"></i>Lio</span><span><i style="background:#c08850"></i>Horse</span><span><i style="background:#e8b830;border-radius:0;transform:rotate(45deg) scale(.8)"></i>Quest</span><span><i style="background:#4a4550;border-radius:5px 5px 0 0"></i>Cave</span><span><i style="background:#7a6a5a;border-radius:0"></i>Landmark</span><span><i style="background:#6fb0c8"></i>Ford</span><span><i style="background:#c98f55"></i>Deer</span><span><i style="background:#ff4a3c"></i>Wolves</span><span><i style="background:#b05cff"></i>Pin</span><span><i style="background:#e8dcc0;border-radius:0"></i>Buildings</span></div>
+  <div class="legend"><span><i style="background:#fff"></i>You</span><span><i style="background:#ff8fb8"></i>Sena</span><span id="lg-kid" style="display:none"><i style="background:#7fe0a0"></i>Lio</span><span><i style="background:#c08850"></i>Horse</span><span><i style="background:#e8b830;border-radius:0;transform:rotate(45deg) scale(.8)"></i>Quest</span><span><i style="background:#4a4550;border-radius:5px 5px 0 0"></i>Cave</span><span><i style="background:#7a6a5a;border-radius:0"></i>Landmark</span><span><i style="background:#6fb0c8"></i>Ford</span><span><i style="background:#c98f55"></i>Deer</span><span><i style="background:#ff4a3c"></i>Wolves</span><span><i style="background:#b05cff"></i>Pin</span><span><i style="background:#e8dcc0;border-radius:0;clip-path:polygon(50% 0,100% 45%,85% 45%,85% 100%,15% 100%,15% 45%,0 45%)"></i>Buildings</span></div>
   <small id="mapinfo"></small></div>
   <div id="memories" hidden></div>
   <small>Press <kbd>M</kbd> to close</small>

@@ -39,7 +39,7 @@ npm start       # production: serves dist/ and the save API on one port
 | `arc_data.js`, `romance.js`, `music.js` | Story arc data, romance scenes, music |
 | `save.js`, `quality.js`, `util.js` | Saving, graphics quality, helpers |
 
-`main.js` is large. Find code by its section tags: WP1–WP6 (expansion), WPN (weapons), RST (rest and sleep), FPP (first person), MAT, GORE, SURV, CMB, ARC, ROM, MUS, HUD-POLISH (goal progress counts, the opt-in fps readout).
+`main.js` is large. Find code by its section tags: WP1–WP6 (expansion), WPN (weapons), RST (rest and sleep), FPP (first person), MAT, GORE, SURV, CMB, ARC, ROM, MUS, HUD-POLISH (goal progress counts, the opt-in fps readout), MINIMAP (the minimap and map: pixel-density-aware canvases, the 1024 px map base, building glyphs, threats, the quest distance, the cave plan, N or - / = to zoom).
 
 Caves (`CAVE-LOOK` in `caves.js` and `world.js`):
 - The dome's wall shape lives in two places that must agree: the JS that builds the mesh and `CAVE_DOME_GLSL`, which the terrain shader uses to cut the hillside out of the hollow. Change `DOME_L` or `DOME_SOFT` and both follow.

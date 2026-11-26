@@ -11646,7 +11646,7 @@ function sideGoals() {
 }
 
 // ---------- map, minimap and pins ----------
-const MS = 512, mapBase = document.createElement('canvas');
+const MS = 1024, mapBase = document.createElement('canvas');   // MINIMAP: 0.6 m a pixel (512 was blurry on the minimap, more so on a Retina screen)
 mapBase.width = mapBase.height = MS;
 // SAVE-PERF: the parchment base is painted into a CPU-backed canvas (willReadFrequently) so a GPU reset cannot wipe
 // it (it used to leave a blank map and minimap for the rest of the session), and it is repainted on a 2D
@@ -11673,7 +11673,7 @@ function paintMapBase(check = false) {
     if (h < 0) c = [111, 159, 176];
     else {
       if (h < 1.2) c = [176, 160, 116];
-      else if (slopeY(x, z) < 0.8 || h > 34) c = [128, 124, 114];
+      else if (3 / Math.hypot((HM[j * MS + Math.min(MS - 1, i + 2)] - HM[j * MS + Math.max(0, i - 2)]) * 1.2, 3, (HM[Math.min(MS - 1, j + 2) * MS + i] - HM[Math.max(0, j - 2) * MS + i]) * 1.2) < 0.8 || h > 34) c = [128, 124, 114];   // MINIMAP: slope from the height grid (slopeY per pixel cost 4M height reads)
       else { const t = Math.min(1, h / 30); c = [92 + t * 40, 128 + t * 12, 62 + t * 30]; }
       const b = TINT[BIO[(Math.min(BR - 1, (j * BR / MS) | 0)) * BR + Math.min(BR - 1, (i * BR / MS) | 0)]];
       if (b) c = [lerp(c[0], b[0], 0.6), lerp(c[1], b[1], 0.6), lerp(c[2], b[2], 0.6)];
@@ -11682,7 +11682,7 @@ function paintMapBase(check = false) {
     if (h < 0) c = [lerp(c[0], paper[0], 0.2), lerp(c[1], paper[1], 0.2), lerp(c[2], paper[2], 0.2)];
     let shade = 1;
     if (h >= 0) {
-      const hl = HM[j * MS + Math.max(0, i - 2)] , hu = HM[Math.max(0, j - 2) * MS + i], hr = HM[j * MS + Math.min(MS - 1, i + 2)], hd = HM[Math.min(MS - 1, j + 2) * MS + i];
+      const hl = HM[j * MS + Math.max(0, i - 4)] , hu = HM[Math.max(0, j - 4) * MS + i], hr = HM[j * MS + Math.min(MS - 1, i + 4)], hd = HM[Math.min(MS - 1, j + 4) * MS + i];
       shade = clamp(1 + ((hl - hr) + (hu - hd)) * 0.045, 0.7, 1.15);
       const k = Math.floor(h / 6), r = i < MS - 1 ? HM[j * MS + i + 1] : h, d = j < MS - 1 ? HM[(j + 1) * MS + i] : h;
       if (h > 1.2 && (Math.floor(r / 6) !== k || Math.floor(d / 6) !== k)) shade *= 0.78;
@@ -11690,8 +11690,16 @@ function paintMapBase(check = false) {
     im.data.set([c[0] * shade, c[1] * shade, c[2] * shade, 255], (j * MS + i) * 4);
   }
   g.putImageData(im, 0, 0);
-  g.fillStyle = 'rgba(92,104,50,0.75)';
-  for (const f of world.fields) if (f.kind === 'tree') for (const n of f.nodes) { g.beginPath(); g.arc((n.x / SIZE + 0.5) * MS, (n.z / SIZE + 0.5) * MS, 1.5, 0, 6.3); g.fill(); }
+  // MINIMAP: trees as small inked canopies (a soft shadow, the crown, a lit edge); pines darker and bluer
+  for (const f of world.fields) if (f.kind === 'tree') {
+    const pine = /^pine/.test(f.nat || ''), crown = pine ? 'rgba(62,86,58,0.9)' : 'rgba(92,112,52,0.88)', lit = pine ? 'rgba(120,146,104,0.55)' : 'rgba(168,182,100,0.55)';
+    for (const n of f.nodes) {
+      const x = (n.x / SIZE + 0.5) * MS, y = (n.z / SIZE + 0.5) * MS, r = 1.7 + (n.s || 1) * 0.9;
+      g.fillStyle = 'rgba(40,36,20,0.28)'; g.beginPath(); g.arc(x + 0.9, y + 1.1, r, 0, 6.3); g.fill();
+      g.fillStyle = crown; g.beginPath(); g.arc(x, y, r, 0, 6.3); g.fill();
+      g.fillStyle = lit; g.beginPath(); g.arc(x - r * 0.3, y - r * 0.35, r * 0.45, 0, 6.3); g.fill();
+    }
+  }
   mapBaseImg = g.getImageData(0, 0, MS, MS);           // kept, so a repaint is one putImageData
 }
 paintMapBase();
@@ -11775,6 +11783,30 @@ function glyph(g, x, y, kind, s) {   // small hand-drawn ink glyphs
 // The tame horse: the live object from WP4 if there is one, else the saved position.
 const mapHorse = () => { const o = animals.find((a) => a.horse && a.tame && a.state !== 'dead'); return o ? { x: o.root.position.x, z: o.root.position.z } : (S.horse && S.horse.x != null ? { x: S.horse.x, z: S.horse.z } : null); };
 const questAt = () => { try { const w = CH[S.ch]?.where?.(); return w && isFinite(w[0]) && isFinite(w[1]) ? w : null; } catch (e) { return null; } };
+// MINIMAP: building glyphs (ink outline, the kind's colour). Each draws centred on (x, y) at scale s.
+const INK = '#2e2216';
+const BGLYPH = {
+  fire(g, x, y, s) {
+    g.beginPath(); g.moveTo(x, y - 7 * s); g.bezierCurveTo(x + 5 * s, y - 2 * s, x + 5.5 * s, y + 5 * s, x, y + 5.5 * s); g.bezierCurveTo(x - 5.5 * s, y + 5 * s, x - 5 * s, y - 1 * s, x - 1.5 * s, y - 3 * s);
+    g.quadraticCurveTo(x - 0.5 * s, y - 5 * s, x, y - 7 * s); g.closePath(); g.fillStyle = '#ff8a2a'; g.fill(); g.lineWidth = 1.3 * s; g.strokeStyle = INK; g.stroke();
+    g.beginPath(); g.ellipse(x, y + 2 * s, 1.9 * s, 2.8 * s, 0, 0, 6.3); g.fillStyle = '#ffe08a'; g.fill();
+  },
+  hut(g, x, y, s, c) { g.beginPath(); g.moveTo(x, y - 6.5 * s); g.lineTo(x + 6.5 * s, y + 5 * s); g.lineTo(x - 6.5 * s, y + 5 * s); g.closePath(); g.fillStyle = c; g.fill(); g.lineWidth = 1.4 * s; g.strokeStyle = INK; g.stroke();
+    g.beginPath(); g.moveTo(x - 1.6 * s, y + 5 * s); g.lineTo(x, y + 1 * s); g.lineTo(x + 1.6 * s, y + 5 * s); g.fillStyle = INK; g.fill(); },
+  house(g, x, y, s, c) { g.beginPath(); g.moveTo(x, y - 7 * s); g.lineTo(x + 7 * s, y - 1 * s); g.lineTo(x + 5.5 * s, y - 1 * s); g.lineTo(x + 5.5 * s, y + 5.5 * s); g.lineTo(x - 5.5 * s, y + 5.5 * s); g.lineTo(x - 5.5 * s, y - 1 * s); g.lineTo(x - 7 * s, y - 1 * s); g.closePath();
+    g.fillStyle = c; g.fill(); g.lineWidth = 1.4 * s; g.strokeStyle = INK; g.stroke(); g.fillStyle = '#a0522d'; g.fillRect(x - 1.5 * s, y + 1.5 * s, 3 * s, 4 * s); },
+  kiln(g, x, y, s, c) { g.beginPath(); g.moveTo(x - 6 * s, y + 5 * s); g.arc(x, y + 1 * s, 6 * s, Math.PI, 0); g.lineTo(x + 6 * s, y + 5 * s); g.closePath(); g.fillStyle = c; g.fill(); g.lineWidth = 1.3 * s; g.strokeStyle = INK; g.stroke();
+    g.beginPath(); g.arc(x, y + 5 * s, 2.2 * s, Math.PI, 0); g.fillStyle = '#ffb060'; g.fill(); },
+  farm(g, x, y, s, c) { g.fillStyle = c; g.strokeStyle = INK; g.lineWidth = 1.2 * s; g.beginPath(); g.rect(x - 6 * s, y - 5 * s, 12 * s, 10 * s); g.fill(); g.stroke();
+    g.beginPath(); for (const d of [-2.5, 0.5, 3.5]) { g.moveTo(x - 4.5 * s, y + d * s - 1 * s); g.lineTo(x + 4.5 * s, y + d * s - 1 * s); } g.strokeStyle = '#6a7a2a'; g.stroke(); },
+  well(g, x, y, s, c) { g.beginPath(); g.arc(x, y, 5.5 * s, 0, 6.3); g.fillStyle = '#9a8c78'; g.fill(); g.lineWidth = 1.3 * s; g.strokeStyle = INK; g.stroke(); g.beginPath(); g.arc(x, y, 3 * s, 0, 6.3); g.fillStyle = c; g.fill(); },
+  stable(g, x, y, s, c) { g.beginPath(); g.moveTo(x - 7 * s, y + 5 * s); g.lineTo(x - 7 * s, y - 2 * s); g.lineTo(x, y - 6.5 * s); g.lineTo(x + 7 * s, y - 2 * s); g.lineTo(x + 7 * s, y + 5 * s); g.closePath(); g.fillStyle = c; g.fill(); g.lineWidth = 1.3 * s; g.strokeStyle = INK; g.stroke();
+    g.beginPath(); g.moveTo(x - 2.5 * s, y + 5 * s); g.lineTo(x - 2.5 * s, y); g.lineTo(x + 2.5 * s, y); g.lineTo(x + 2.5 * s, y + 5 * s); g.strokeStyle = '#e8d8b0'; g.stroke(); },
+  rack(g, x, y, s, c) { g.strokeStyle = INK; g.lineWidth = 2.4 * s; g.beginPath(); g.moveTo(x - 5 * s, y + 5 * s); g.lineTo(x - 5 * s, y - 4 * s); g.moveTo(x + 5 * s, y + 5 * s); g.lineTo(x + 5 * s, y - 4 * s); g.moveTo(x - 6 * s, y - 3 * s); g.lineTo(x + 6 * s, y - 3 * s); g.stroke();
+    g.strokeStyle = c; g.lineWidth = 1.2 * s; g.stroke(); g.fillStyle = '#b5532f'; g.fillRect(x - 3 * s, y - 2.5 * s, 2 * s, 4 * s); g.fillRect(x + 1 * s, y - 2.5 * s, 2 * s, 4 * s); },
+  basket(g, x, y, s, c) { g.beginPath(); g.moveTo(x - 5 * s, y - 2 * s); g.lineTo(x + 5 * s, y - 2 * s); g.lineTo(x + 3.5 * s, y + 4.5 * s); g.lineTo(x - 3.5 * s, y + 4.5 * s); g.closePath(); g.fillStyle = c; g.fill(); g.lineWidth = 1.2 * s; g.strokeStyle = INK; g.stroke(); },
+  flowers(g, x, y, s, c) { g.fillStyle = c; g.strokeStyle = INK; g.lineWidth = 0.8 * s; for (let i = 0; i < 5; i++) { const a = i * 1.2566; g.beginPath(); g.arc(x + Math.sin(a) * 3 * s, y - Math.cos(a) * 3 * s, 2 * s, 0, 6.3); g.fill(); g.stroke(); } g.beginPath(); g.arc(x, y, 1.6 * s, 0, 6.3); g.fillStyle = '#f2d060'; g.fill(); },
+};
 function marker(g, x, y, kind, s = 1) {
   if (GLYPH.has(kind)) { glyph(g, x, y, kind, s); return; }   // WP5
   g.lineWidth = 1.5; g.strokeStyle = 'rgba(0,0,0,0.75)';
@@ -11783,6 +11815,8 @@ function marker(g, x, y, kind, s = 1) {
   } else if (kind === 'pin') {
     g.fillStyle = '#b05cff'; g.beginPath(); g.arc(x, y - 9 * s, 6 * s, Math.PI, 0); g.lineTo(x, y); g.closePath(); g.fill(); g.stroke();
     g.fillStyle = '#fff'; g.beginPath(); g.arc(x, y - 9 * s, 2.2 * s, 0, 6.3); g.fill();
+  } else if (BGLYPH[kind]) {
+    BGLYPH[kind](g, x, y, s, ICON[kind][0]);         // MINIMAP: buildings by shape, not coloured squares
   } else if (ICON[kind]) {
     g.fillStyle = ICON[kind][0]; g.beginPath(); g.rect(x - 4.5 * s, y - 4.5 * s, 9 * s, 9 * s); g.fill(); g.stroke();
   } else {
@@ -11790,47 +11824,146 @@ function marker(g, x, y, kind, s = 1) {
     g.beginPath(); g.arc(x, y, (kind === 'sena' ? 4.5 : kind === 'kid' ? 3.8 : 3.2) * s, 0, 6.3); g.fill(); g.stroke();
   }
 }
-const mini = $('mini').getContext('2d'), MR = 100, RANGE = 75;
+// ---------- MINIMAP ----------
+// Drawn at the screen's pixel density (it was a 200 px canvas stretched over a Retina screen), on the 1024 px base.
+// The map turns with the camera (up is where you look). Three zoom levels (N, or - and =). A compass rim, a view cone,
+// ringed companions, soft dots for game and pulsing red for anything that hunts you, building glyphs, the quest with
+// its distance when it lies off the edge, a night tint, and a plan of the chamber inside a cave.
+const mini = $('mini').getContext('2d'), MR = 100, MINI_Z = [45, 75, 130];
+let RANGE = MINI_Z[settings.miniZoom ?? 1] || 75;
+function miniZoom(d) {
+  const i = Math.max(0, Math.min(MINI_Z.length - 1, (d === 0 ? ((settings.miniZoom ?? 1) + 1) % MINI_Z.length : (settings.miniZoom ?? 1) + d)));
+  if (i === (settings.miniZoom ?? 1) && d !== 0) return;
+  settings.miniZoom = i; RANGE = MINI_Z[i]; saveSettings(); miniT = 0;
+  toast(`Minimap: ${['near', 'normal', 'far'][i]} (${RANGE * 2} m across)`);
+}
+const MINI_GAME = new Set(['deer', 'stag', 'fox', 'aurochs', 'boar', 'hare']);
+function miniPlace() {                               // the words under the minimap: where you are
+  const E = world.env;
+  if (E.cave > 0.2) { const k = CAVES.find((q) => Math.hypot(P.pos.x - q.x, P.pos.z - q.z) < q.R + 30); if (k) return k.name; }
+  const home = structs.find((st) => (st.kind === 'house' || st.kind === 'hut') && Math.hypot(st.x - P.pos.x, st.z - P.pos.z) < 26);
+  if (home) return 'Home';
+  let best = null, bd = 1e9;
+  for (const q of POIS) if (q.x != null && S.found[q.id]) { const d = Math.hypot(q.x - P.pos.x, q.z - P.pos.z); if (d < q.r + 14 && d < bd) { bd = d; best = q.name; } }
+  if (best) return best;
+  if (Math.abs(P.pos.x - riverX(P.pos.z)) < 9) return 'Riverbank';
+  return { meadow: 'Open grassland', lake: 'Lakeshore', high: 'High ground', pine: 'Pine woods', valley: 'The valley' }[biomeAt(P.pos.x, P.pos.z)] || 'The valley';
+}
 function drawMini() {
-  const g = mini, k = MR / RANGE, c = Math.cos(camYaw), s = Math.sin(camYaw);
+  const cv = mini.canvas, dpr = Math.min(2.5, Math.max(1, devicePixelRatio || 1)), W = Math.round(MR * 2 * dpr);
+  if (cv.width !== W) { cv.width = cv.height = W; }
+  const g = mini, k = MR / RANGE, c = Math.cos(camYaw), s = Math.sin(camYaw), E = world.env, pulse = 0.5 + 0.5 * Math.sin(clock * 6);
   const at = (x, z) => { const dx = (x - P.pos.x) * k, dz = (z - P.pos.z) * k; return [dx * c - dz * s, dx * s + dz * c]; };
+  g.setTransform(dpr, 0, 0, dpr, 0, 0);
   g.clearRect(0, 0, MR * 2, MR * 2);
   g.save();
   g.beginPath(); g.arc(MR, MR, MR - 2, 0, 6.3); g.clip();
   g.fillStyle = '#c9b88f'; g.fillRect(0, 0, MR * 2, MR * 2);   // WP5 parchment beyond the map edge
   g.translate(MR, MR);
   g.save(); g.rotate(camYaw); g.scale(k, k);
+  g.imageSmoothingEnabled = true; g.imageSmoothingQuality = 'high';
   g.drawImage(mapBase, -SIZE / 2 - P.pos.x, -SIZE / 2 - P.pos.z, SIZE, SIZE);
-  updateFog(); g.imageSmoothingEnabled = true; g.drawImage(fogBig, -SIZE / 2 - P.pos.x, -SIZE / 2 - P.pos.z, SIZE, SIZE);   // WP5 fog
+  updateFog(); g.globalAlpha = 0.88; g.drawImage(fogBig, -SIZE / 2 - P.pos.x, -SIZE / 2 - P.pos.z, SIZE, SIZE); g.globalAlpha = 1;   // WP5 fog
   g.restore();
+  // night, and the inside of a cave: the land dims; in a cave its chamber and passage are drawn as a plan
+  const dark = Math.max(0.42 * (E.night || 0), 0.6 * Math.min(1, (E.cave || 0) * 1.5));
+  if (dark > 0.01) { g.fillStyle = `rgba(14,16,30,${dark})`; g.fillRect(-MR, -MR, MR * 2, MR * 2); }
+  if ((E.cave || 0) > 0.05) {
+    const kc = CAVES.find((q) => Math.hypot(P.pos.x - q.x, P.pos.z - q.z) < q.R + 30);
+    if (kc) {
+      const [cx, cy] = at(kc.x, kc.z), [mx, my] = at(kc.mouth[0], kc.mouth[1]), [ox, oy] = at(kc.mouth[0] + kc.dir[0] * 3, kc.mouth[1] + kc.dir[1] * 3);
+      g.lineJoin = 'round'; g.lineCap = 'round';
+      g.strokeStyle = 'rgba(214,196,160,0.9)'; g.lineWidth = TUBE_W(kc) * k + 3; g.beginPath(); g.moveTo(cx, cy); g.lineTo(ox, oy); g.stroke();
+      g.fillStyle = 'rgba(214,196,160,0.9)'; g.beginPath(); g.arc(cx, cy, (kc.R - 0.5) * k + 1.5, 0, 6.3); g.fill();
+      g.strokeStyle = '#4a3a28'; g.lineWidth = TUBE_W(kc) * k; g.beginPath(); g.moveTo(cx, cy); g.lineTo(ox, oy); g.stroke();
+      g.fillStyle = '#4a3a28'; g.beginPath(); g.arc(cx, cy, (kc.R - 0.5) * k, 0, 6.3); g.fill();
+      g.fillStyle = 'rgba(255,214,140,0.85)'; g.beginPath(); g.arc(mx, my, 3, 0, 6.3); g.fill();   // the way out
+    }
+  }
+  // edge-clamped markers: off-map ones sit on the rim; ret: [x, y, clamped, distance]
+  const RIM = MR - 13;
   const put = (x, z, kind, edge, sc = 1) => {
-    let [px, py] = at(x, z); const d = Math.hypot(px, py);
-    if (d > MR - 9) { if (!edge) return; px *= (MR - 9) / d; py *= (MR - 9) / d; }
+    let [px, py] = at(x, z); const d = Math.hypot(px, py), cl = d > RIM;
+    if (cl) { if (!edge) return null; px *= RIM / d; py *= RIM / d; }
     marker(g, px, py, kind, sc);
+    return [px, py, cl];
   };
-  // WP5: discovered POIs, rumours, the horse and the quest diamond (edge-clamped)
   for (const q of POIS) if (q.x != null) { if (S.found[q.id]) put(q.x, q.z, q.icon, false, 0.8); else if (S.rumour?.includes(q.id)) put(q.x, q.z, 'rumour', false, 0.8); }
+  const home = structs.find((st) => st.kind === 'house') || structs.find((st) => st.kind === 'hut');
+  for (const st of structs) if (st.kind !== 'fence' && st.kind !== 'path') put(st.x, st.z, st.kind, st === home, 0.82);   // only home stays on the rim when away
+  for (const o of animals) {                         // game: small soft dots, no outline
+    if (o.state !== 'live' || o.horse || o.tame || o.hostile || o.kind === 'wolf' || o.kind === 'bear' || !MINI_GAME.has(o.kind)) continue;
+    const [px, py] = at(o.root.position.x, o.root.position.z); if (Math.hypot(px, py) > RIM) continue;
+    g.fillStyle = o.kind === 'aurochs' ? 'rgba(92,64,40,0.95)' : 'rgba(176,122,70,0.95)'; g.beginPath(); g.arc(px, py, o.kind === 'aurochs' ? 3.4 : 2.4, 0, 6.3); g.fill();
+  }
   { const h = mapHorse(); if (h && !P.ride) put(h.x, h.z, 'horse', true, 0.8); }
-  { const w = questAt(); if (w) put(w[0], w[1], 'quest', true, 0.8); }
-  for (const st of structs) put(st.x, st.z, st.kind, st.kind === 'house' || st.kind === 'fire');
-  for (const o of animals) if (o.state === 'live' && o.kind !== 'cow' && !o.horse) put(o.root.position.x, o.root.position.z, o.kind === 'wolf' ? 'wolf' : 'deer');   // WP4: horses are not deer (WP5 draws the tame one)
-  for (const v of villagers) if (!v.indoor) put(v.pos.x, v.pos.z, 'villager');   // STORY: not while indoors for the night
-  for (const c of kids) put(c.pos.x, c.pos.z, 'kid', true);   // FPP-world: Lio
-  put(N.pos.x, N.pos.z, 'sena', true);
+  for (const v of villagers) if (!v.indoor) put(v.pos.x, v.pos.z, 'villager', false, 0.9);
+  // threats: wolves, bears and raiders, red with a pulsing ring; on the rim when close but off the map
+  const threat = (x, z, raider) => {
+    let [px, py] = at(x, z); const d = Math.hypot(px, py);
+    if (d > RIM) { if (d > RIM * 1.6) return; px *= RIM / d; py *= RIM / d; }
+    g.strokeStyle = `rgba(255,70,50,${0.25 + 0.45 * pulse})`; g.lineWidth = 1.5; g.beginPath(); g.arc(px, py, 5 + 3 * pulse, 0, 6.3); g.stroke();
+    g.fillStyle = '#e8402e'; g.strokeStyle = '#1e0c08'; g.lineWidth = 1.3; g.beginPath();
+    if (raider) { g.moveTo(px, py - 4.6); g.lineTo(px + 4.6, py); g.lineTo(px, py + 4.6); g.lineTo(px - 4.6, py); g.closePath(); } else g.arc(px, py, 3.6, 0, 6.3);
+    g.fill(); g.stroke();
+  };
+  for (const o of animals) if (o.state === 'live' && (o.hostile || o.kind === 'wolf' || o.kind === 'bear')) threat(o.root.position.x, o.root.position.z, false);
+  for (const f of foes) if (f.live && !f.fled) threat(f.pos.x, f.pos.z, true);
+  // companions: ringed, always shown (on the rim when away)
+  const friend = (x, z, col, r) => {
+    let [px, py] = at(x, z); const d = Math.hypot(px, py); if (d > RIM) { px *= RIM / d; py *= RIM / d; }
+    g.fillStyle = '#fbf3e4'; g.beginPath(); g.arc(px, py, r + 1.8, 0, 6.3); g.fill();
+    g.fillStyle = col; g.beginPath(); g.arc(px, py, r, 0, 6.3); g.fill(); g.strokeStyle = 'rgba(30,20,12,0.8)'; g.lineWidth = 1; g.beginPath(); g.arc(px, py, r + 1.8, 0, 6.3); g.stroke();
+  };
+  for (const ch of kids) friend(ch.pos.x, ch.pos.z, '#5fcf86', 3.2);   // FPP-world: Lio
+  friend(N.pos.x, N.pos.z, '#ff7fae', 3.8);
   if (S.pin) put(S.pin.x, S.pin.z, 'pin', true);
   if (S.spearAt) put(S.spearAt.x, S.spearAt.z, 'pin', false, 0.8);   // WPN the thrown spear
-  g.save(); g.rotate(camYaw + Math.PI - P.face); marker(g, 0, 0, 'player'); g.restore();
+  // the quest: on the map, or on the rim pointing at it with its distance
+  const qw = questAt();
+  if (qw) {
+    const [px, py, cl] = put(qw[0], qw[1], 'quest', true, 0.8), dist = Math.round(Math.hypot(qw[0] - P.pos.x, qw[1] - P.pos.z));
+    if (cl) {
+      const a = Math.atan2(py, px), tx = px - Math.cos(a) * 17, ty = py - Math.sin(a) * 13;
+      g.fillStyle = '#e8b830'; g.beginPath(); g.moveTo(px + Math.cos(a) * 9, py + Math.sin(a) * 9); g.lineTo(px + Math.cos(a + 2.5) * 5 + Math.cos(a) * 4, py + Math.sin(a + 2.5) * 5 + Math.sin(a) * 4); g.lineTo(px + Math.cos(a - 2.5) * 5 + Math.cos(a) * 4, py + Math.sin(a - 2.5) * 5 + Math.sin(a) * 4); g.closePath(); g.fill();
+      g.font = 'bold 10px system-ui, sans-serif'; g.textAlign = 'center'; g.textBaseline = 'middle'; g.lineWidth = 3; g.lineJoin = 'round'; g.strokeStyle = 'rgba(30,22,12,0.85)';
+      const t = dist >= 1000 ? (dist / 1000).toFixed(1) + ' km' : dist + ' m'; g.strokeText(t, tx, ty); g.fillStyle = '#ffe9a8'; g.fillText(t, tx, ty);
+    }
+  }
+  // you: a soft view cone (up is where the camera looks) and the arrow for where you face
+  const cone = g.createRadialGradient(0, 0, 4, 0, 0, 46); cone.addColorStop(0, 'rgba(255,250,235,0.42)'); cone.addColorStop(1, 'rgba(255,250,235,0)');
+  g.fillStyle = cone; g.beginPath(); g.moveTo(0, 0); g.arc(0, 0, 46, -Math.PI / 2 - 0.62, -Math.PI / 2 + 0.62); g.closePath(); g.fill();
+  g.save(); g.rotate(camYaw + Math.PI - P.face); g.shadowColor = 'rgba(0,0,0,0.6)'; g.shadowBlur = 3; marker(g, 0, 0, 'player', 1.05); g.restore();
   g.restore();
-  g.lineWidth = 3; g.strokeStyle = 'rgba(243,234,217,0.55)'; g.beginPath(); g.arc(MR, MR, MR - 2, 0, 6.3); g.stroke();
-  g.fillStyle = '#f3ead9'; g.font = 'bold 13px sans-serif'; g.textAlign = 'center'; g.textBaseline = 'middle';
-  g.fillText('N', MR + s * (MR - 13), MR - c * (MR - 13));
+  // the rim: a dark bezel, tick marks every 30 degrees, and N E S W turning with the map
+  g.lineWidth = 2.5; g.strokeStyle = 'rgba(30,22,14,0.55)'; g.beginPath(); g.arc(MR, MR, MR - 3.5, 0, 6.3); g.stroke();
+  g.lineWidth = 1.6; g.strokeStyle = 'rgba(243,234,217,0.75)'; g.beginPath(); g.arc(MR, MR, MR - 1.8, 0, 6.3); g.stroke();
+  for (let i = 0; i < 12; i++) {
+    const a = camYaw + i * Math.PI / 6, sx = Math.sin(a), cy = -Math.cos(a), r0 = MR - 4, r1 = MR - (i % 3 ? 7 : 9);
+    if (i % 3 === 0) continue;                       // the letters stand at the quarters
+    g.strokeStyle = 'rgba(243,234,217,0.6)'; g.lineWidth = 1.2; g.beginPath(); g.moveTo(MR + sx * r0, MR + cy * r0); g.lineTo(MR + sx * r1, MR + cy * r1); g.stroke();
+  }
+  g.textAlign = 'center'; g.textBaseline = 'middle'; g.lineJoin = 'round'; g.miterLimit = 2;   // round joins: mitred outlines spiked off the W and N
+  for (const [L, off] of [['N', 0], ['E', Math.PI / 2], ['S', Math.PI], ['W', -Math.PI / 2]]) {
+    // world north is -z; with the map turned by camYaw it sits at screen angle camYaw (as the old N did)
+    const a = camYaw + off, x = MR + Math.sin(a) * (MR - 11), y = MR - Math.cos(a) * (MR - 11), n = L === 'N';
+    g.font = `bold ${n ? 13 : 10}px system-ui, sans-serif`; g.lineWidth = 3; g.strokeStyle = 'rgba(20,14,8,0.75)'; g.strokeText(L, x, y);
+    g.fillStyle = n ? '#ffcf6a' : 'rgba(243,234,217,0.9)'; g.fillText(L, x, y);
+  }
+  // under the map: where you are, and how far the quest is
+  const place = miniPlace(), qd = qw ? Math.round(Math.hypot(qw[0] - P.pos.x, qw[1] - P.pos.z)) : null;
+  const locT = place + '|' + (qd != null && qd > 8 ? qd : '');
+  const loc = $('miniloc'); if (loc && loc.dataset.t !== locT) { loc.dataset.t = locT; loc.innerHTML = `<span>${place}</span>${qd != null && qd > 8 ? `<b title="Quest">◆ ${qd >= 1000 ? (qd / 1000).toFixed(1) + ' km' : qd + ' m'}</b>` : ''}`; }
   $('pinlabel').textContent = S.pin ? `Pin · ${Math.round(Math.hypot(S.pin.x - P.pos.x, S.pin.z - P.pos.z))} m${P.auto ? ' · auto-walking' : ''}` : '';
 }
+const TUBE_W = () => 7;                              // the entrance passage on the cave plan (m, about the tube's width)
 let mapOpen = false;
 const big = $('mapcanvas'), BS = big.width, bg = big.getContext('2d');
 const toMap = (x, z) => [(x / SIZE + 0.5) * BS, (z / SIZE + 0.5) * BS];
 function drawMap() {
-  const g = bg;
+  const g = bg, dpr = Math.min(2.5, Math.max(1, devicePixelRatio || 1));   // MINIMAP: the big map at the screen's pixel density too
+  if (big.width !== Math.round(BS * dpr)) big.width = big.height = Math.round(BS * dpr);
+  g.setTransform(dpr, 0, 0, dpr, 0, 0); g.imageSmoothingQuality = 'high';
   g.drawImage(mapBase, 0, 0, BS, BS);
   updateFog(); g.imageSmoothingEnabled = true; g.drawImage(fogBig, 0, 0, BS, BS);   // WP5 fog of war
   // WP5: serif italic ink labels on the parchment. FPP-world: they are queued and drawn after the markers, each
@@ -11961,7 +12094,7 @@ async function fullscreen(on) {
   $('opt-full').checked = !!document.fullscreenElement;
 }
 document.addEventListener('fullscreenchange', () => { $('opt-full').checked = !!document.fullscreenElement; });
-const GAME_KEYS = /^(Key[WASDEFCVGMQBTRHXIZ]|Digit[1-5]|Space|ShiftLeft|ShiftRight|ControlLeft|ControlRight|AltLeft|Tab|Escape|Arrow(Up|Down|Left|Right))$/;   // MAT: I body, Z focus, AltLeft dodge
+const GAME_KEYS = /^(Key[WASDEFCVGMNQBTRHXIZ]|Minus|Equal|Digit[1-5]|Space|ShiftLeft|ShiftRight|ControlLeft|ControlRight|AltLeft|Tab|Escape|Arrow(Up|Down|Left|Right))$/;   // MAT: I body, Z focus, AltLeft dodge
 addEventListener('keydown', (e) => {
   if (!playing) return;
   if (GAME_KEYS.test(e.code) && !(e.ctrlKey && /^Key[RL]$/.test(e.code))) e.preventDefault();   // keep browser shortcuts out of the game (reload stays)
@@ -11982,6 +12115,7 @@ addEventListener('keydown', (e) => {
   if (e.code === 'KeyE') { tapE = true; if (!e.repeat) { eTap = true; eLatch = false; } }   // WP4 eTap: a fresh press (taming, mount, dismount)
   if (e.code === 'KeyM') { toggleMap(); return; }
   if (mapOpen) return;
+  if (e.code === 'KeyN' || e.code === 'Minus' || e.code === 'Equal') { miniZoom(e.code === 'KeyN' ? 0 : e.code === 'Minus' ? 1 : -1); return; }   // MINIMAP zoom (- shows more, = less)
   if (e.code === 'Tab') { toggleMenu(); return; }
   if (e.code === 'KeyB') { bagOpen(true); return; }   // BOW-UI: hold B to look in the bag
   if (menuOpen || busy) return;
