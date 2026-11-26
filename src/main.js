@@ -469,9 +469,14 @@ function walkTo(e, tx, tz, speed, dt, stop = 0.4) {
   const dx = tx - e.pos.x, dz = tz - e.pos.z, d = Math.hypot(dx, dz);
   if (d <= stop) { e.speed = 0; return true; }
   if (e.swim) speed = Math.min(speed, 2.3);
-  e.pos.x += (dx / d) * speed * dt; e.pos.z += (dz / d) * speed * dt;
+  // CAVE-NAV: a cave wall in the way: walk to the next waypoint round it (the tube, the ring outside the dome), not
+  // straight into the rock (Sena used to run on the spot sideways along the wall when Aro went in)
+  const wp = world.caves?.route?.(e.pos.x, e.pos.z, tx, tz);
+  let mx = dx, mz = dz, md = d;
+  if (wp) { mx = wp[0] - e.pos.x; mz = wp[1] - e.pos.z; md = Math.hypot(mx, mz) || 1; }
+  e.pos.x += (mx / md) * speed * dt; e.pos.z += (mz / md) * speed * dt;
   collide(e.pos, 0.3, false, !!e.foe);              // SIT-r3: raiders never walk through the walls of an open house
-  e.face = turn(e.face, Math.atan2(dx, dz), Math.min(1, dt * 8));
+  e.face = turn(e.face, Math.atan2(mx, mz), Math.min(1, dt * 8));
   e.speed = speed;
   return false;
 }
@@ -12406,7 +12411,8 @@ function updateSena(dt) {
   const dP = Math.hypot(N.pos.x - P.pos.x, N.pos.z - P.pos.z);
   const fire = structs.find((s) => s.kind === 'fire');
   const night = world.env.night > 0.6 && fire && Math.hypot(fire.x - P.pos.x, fire.z - P.pos.z) < 40;
-  if (N.node && (!N.node.alive || dP > 32 || night)) N.node = null;
+  const caveP = depthAt(P.pos.x, P.pos.z) > 0 || depthAt(N.pos.x, N.pos.z) > 0;   // CAVE-NAV: Aro (or she) in a cave: she stays with him, no running off to gather outside
+  if (N.node && (!N.node.alive || dP > 32 || night || caveP)) N.node = null;
   if (N.act > 0) {
     N.act -= dt; N.speed = 0;
     if (N.act <= 0 && N.node?.alive) {
@@ -12420,7 +12426,7 @@ function updateSena(dt) {
     else if (dP > (S.close >= 20 ? 2.4 : 4.5)) walkTo(N, P.pos.x, P.pos.z, dP > 12 ? 6.6 : 3.4, dt, S.close >= 20 ? 1.3 : 3);   // ROM Fond: she walks closer
     else N.speed = 0;
     N.wait -= dt;
-    if (reached('fire') && N.wait <= 0 && dP < 22 && !night && !busy) {
+    if (reached('fire') && N.wait <= 0 && dP < 22 && !night && !busy && !caveP) {
       N.wait = 5 + rand() * 6;
       const want = ['stick', 'stone', 'reed', 'berry', ...(reached('seeds') ? ['grain'] : [])];
       let bd = 20;

@@ -187,7 +187,7 @@
 "wait": 500
 },
 {
-"js": "(async()=>{ const o=DEER, log=[]; for (let k=0;k<6 && o.state==='live';k++){ UP(); const p=o.root.position; await LOOK(p.x, p.y+0.75*(o.root.scale.x||1), p.z); const ar=await G.bow.shoot(1); const t0=performance.now(); while(ar && ar.st==='air' && performance.now()-t0<3000) await new Promise(r=>setTimeout(r,50)); log.push(G.bow.st(ar)); } return JSON.stringify({log, state:o.state}); })()",
+"js": "(async()=>{ const o=DEER, log=[]; for (let k=0;k<6 && o.state==='live';k++){ UP(); const p=o.root.position; G.bow.aim(); await LOOK(p.x, p.y+0.75*(o.root.scale.x||1), p.z); const ar=await G.bow.shoot(1); const t0=performance.now(); while(ar && ar.st==='air' && performance.now()-t0<3000) await new Promise(r=>setTimeout(r,50)); log.push(G.bow.st(ar)); } return JSON.stringify({log, state:o.state}); })()",
 "wait": 500
 },
 {

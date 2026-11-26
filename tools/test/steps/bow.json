@@ -62,7 +62,11 @@
 },
 {
 "js": "UP(); G.bow.aim(); 1",
-"wait": 900
+"wait": 300
+},
+{
+"until": "(()=>{const f=G.bow.fp(); return f.nock && f.tip && Math.abs(f.tip[0]) < 0.04 && f.tip[1] < -0.04 && f.tip[1] > -0.14 && f.grip[1] < -0.15 && f.nockEnd && f.nockEnd[1] < -0.6 && f.nockEnd[0] > 0.25 && f.gapL < 0.03 && f.gapR < 0.03 ? JSON.stringify(f) : 0;})()",
+"timeout": 8000
 },
 {
 "expect": "(()=>{const f=G.bow.fp(); return f.nock && f.tip && Math.abs(f.tip[0]) < 0.04 && f.tip[1] < -0.04 && f.tip[1] > -0.14 && f.grip[1] < -0.15 && f.nockEnd && f.nockEnd[1] < -0.6 && f.nockEnd[0] > 0.25 && f.gapL < 0.03 && f.gapR < 0.03 ? JSON.stringify(f) : 0;})()",
@@ -80,7 +84,7 @@
 "wait": 500
 },
 {
-"js": "(async()=>{ const o=DEER, log=[]; for (let i=0;i<6 && o.state==='live';i++){ UP(); const p=o.root.position; await LOOK(p.x, p.y+0.75*(o.root.scale.x||1), p.z); const ar=await G.bow.shoot(1); const t0=performance.now(); while(ar && ar.st==='air' && performance.now()-t0<3000) await new Promise(r=>setTimeout(r,50)); log.push(G.bow.st(ar)); } return JSON.stringify({log, state:o.state, far:G.cnt('arrow_far'), deer:G.cnt('arrow_deer')}); })()",
+"js": "(async()=>{ const o=DEER, log=[]; for (let i=0;i<6 && o.state==='live';i++){ UP(); const p=o.root.position; G.bow.aim(); await LOOK(p.x, p.y+0.75*(o.root.scale.x||1), p.z); const ar=await G.bow.shoot(1); const t0=performance.now(); while(ar && ar.st==='air' && performance.now()-t0<3000) await new Promise(r=>setTimeout(r,50)); log.push(G.bow.st(ar)); } return JSON.stringify({log, state:o.state, far:G.cnt('arrow_far'), deer:G.cnt('arrow_deer')}); })()",
 "wait": 500
 },
 {

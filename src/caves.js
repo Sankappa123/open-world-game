@@ -796,8 +796,61 @@ export function createCaves(scene, { NAT, rockTex, addCollider: addCol, clear, F
       B.mesh.instanceMatrix.needsUpdate = true;
     }
   }
+  // ---- CAVE-NAV: people (Sena, Lio, raiders) walk straight at their target and the colliders only push them back out,
+  // so with Aro inside a cave and Sena outside the dome, or round the corner of the seal wall, she ran on the spot
+  // sideways along the rock. route() returns the next point to walk to: null when the straight line is clear of the
+  // cave's colliders, else the first stop on the shortest clear path through a small graph of waypoints (down the
+  // tube's axis, a ring round the dome outside and one inside it, round the formations). ----
+  const segClear = (ax, az, bx, bz, pad, list) => {
+    const dx = bx - ax, dz = bz - az, L2 = dx * dx + dz * dz || 1e-9;
+    for (const c of list) {
+      let u = ((c.x - ax) * dx + (c.z - az) * dz) / L2; u = u < 0 ? 0 : u > 1 ? 1 : u;
+      const ex = ax + dx * u - c.x, ez = az + dz * u - c.z, m = c.r + pad;
+      if (ex * ex + ez * ez < m * m) return false;
+    }
+    return true;
+  };
+  for (const k of CAVES) {
+    const near = cols.filter((c) => Math.hypot(c.x - k.x, c.z - k.z) < k.R + 16);
+    const [s0, s1] = k.tube, px = k.dir[1], pz = -k.dir[0];
+    const pts = [0.45, 0.75].flatMap((f) => [...Array(8)].map((_, i) => [k.x + Math.sin(i * 0.785 + 0.39) * k.R * f, k.z + Math.cos(i * 0.785 + 0.39) * k.R * f]));
+    for (const s of [s0 - 2.4, s0 + 1.2, (s0 + s1) / 2, s1 - 0.5, s1 + 2.5]) pts.push([k.x + k.dir[0] * s, k.z + k.dir[1] * s]);
+    for (const [rr, m] of [[k.R + 3.5, 18], [k.R + 7, 24]]) for (let i = 0; i < m; i++) { const t = (i / m) * Math.PI * 2; pts.push([k.x + Math.sin(t) * rr, k.z + Math.cos(t) * rr]); }
+    // a fan in front of the mouth: the ring cannot see the mouth past the tube's sides and the arch boulders
+    for (const s of [s1 + 3, s1 + 6, s1 + 9]) for (const l of [-10, -7, -4, 4, 7, 10]) pts.push([k.x + k.dir[0] * s + px * l, k.z + k.dir[1] * s + pz * l]);
+    const nodes = pts.filter(([x, z]) => segClear(x, z, x, z, 0.45, near));
+    const edge = nodes.map((a) => nodes.map((b) => (a !== b && segClear(a[0], a[1], b[0], b[1], 0.32, near) ? Math.hypot(a[0] - b[0], a[1] - b[1]) : 0)));
+    k.nav = { near, nodes, edge };
+  }
+  function route(x, z, tx, tz) {
+    for (const k of CAVES) {
+      const N = k.nav; if (!N) continue;
+      if (Math.hypot(x - k.x, z - k.z) > k.R + 14 && Math.hypot(tx - k.x, tz - k.z) > k.R + 14) continue;
+      if (segClear(x, z, tx, tz, 0.25, N.near)) return null;
+      // Dijkstra from the walker (a virtual node) to the target over the waypoints
+      const n = N.nodes.length, dist = new Float32Array(n).fill(Infinity), first = new Int16Array(n).fill(-1), done = new Uint8Array(n);
+      for (let i = 0; i < n; i++) {
+        const [nx, nz] = N.nodes[i], d = Math.hypot(nx - x, nz - z);
+        if (d < 0.35) { dist[i] = 0; first[i] = -2; } else if (segClear(x, z, nx, nz, 0.25, N.near)) { dist[i] = d; first[i] = i; }
+      }
+      let best = Infinity, bi = -1;
+      for (;;) {
+        let u = -1; for (let i = 0; i < n; i++) if (!done[i] && dist[i] < Infinity && (u < 0 || dist[i] < dist[u])) u = i;
+        if (u < 0 || dist[u] >= best) break;
+        done[u] = 1;
+        const [ux, uz] = N.nodes[u];
+        if (segClear(ux, uz, tx, tz, 0.25, N.near)) { const t = dist[u] + Math.hypot(tx - ux, tz - uz); if (t < best) { best = t; bi = u; } }
+        for (let v = 0; v < n; v++) { const w = N.edge[u][v]; if (w && !done[v] && dist[u] + w < dist[v]) { dist[v] = dist[u] + w; first[v] = first[u] === -2 ? v : first[u]; } }
+      }
+      if (bi < 0) return null;                        // no clear way found: walk straight as before
+      const f = first[bi] === -2 ? -1 : first[bi];
+      return f < 0 ? [tx, tz] : N.nodes[f];
+    }
+    return null;
+  }
   const byId = (id) => CAVES.find((k) => k.id === id);
   return Object.assign(api, {
+    route,
     list: CAVES, panels, beds, sconces, bats, crystals, flintF, ochreF, update, mouthLight, cols,
     setDay(v) { dayK = v; },                         // CAVE-LOOK: world.setTime: the daylight at the mouth (shaft and dust)
     setSconce(id, on) { const s = sconces.find((s) => s.cave === id); if (!s) return; s.on = on; s.flame.visible = on; s.light.intensity = on ? 4 : 0; },

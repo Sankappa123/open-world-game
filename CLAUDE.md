@@ -45,6 +45,7 @@ Caves (`CAVE-LOOK` in `caves.js` and `world.js`):
 - The dome's wall shape lives in two places that must agree: the JS that builds the mesh and `CAVE_DOME_GLSL`, which the terrain shader uses to cut the hillside out of the hollow. Change `DOME_L` or `DOME_SOFT` and both follow.
 - Outside boulders are pushed out until no vertex sits inside the hollow (they used to show through the ceiling).
 - Inside the dome the floor is a flat mesh, not `getHeight`: the 2.5 m terrain grid ramps up toward the hill well inside the wall.
+- `CAVE-NAV`: `walkTo` asks `caves.route()` for the next waypoint when a cave's colliders block the straight line (waypoints down the tube axis, two rings round the dome, a fan in front of the mouth, inner rings). New cave colliders join the graph automatically. Sena does not go gathering while Aro or she is in a cave.
 - To see what is on screen, raycast from the camera; the cave meshes are named (`dome`, `tube`, `seal`, `floor`, `formations`, `painting`, `shaft`, `boulder`), and `G.caves.cols` lists the cave's colliders.
 
 The models in `public/models/` are CC0. Credits are in `public/models/CREDITS.txt`.
