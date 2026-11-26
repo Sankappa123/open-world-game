@@ -31,7 +31,7 @@ npm start       # production: serves dist/ and the save API on one port
 | `main.js` | The game: state `S`, story `CH`, recipes, input, the frame loop and the `window.G` debug and test hooks |
 | `world.js`, `terrain.js` | Terrain, river, fords, biomes |
 | `water.js`, `sky.js`, `nature.js` | Water, sky and day/night, trees and plants |
-| `caves.js`, `landmarks.js` | Caves (Echo Hollow, Flint Deep), landmarks |
+| `caves.js`, `landmarks.js` | Caves (Echo Hollow, Flint Deep): dome, tube, seal, triplanar rock shader, formations, floor, decal paintings (`CAVE-LOOK`); landmarks |
 | `people.js` | Humans: Quaternius rig with UAL animation clips, clothing (Sena's `SENA-LOOK`), child bodies, bone overrides, IK |
 | `animals.js`, `entities.js` | Animals and horses; structures, tools, torch |
 | `combat.js`, `enemies.js`, `tribe.js`, `bow.js` | Combat, enemies, the rival tribe, the bow |
@@ -39,7 +39,13 @@ npm start       # production: serves dist/ and the save API on one port
 | `arc_data.js`, `romance.js`, `music.js` | Story arc data, romance scenes, music |
 | `save.js`, `quality.js`, `util.js` | Saving, graphics quality, helpers |
 
-`main.js` is large. Find code by its section tags: WP1–WP6 (expansion), WPN (weapons), RST (rest and sleep), FPP (first person), MAT, GORE, SURV, CMB, ARC, ROM, MUS.
+`main.js` is large. Find code by its section tags: WP1–WP6 (expansion), WPN (weapons), RST (rest and sleep), FPP (first person), MAT, GORE, SURV, CMB, ARC, ROM, MUS, HUD-POLISH (goal progress counts, the opt-in fps readout).
+
+Caves (`CAVE-LOOK` in `caves.js` and `world.js`):
+- The dome's wall shape lives in two places that must agree: the JS that builds the mesh and `CAVE_DOME_GLSL`, which the terrain shader uses to cut the hillside out of the hollow. Change `DOME_L` or `DOME_SOFT` and both follow.
+- Outside boulders are pushed out until no vertex sits inside the hollow (they used to show through the ceiling).
+- Inside the dome the floor is a flat mesh, not `getHeight`: the 2.5 m terrain grid ramps up toward the hill well inside the wall.
+- To see what is on screen, raycast from the camera; the cave meshes are named (`dome`, `tube`, `seal`, `floor`, `formations`, `painting`, `shaft`, `boulder`), and `G.caves.cols` lists the cave's colliders.
 
 The models in `public/models/` are CC0. Credits are in `public/models/CREDITS.txt`.
 

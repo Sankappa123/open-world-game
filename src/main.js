@@ -111,12 +111,12 @@ const CH = [
     lines: [['Sena', 'The sun will not stay. We need fire before the dark comes.'], ['Aro', 'Dry sticks and a ring of stones. I will make it.'], ['Sena', 'Sit with me a while. The fire is better with two.']] },
   { id: 'hunt', title: 'The Hunt', goals: [['Craft a hunting spear', () => !!S.tools.spear], ['Hunt a deer — sneak close, then throw', () => cnt('deer') >= 1, 'find the deer beyond the trees'], ['Cook the meat at the fire', () => cnt('cook') >= 1], ['Eat a cooked meal (F)', () => cnt('meal') >= 1]],
     lines: [['Sena', 'Berries will not carry us through the cold. There are deer beyond the trees.'], ['Aro', 'A sharp stone, a straight branch, reed to bind them. I will move low — they hear everything.']] },
-  { id: 'shelter', title: 'Shelter', goals: [['Craft a stone axe', () => !!S.tools.axe], ['Fell trees for 12 timber', () => cnt('wood') >= 12, 'fell some timber'], ['Raise the thatch hut with Sena', () => has('hut')], ['Rest together in the hut', () => cnt('slept') >= 1]],
+  { id: 'shelter', title: 'Shelter', goals: [['Craft a stone axe', () => !!S.tools.axe], ['Fell trees for 12 timber', () => cnt('wood') >= 12, 'fell some timber', () => [cnt('wood'), 12]], ['Raise the thatch hut with Sena', () => has('hut')], ['Rest together in the hut', () => cnt('slept') >= 1]],
     lines: [['Sena', 'A fire is not a home. The rain will come, and the wind after it.'], ['Aro', 'Then we raise a roof, the two of us. You weave, I will cut.']] },
-  { id: 'cave', title: 'Into the Dark', goals: [['Light a torch (T)', () => cnt('torchlit') >= 1], ['Find the hollow in the western hills', () => !!S.found.echo, 'go and find that hollow in the western hills'], ['Look at the old paintings (E)', () => cnt('painting') >= 3], ['Leave your handprints beside theirs', () => cnt('handprint') >= 1], ['Chip 6 flint', () => cnt('flint') >= 6, 'chip some flint in the cave']],
+  { id: 'cave', title: 'Into the Dark', goals: [['Light a torch (T)', () => cnt('torchlit') >= 1], ['Find the hollow in the western hills', () => !!S.found.echo, 'go and find that hollow in the western hills'], ['Look at the old paintings (E)', () => cnt('painting') >= 3, undefined, () => [cnt('painting'), 3]], ['Leave your handprints (bring ochre)', () => cnt('handprint') >= 1], ['Chip 6 flint', () => cnt('flint') >= 6, 'chip some flint in the cave', () => [cnt('flint'), 6]]],
     lines: [['Sena', 'The wind smells of stone and old smoke. There is a hollow in the western hills. I saw it from the ridge.'], ['Aro', 'Then we take fire with us. Whatever is in the dark, we will see it first.']],
     where: () => (S.found.echo ? CAVES[0].c : CAVES[0].mouth) },        // WP3: the Echo Hollow mouth, then its chamber
-  { id: 'herd', title: 'The Wild Herd', goals: [['Craft a saddle', () => !!S.tools.saddle, 'make a saddle'], ['Find the wild herd east of the river', () => !!S.found.meadow, 'look for the horses east of the river'], ['Win a horse\'s trust: sneak close and offer food (E) ×3', () => cnt('horse_fed') >= 3, 'bring the horses something sweet'], ['Calm the horse and ride her', () => !!S.horse], ['Ride with Sena to Lookout Peak', () => cnt('peak_ride') >= 1, 'ride up to Lookout Peak']],
+  { id: 'herd', title: 'The Wild Herd', goals: [['Craft a saddle', () => !!S.tools.saddle, 'make a saddle'], ['Find the wild herd east of the river', () => !!S.found.meadow, 'look for the horses east of the river'], ['Win a horse\'s trust: sneak close and offer food (E)', () => cnt('horse_fed') >= 3, 'bring the horses something sweet', () => [cnt('horse_fed'), 3]], ['Calm the horse and ride her', () => !!S.horse], ['Ride with Sena to Lookout Peak', () => cnt('peak_ride') >= 1, 'ride up to Lookout Peak']],
     lines: [['Sena', 'Across the river, on the open grass, I saw them running. Horses, like on the cave wall.'], ['Aro', 'They will not come to a stranger. We go slow, and we bring them something sweet.']],
     onEnter() { if (!S.found.meadow && !S.rumour?.includes('meadow')) S.rumour = [...(S.rumour || []), 'meadow']; spawnWildHerd(); },
     where: () => (S.horse ? [-185, 70] : [175, 40]) },
@@ -126,7 +126,7 @@ const CH = [
     lines: ARCD.L.smoke.enter, onEnter: () => arcEnter('smoke'), skipFx: () => arcSkip('smoke'), where: () => arcWhere('smoke') },
   { id: 'outcast', title: ARCD.TITLES.outcast, mature: true, goals: () => arcGoals('outcast'),
     lines: ARCD.L.outcast.enter, onEnter: () => arcEnter('outcast'), skipFx: () => arcSkip('outcast'), where: () => arcWhere('outcast') },
-  { id: 'clay', title: 'Clay and Flame', goals: [['Dig 8 clay at the riverbank', () => cnt('clay') >= 8, 'dig clay at the riverbank'], ['Build a kiln', () => has('kiln'), 'build the kiln'], ['Fire 24 bricks in the kiln', () => cnt('brick') >= 24, 'fire more bricks']],
+  { id: 'clay', title: 'Clay and Flame', goals: [['Dig 8 clay at the riverbank', () => cnt('clay') >= 8, 'dig clay at the riverbank', () => [cnt('clay'), 8]], ['Build a kiln', () => has('kiln'), 'build the kiln'], ['Fire 24 bricks in the kiln', () => cnt('brick') >= 24, 'fire more bricks', () => [cnt('brick'), 24]]],
     lines: [['Sena', 'Look how the river mud hardens beside the fire. Like stone.'], ['Aro', 'Clay. If we bake it hot enough, we can shape our own stone.']],
     extra: () => [...(S.horse ? [['Aro', `${horseName()} can carry the clay. We will need a great deal of it.`]] : []), ...(arcTamuGuest() ? [ARCD.L.outcast.dig] : [])],
     onEnter: () => arcEnter('clay') },
@@ -371,12 +371,16 @@ function fppHud() {
 // E prompt, the subtitles and the open F1 list stack above it instead of drawing over its chips.
 if (window.ResizeObserver) new ResizeObserver(() => document.documentElement.style.setProperty('--invH', $('inv').offsetHeight + 'px')).observe($('inv'));
 if (window.ResizeObserver) new ResizeObserver(() => document.documentElement.style.setProperty('--subH', $('sub').offsetHeight + 'px')).observe($('sub'));   // FPW-r3: the open F1 list clears the subtitle
+// HUD-POLISH: the panel only redrew on story events, so a counted goal ('Chip 6 flint') sat at its old state until
+// something else happened. The frame tick calls this; it redraws only when a goal's done flag or count has moved.
+function questSig() { return S.ch + ':' + goalsOf().map(([, f, , pg]) => (f() ? 1 : 0) + (pg ? ',' + pg()[0] : '')).join('|'); }
 function drawQuest() {
+  drawQuest.sig = questSig();
   const ch = CH[S.ch];
   $('chapter').textContent = `${ch.epilogue ? 'Epilogue' : roman(chNo())} · ${ch.title}`;
   const gl = goalsOf(ch);                            // ARC: goals may be branch-dependent
   $('goals').innerHTML = gl.length
-    ? gl.map(([t, f]) => `<div class="${f() ? 'done' : ''}">${t}</div>`).join('') + bowQuestHtml()   // BOW side quest
+    ? gl.map(([t, f, , pg]) => { const d = f(), n = !d && pg ? pg() : null; return `<div class="${d ? 'done' : ''}">${t}${n ? `<span class="pg">${Math.min(n[0], n[1])}/${n[1]}</span>` : ''}</div>`; }).join('') + bowQuestHtml()   // BOW side quest · HUD-POLISH: progress counts
     : sideGoals() + bowQuestHtml();                    // WP6 free play after the epilogue
   bowQuestFit();                                     // BOW-Q: fold or hide the side line so it never reaches the minimap
 }
@@ -3394,6 +3398,7 @@ function wp3Target(p, bd) {
 }
 function updateWP3(dt) {
   const E = world.env, cave = E.cave;
+  caves.torchOn = torchOn;                         // CAVE-LOOK: the dust in the air shows round a lit torch
   if (!wp3Init) {
     wp3Init = true;
     for (const k of CAVES) if (S.c['sconce_' + k.id]) caves.setSconce(k.id, true);
@@ -5648,7 +5653,7 @@ function matDiffUi() {
 
 // ----- settings UI: pause tabs, Game/Video/Audio/Content rows, the content notice
 const TAB_OF = { 'opt-sens': 'controls', 'opt-inv': 'controls', 'opt-autodraw': 'controls', 'opt-arc': 'controls', 'opt-qual': 'video', 'opt-full': 'video', 'opt-shake': 'video',
-  'opt-bob': 'video', 'opt-fov': 'video', 'opt-rm': 'video', 'opt-flash': 'video', 'opt-vol': 'audio' };
+  'opt-bob': 'video', 'opt-fov': 'video', 'opt-rm': 'video', 'opt-flash': 'video', 'opt-fps': 'video', 'opt-vol': 'audio' };
 function matContentChanged(key) {
   saveSettings(); matContentUi();
   if (typeof setGore === 'function') setGore({ blood: settings.blood, gore: settings.gore, screenBlood: settings.screenBlood });   // GORE
@@ -12647,6 +12652,8 @@ const FPI = { spear: fitMat('spear', 'hand')?.invert(), axe: fitMat('axe', 'hand
   bob.oninput = () => { settings.fppBob = +bob.value; show(); saveSettings(); };
   fov.oninput = () => { settings.fov = +fov.value; show(); saveSettings(); };
   rm.onchange = () => { settings.reduceMotion = rm.checked; saveSettings(); };
+  const fps = $('opt-fps');                          // HUD-POLISH: the fps readout is opt-in (it sat over the scene at the right edge)
+  if (fps) { fps.checked = !!settings.showFps; $('hud').classList.toggle('showfps', fps.checked); fps.onchange = () => { settings.showFps = fps.checked; $('hud').classList.toggle('showfps', fps.checked); saveSettings(); }; }
 })();
 // FOV target for both views: the base setting, a sprint widening (eased), WPN aim zoom and the throw punch.
 function fppFovT(dt = 0.016) {
@@ -13398,6 +13405,7 @@ function frame(now) {
     if (tick <= 0) {
       tick = 0.5;
       const ch = CH[S.ch], gl = goalsOf(ch);         // ARC goalsOf
+      if (questSig() !== drawQuest.sig) drawQuest();   // HUD-POLISH: live goal progress
       if (!busy && gl.length && gl.every(([, f]) => f()) && !arcCalm() && !(clock < birthHold)) {   // ARC: let a story beat finish first (ARC-FIX: and romance scenes, choices, rests); STORY: and the birth morning's lines
         arcAdvance();                                // ARC-FIX: S.ch++ and enterChapter, behind a short fade when the season turns
       }

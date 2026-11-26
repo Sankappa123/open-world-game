@@ -7,7 +7,7 @@ import { makeTerrainMaterial } from './terrain.js';
 import { createRiver } from './water.js';
 import { createAtmosphere } from './sky.js';
 import { PRESETS } from './quality.js';
-import { CAVES, initCaves, caveCarve, inCave, depthAt, createCaves, floorMask } from './caves.js';   // WP3
+import { CAVES, initCaves, caveCarve, inCave, depthAt, createCaves, floorMask, CAVE_DOME_GLSL } from './caves.js';   // WP3
 import { LM, FORDS, KEEP, POIS, initPOIS, createLandmarks } from './landmarks.js';     // WP3
 import { rockTexture } from './terrain.js';
 
@@ -359,7 +359,7 @@ export function createWorld(scene, renderer, quality = 'medium') {
     scatter(70, (x, z, h, ny, d) => land(x, z, h, ny, d) && d > 22 && h < 14 && forest(x, z) < 0.05, 230), { shadow: false });
   const fields = [sticks, stones, berries, reeds, clay, grainF, ...woods];
   // WP3: the caves (flint and ochre fields go after all the others so saved tree indices stay valid), landmarks, Mirror Lake
-  const caves = createCaves(scene, { NAT, rockTex: rockTexture(), addCollider, clear: (x, z, r) => clear(x, z, r), Field, pmat });
+  const caves = createCaves(scene, { NAT, rockTex: rockTexture(), addCollider, clear: (x, z, r) => clear(x, z, r), Field, pmat, getH: getHeight });
   { // FPP-world: the 2.5 m terrain grid cannot follow the round tube and dome walls, so its slanted triangles poked
     // into the caves as dark spikes. The terrain shader drops any fragment that lies inside a cave's dome or entrance
     // tube above the floor (the rock walls behind it then show).
@@ -369,16 +369,20 @@ export function createWorld(scene, renderer, quality = 'medium') {
     tm.onBeforeCompile = (sh, r) => {
       prev(sh, r);
       Object.assign(sh.uniforms, { uCaveA: { value: A }, uCaveB: { value: B }, uCaveC: { value: C } });
-      sh.fragmentShader = `uniform vec4 uCaveA[2]; uniform vec4 uCaveB[2]; uniform vec2 uCaveC[2];\n` + sh.fragmentShader.replace('void main() {', `void main() {
+      sh.fragmentShader = `uniform vec4 uCaveA[2]; uniform vec4 uCaveB[2]; uniform vec2 uCaveC[2];\n` + CAVE_DOME_GLSL + '\n' + sh.fragmentShader.replace('void main() {', `void main() {
         for (int i = 0; i < 2; i++) {
           vec2 d = vWp.xz - uCaveA[i].xy; float y = vWp.y - uCaveA[i].z, R = uCaveA[i].w;
           float r = length(d), s = dot(d, uCaveB[i].xy);
-          if (y - max(0.0, s - (R + 5.0)) * 0.24 < 0.3) continue;   // the floor (and the ramp up out of the mouth) stays
+          float yr = y - max(0.0, s - (R + 5.0)) * 0.24;
+          if (yr < 0.03) continue;                     // the floor (and the ramp up out of the mouth) stays
           float lat = abs(d.x * uCaveB[i].y - d.y * uCaveB[i].x), T = uCaveC[i].y + 0.12;   // a little wider than the wall
-          bool tube = s > uCaveB[i].z && s < uCaveB[i].w - 1.6 && lat * lat + (y + 0.3) * (y + 0.3) < T * T;
+          bool tube = yr >= 0.3 && s > uCaveB[i].z && s < uCaveB[i].w - 1.6 && lat * lat + (y + 0.3) * (y + 0.3) < T * T;
           // (the tube cut stops short of the mouth, where the hillside beside it shows through)
           // the dome, but not the closed pocket behind the inner seal (around the tube), where nothing would show
-          bool dome = r < R - 0.5 && y < uCaveC[i].x * sqrt(max(0.0, 1.0 - (r * r) / (R * R))) - 0.2 && s < uCaveB[i].z + 0.3;
+          // CAVE-LOOK: the real lumpy wall (it bulges past R, and the hillside showed inside as a pale bank there)
+          // (inside the dome the cut starts 3 cm up, not 30: the grid's rise toward the hill showed as teeth along the wall
+          // foot; the cave floor mesh in caves.js covers the flat floor)
+          bool dome = s < uCaveB[i].z + 0.3 && r < R * 1.2 && cvInDome(vec3(d.x / R, (y + 0.35) / uCaveC[i].x, d.y / R), (R - 0.35) / R);
           if (dome || tube) discard;
         }`);
     };
@@ -632,6 +636,7 @@ export function createWorld(scene, renderer, quality = 'medium') {
     // air only thinly hazes (the daylit world through the mouth used to fog to black), and the daylight spilling
     // in at the mouth lights the entrance (caves.mouthLight).
     caves.mouthLight.intensity = cave > 0 ? 34 * cave * (0.08 + 0.92 * day) * (1 - st * 0.5) : 0;
+    caves.setDay(day * (1 - st * 0.5));            // CAVE-LOOK: the light shaft and the sunlit dust at the mouth
     if (cave > 0) {
       sun.intensity *= 1 - cave;
       hemi.intensity *= 1 - 0.7 * cave;

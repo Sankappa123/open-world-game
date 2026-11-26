@@ -135,6 +135,9 @@
   #savechip.ok { color: #a9cf8e; } #savechip.warn { color: #e58a6f; }
   #hud.cine #savechip, #hud.cine ~ #savechip, body:has(#hud.cine) #savechip { opacity: 0 !important; }   /* ARC-FIX7: no 'Saved' chip over a letterboxed scene */
   #fps { position: fixed; right: 18px; bottom: 150px; font-size: 11px; color: rgba(243, 234, 217, 0.45); pointer-events: none; text-shadow: 0 1px 2px #000; }
+  #fps { display: none; } #hud.showfps #fps { display: block; }   /* HUD-POLISH: a debug readout, off unless Video › Show frame rate */
+  #goals div .pg { float: right; margin-left: 10px; font-size: 12px; color: var(--gold); font-variant-numeric: tabular-nums; opacity: 0.9; }   /* HUD-POLISH: goal progress (2/6) */
+  #goals div.done .pg { color: #8f8672; }
   #vignette { position: fixed; inset: 0; pointer-events: none; background: radial-gradient(ellipse at center, transparent 55%, rgba(0, 0, 0, 0.42) 100%); }
   #pause { position: fixed; inset: 0; display: none; place-content: center; background: rgba(0, 0, 0, 0.5); backdrop-filter: blur(3px); }
   #pause.on { display: grid; }
@@ -415,6 +418,7 @@
   <div class="row"><span>Head bob<small>How much the view moves with your steps in first person</small></span><span><input id="opt-bob" type="range" min="0" max="1" step="0.05" /> <b id="opt-bob-v"></b></span></div>
   <div class="row"><span>Field of view<small>Vertical degrees; wider shows more around you</small></span><span><input id="opt-fov" type="range" min="50" max="80" step="1" /> <b id="opt-fov-v"></b></span></div>
   <div class="row"><span>Reduce motion<small>Less bob, no camera roll, no sprint zoom or sway</small></span><input id="opt-rm" type="checkbox" /></div>
+  <div class="row" data-tab="video"><span>Show frame rate<small>A small fps and resolution readout at the right edge</small></span><input id="opt-fps" type="checkbox" /></div>
   <div class="row"><span>Spear aim arc<small>Fade hides it as the throw reaches full power</small></span><select id="opt-arc"><option value="on">On</option><option value="fade">Fade</option><option value="off">Off</option></select></div>
   <div class="btns"><button id="btn-resume">Resume</button><button id="btn-save">Save now</button><button id="btn-quit">Save &amp; quit to title</button></div>
 </div></div>
