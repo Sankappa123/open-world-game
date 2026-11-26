@@ -213,6 +213,7 @@ const RECIPES = [
   { id: 'torch', name: 'Torch', desc: 'T lights it: carry light into the dark, and wolves keep their distance. Burns about 3 minutes; relighting costs 1 stick.', cost: { stick: 2, fiber: 2 }, ch: 'fire' },
   { id: 'poultice', item: 'poultice', name: 'Herbal poultice', desc: 'Crushed berries bound in reed. H treats your wounds (+35 health).', cost: { berry: 4, fiber: 1 }, ch: 'fire' },
   { id: 'spear', name: 'Hunting spear', desc: 'Right-click to throw. Sneak (C) to get close to deer — or throw it into the river to catch fish.', cost: { stick: 2, stone: 1, fiber: 1 }, ch: 'hunt' },
+  { id: 'spear2', name: 'Second spear', desc: 'Carry two spears, crossed on your back: throw one and the other is still to hand. A flint point arms both.', cost: { stick: 2, stone: 1, fiber: 1 }, ch: 'hunt', need: () => hasSpear() },   // SPEAR2
   { id: 'cloak', name: 'Fur cloak', desc: 'Made from the hides of your hunts. You lose warmth half as fast at night and in storms.', cost: { hide: 3, fiber: 3 }, ch: 'hunt' },
   { id: 'waterskin', name: 'Waterskin', desc: 'Holds 3 drinks. Fills when you drink at the river or the well. R to drink.', cost: { hide: 1, fiber: 2 }, ch: 'hunt' },
   { id: 'rack', name: 'Drying rack', desc: 'Hang raw meat or fish to dry. After a while it is ready to eat.', cost: { stick: 6, fiber: 4 }, ch: 'hunt', place: true },
@@ -340,7 +341,7 @@ function updateSubs(dt) {
 }
 function drawInv() {
   let h = '';
-  if (hasSpear()) h += `<span class="tool">${icon(S.tools.flintspear ? 'flintspear' : 'spear', 'ii')}${S.tools.flintspear ? 'Flint spear' : 'Spear'}${W.spearOut && spearWhere() ? ' · ' + spearWhere() : ''}</span>`;   // FPP-world: flint tools are named too; WH: the thrown spear
+  if (hasSpear()) h += `<span class="tool">${icon(S.tools.flintspear ? 'flintspear' : 'spear', 'ii')}${S.tools.flintspear ? 'Flint spear' : 'Spear'}${spearsOwned() > 1 ? `<b>${spearsHeld()}/2</b>` : ''}${spearsOutN() && spearWhere() ? ' · ' + spearWhere() : ''}</span>`;   // FPP-world: flint tools are named too; WH: the thrown spear
   if (hasAxe()) h += `<span class="tool">${icon(S.tools.flintaxe ? 'flintaxe' : 'axe', 'ii')}${S.tools.flintaxe ? 'Flint axe' : 'Axe'}</span>`;
   if (S.tools.bow) h += `<span class="tool">${icon('bow', 'ii')}Bow${BOW.on ? ' (ready)' : ''} <b>${S.inv.arrow || 0}${(S.inv.arrow || 0) > bowCap() ? '' : '/' + bowCap()}</b> arrows</span>`;   // BOW: a stock above the carry cap shows just the count
   if (S.tools.torch) h += `<span class="tool">${icon('torch', 'ii')}Torch${torchOn ? ` · lit ${Math.ceil(S.fuel)}s` : ''}</span>`;
@@ -1200,7 +1201,7 @@ function wp4Load() {
   }
   if (reached('herd')) spawnWildHerd();
 }
-function remove(o) { if (proj.m.parent === o.root) wpnDropSpear(o);   // WPN
+function remove(o) { for (const q of PROJS) if (q.m.parent === o.root) { proj = q; wpnDropSpear(o); }   // WPN (SPEAR2: either spear)
   scene.remove(o.root); const i = animals.indexOf(o); if (i >= 0) animals.splice(i, 1);
   freeGpu(o.root); }
 // SAVE-PERF: a removed animal's per-instance GPU resources are released: each SkeletonUtils clone owns its skeleton's
@@ -2040,21 +2041,49 @@ function wpnCancelAim() {
   if (P.h.spear.parent === P.h.sock.hand) P.h.place(P.h.spear, 'hand', 0.15);
   wpnHud();
 }
-const proj = { m: makeSpear(), vel: new THREE.Vector3(), pos: new THREE.Vector3(), st: null, acc: 0, dmg: 10, o: null, t: 0, wet: false, steps: 0 };
-proj.m.userData.kind = 'spear'; proj.m.visible = false; scene.add(proj.m);
+// SPEAR2: Aro can carry two spears (crossed on his back). Each thrown spear is one of these; the per-spear functions
+// below (flight, landing, pickup, Sena's fetch) work on `proj`, set to the spear in hand before each call.
+// W.spearOut now means "no spear left to throw" (both out, or the only one).
+const mkProj = (i) => { const q = { i, m: makeSpear(), vel: new THREE.Vector3(), pos: new THREE.Vector3(), st: null, acc: 0, dmg: 10, o: null, t: 0, wet: false, steps: 0 }; q.m.userData.kind = 'spear'; q.m.visible = false; scene.add(q.m); return q; };
+const PROJS = [mkProj(0), mkProj(1)];
+let proj = PROJS[0];
+const spearKey = (q) => (q.i ? 'spearAt2' : 'spearAt');           // its save record
+const spearsOwned = () => (hasSpear() ? (S.tools.spear2 ? 2 : 1) : 0);
+const spearsOutN = () => PROJS.reduce((n, q) => n + (q.st ? 1 : 0), 0);
+const spearsHeld = () => Math.max(0, spearsOwned() - spearsOutN());
+function spearOutSync() { W.spearOut = hasSpear() && spearsHeld() === 0; }
+// The second spear on his back: the first one's back carry mirrored left for right (tip over the left shoulder, butt by
+// the right hip), a hand's width further back so the shafts cross behind each other: an X. It follows the first one's
+// live carry (on foot, running, saddle, water); with the first one in his hand it keeps that carry's last spot.
+const SPARE = makeSpear(); SPARE.userData.kind = 'spear'; SPARE.visible = false;
+const SPARE_AT = { p: new THREE.Vector3(), q: new THREE.Quaternion(), s: 0.92, ok: false };
+function wpnSpare() {
+  const m = P.h.spear, sk = P.h.sock, onAro = m.parent === sk.back || m.parent === sk.hand;
+  const show = spearsHeld() >= 2 && onAro && (m.visible || m.parent === sk.hand) && !W.props && !W.seatHid && !BOW.hidSpear && !W.benchSpear;
+  SPARE.visible = show;
+  if (!show) return;
+  if (SPARE.parent !== sk.back) sk.back.add(SPARE);
+  if (m.parent === sk.back) { SPARE_AT.p.copy(m.position); SPARE_AT.q.copy(m.quaternion); SPARE_AT.s = m.scale.x; SPARE_AT.ok = true; }
+  else if (!SPARE_AT.ok) { const f = P.h.fitAdj?.spear?.back || FIT.spear.back; SPARE_AT.p.set(...f.p); SPARE_AT.q.setFromEuler(new THREE.Euler(...f.r)); SPARE_AT.s = f.s ?? 0.92; SPARE_AT.ok = true; }
+  SPARE.position.set(-SPARE_AT.p.x, SPARE_AT.p.y, SPARE_AT.p.z - 0.035);
+  SPARE.quaternion.set(SPARE_AT.q.x, -SPARE_AT.q.y, -SPARE_AT.q.z, SPARE_AT.q.w);
+  SPARE.scale.setScalar(SPARE_AT.s);
+}
 const _tip = new THREE.Vector3();
 function wpnRelease() {
   const a = W.aim; if (!a) return;
   if (P.ride && Math.abs(wrapA(camFace() - P.face)) > 2.1) { wpnCancelAim(); toast('Turn a little to throw from the saddle'); return; }
+  proj = PROJS.find((q) => !q.st) || PROJS[0];      // SPEAR2: the spear in hand flies
   const v = aimSolve(a.charge, proj.pos, _ad);
   proj.vel.copy(_ad).multiplyScalar(v); proj.dmg = S.tools.flintspear ? 22 : 12;   // CMB thrown 12 / 22
   proj.st = 'air'; proj.acc = 0; proj.wet = false; proj.steps = 0; proj.o = null;
   proj.m.userData.setFlint(!!S.tools.flintspear); proj.m.scale.setScalar(1);
   if (proj.m.parent !== scene) scene.attach(proj.m);
   proj.m.visible = true; poseProj();
-  W.aim = null; W.rmb = false; W.spearOut = true; W.spearLeftT = 0; S.spearAt = null;
-  P.h.spear.visible = false; P.h.place(P.h.spear, 'back'); W.held = null; W.st = 'sheathed'; W.stW = 0; W.lhW = 0;
-  W.last = 'spear'; W.sel = 'fists';
+  W.aim = null; W.rmb = false; W.spearLeftT = 0; S[spearKey(proj)] = null; spearOutSync();
+  const left = spearsHeld() > 0;                     // SPEAR2: the other spear is still on his back: right mouse takes it
+  P.h.spear.visible = left; P.h.place(P.h.spear, 'back'); W.held = null; W.st = 'sheathed'; W.stW = 0; W.lhW = 0;
+  if (!left) { W.last = 'spear'; W.sel = 'fists'; }
   for (const o of [arcLine, arcDots, arcRing]) o.visible = false;
   if (!P.ride) P.wantFace = camFace();
   P.h.swing('throwU', 1.4); W.punch = 0.12; W.sw = { k: 'throw', t: 0, dur: 0.5 };
@@ -2075,10 +2104,12 @@ function poseProj() {
 }
 function recordSpear() {
   const m = proj.m; m.updateMatrixWorld(true); m.getWorldPosition(_w1); m.getWorldQuaternion(_wq);
-  S.spearAt = { x: +_w1.x.toFixed(3), y: +_w1.y.toFixed(3), z: +_w1.z.toFixed(3), qx: +_wq.x.toFixed(4), qy: +_wq.y.toFixed(4), qz: +_wq.z.toFixed(4), qw: +_wq.w.toFixed(4), f: proj.st === 'float' ? 1 : undefined };
+  S[spearKey(proj)] = { x: +_w1.x.toFixed(3), y: +_w1.y.toFixed(3), z: +_w1.z.toFixed(3), qx: +_wq.x.toFixed(4), qy: +_wq.y.toFixed(4), qz: +_wq.z.toFixed(4), qw: +_wq.w.toFixed(4), f: proj.st === 'float' ? 1 : undefined };
 }
 function updateSpear(dt) {
-  if (proj.st !== 'air') return;
+  for (const q of PROJS) if (q.st === 'air') { proj = q; spearFly(dt); }
+}
+function spearFly(dt) {
   proj.acc += dt;
   while (proj.acc >= SP_DT && proj.st === 'air') {
     proj.acc -= SP_DT;
@@ -2092,10 +2123,14 @@ function updateSpear(dt) {
   if (proj.st === 'air') poseProj();
 }
 // WH: where the thrown spear is, for the pack line and the weapon chip ('' while it flies).
-function spearWhere() {
-  const st = proj.st;
+function spearWhere() {                               // SPEAR2: each spear that is out ('' while they fly)
+  const w = [...new Set(PROJS.filter((q) => q.st).map(spearWhereOf).filter(Boolean))];
+  return w.join(' & ');
+}
+function spearWhereOf(q) {
+  const st = q.st;
   return st === 'float' ? 'in the river' : st === 'ground' ? 'on the ground' : st === 'sena' ? 'with Sena'
-    : st === 'animal' ? `in the ${(proj.o?.kind || 'animal').replace(/_.*/, '')}` : '';
+    : st === 'animal' ? `in the ${(q.o?.kind || 'animal').replace(/_.*/, '')}` : '';
 }
 function landSpearGround() {
   const gy = tipToGround(proj.pos, proj.vel, _tip);
@@ -2132,12 +2167,13 @@ function wpnDropSpear(o) {                           // off the animal onto the 
   if (proj.st === 'float') proj.m.position.y = -0.05;
   recordSpear();
 }
-function wpnPickup(fromSena = false) {
-  if (!W.spearOut) return;
+function wpnPickup(fromSena = false) {               // takes back `proj`
+  if (!proj.st) return;
   if (proj.m.parent !== scene) scene.attach(proj.m);
-  proj.st = null; proj.o = null; proj.m.visible = false; W.spearOut = false; W.spearLeftT = 0; S.spearAt = null; N.fetch = null;
-  const sp = P.h.spear; sp.visible = true;
-  P.h.place(sp, 'back');
+  proj.st = null; proj.o = null; proj.m.visible = false; W.spearLeftT = 0; S[spearKey(proj)] = null;
+  if ((N.fetch?.i || 0) === proj.i) N.fetch = null;
+  spearOutSync();
+  if (W.held !== 'spear') { const sp = P.h.spear; sp.visible = true; P.h.place(sp, 'back'); }   // SPEAR2: with one in hand, this one goes on his back
   if (!fromSena && !P.ride && !P.swim) P.h.swing('pickU', 1.6);
   A.hit(500, 0.1, 0.15); A.hit(2200, 0.05, 0.05);
   if (W.sel === 'fists' && W.last === 'spear' && W.st === 'sheathed') { W.sel = 'spear'; W.last = 'fists'; }
@@ -2145,30 +2181,40 @@ function wpnPickup(fromSena = false) {
   wpnHud();
 }
 // findTarget (top): the spear lying out, within 2.2 m.
+// RIDE-PICK: from the saddle he leans down for it (a longer reach, any height under the horse).
+const SPEAR_REACH = () => (P.ride ? [2.8, 4.5] : [2.2, 2.5]);
 function wpnTarget(p) {
-  if (!W.spearOut || !(proj.st === 'ground' || proj.st === 'float' || proj.st === 'animal')) return null;
-  proj.m.getWorldPosition(_w1);
-  if (Math.hypot(_w1.x - p.x, _w1.z - p.z) > 2.2 || Math.abs(_w1.y - p.y) > 2.5) return null;
-  return { label: 'Take back your spear', key: true, act() { wpnPickup(); } };
+  let best = null, bd = 1e9; const [r, dy] = SPEAR_REACH();
+  for (const q of PROJS) {
+    if (!(q.st === 'ground' || q.st === 'float' || q.st === 'animal')) continue;
+    q.m.getWorldPosition(_w1);
+    const d = Math.hypot(_w1.x - p.x, _w1.z - p.z);
+    if (d <= r && Math.abs(_w1.y - p.y) <= dy && d < bd) { bd = d; best = q; }
+  }
+  if (!best) return null;
+  return { label: P.ride ? 'Lean down for your spear' : 'Take back your spear', key: true, act() { proj = best; wpnPickup(); } };
 }
 function wpnSpearTick(dt) {
-  if (!W.spearOut) return;
+  if (!spearsOutN()) return;
   W.spearLeftT += dt;
+  for (const q of PROJS) if (q.st) { proj = q; spearTickOne(); }
+}
+function spearTickOne() {
   if (proj.st === 'animal') {
     proj.t += dt; const o = proj.o;
     if (!o || !o.root.parent || !o.root.visible || o.looted || (o.state === 'live' && proj.t > 1.2)) wpnDropSpear(o);
   }
   if (proj.st === 'ground' || proj.st === 'float' || proj.st === 'animal') {
     proj.m.getWorldPosition(_w1);
-    if (Math.hypot(_w1.x - P.pos.x, _w1.z - P.pos.z) < 1.0 && Math.abs(_w1.y - P.pos.y) < 1.8 && !P.ride) wpnPickup();
+    if (Math.hypot(_w1.x - P.pos.x, _w1.z - P.pos.z) < (P.ride ? 1.6 : 1.0) && Math.abs(_w1.y - P.pos.y) < (P.ride ? 4.5 : 1.8)) { wpnPickup(); if (P.ride) toast('You lean from the saddle and take back your spear'); }   // RIDE-PICK: ridden over, he scoops it up
     else if (!N.fetch && W.spearLeftT > 60 && Math.hypot(_w1.x - P.pos.x, _w1.z - P.pos.z) > 25 && nFree() && !N.ride && reached('fire')
-      && Math.hypot(_w1.x - N.pos.x, _w1.z - N.pos.z) < 60 && proj.st !== 'animal') N.fetch = { x: _w1.x, z: _w1.z, ph: 'go', t: 0 };
+      && Math.hypot(_w1.x - N.pos.x, _w1.z - N.pos.z) < 60 && proj.st !== 'animal') N.fetch = { x: _w1.x, z: _w1.z, ph: 'go', t: 0, i: proj.i };
   }
 }
 // updateSena: she walks to the forgotten spear, picks it up, brings it and hands it over.
 function wpnSenaFetch(dt) {
-  const f = N.fetch;
-  if (!W.spearOut || !(proj.st === 'ground' || proj.st === 'float' || proj.st === 'sena')) { N.fetch = null; return false; }
+  const f = N.fetch; proj = PROJS[f.i || 0];
+  if (!(proj.st === 'ground' || proj.st === 'float' || proj.st === 'sena')) { N.fetch = null; return false; }
   f.t += dt;
   if (f.ph === 'go') {
     proj.m.getWorldPosition(_w1);
@@ -2177,7 +2223,7 @@ function wpnSenaFetch(dt) {
   }
   if (f.ph === 'pick') {
     N.speed = 0;
-    if (f.t > 0.5 && proj.st !== 'sena') { proj.st = 'sena'; S.spearAt = null; N.h.place(proj.m, 'hand', 0.15); N.h.gripR = 1; }
+    if (f.t > 0.5 && proj.st !== 'sena') { proj.st = 'sena'; S[spearKey(proj)] = null; N.h.place(proj.m, 'hand', 0.15); N.h.gripR = 1; }
     if (f.t > 1.1) { f.ph = 'bring'; f.t = 0; }
     return true;
   }
@@ -2424,11 +2470,47 @@ function bowTick(dt) {
   }
   bowSideQuest();
 }
+// ----- GLINT: a twinkle over each thrown spear and loose arrow lying out (in the grass, a tree, a carcass), so it can be
+// found again. A star sprite drawn over everything, sized to read the same at any distance, fading out close by.
+const GLINT_N = 20, _gl = new THREE.Vector3();
+const glintMat = (() => {
+  const c = document.createElement('canvas'); c.width = c.height = 128; const g = c.getContext('2d');
+  const r = g.createRadialGradient(64, 64, 0, 64, 64, 64);
+  r.addColorStop(0, 'rgba(255,255,250,1)'); r.addColorStop(0.13, 'rgba(255,248,215,1)'); r.addColorStop(0.3, 'rgba(255,222,140,0.6)'); r.addColorStop(0.55, 'rgba(255,205,115,0.16)'); r.addColorStop(1, 'rgba(255,200,110,0)');
+  g.fillStyle = r; g.fillRect(0, 0, 128, 128);
+  const ray = (a, len, w, al) => { g.save(); g.translate(64, 64); g.rotate(a); const lg = g.createLinearGradient(-len, 0, len, 0); lg.addColorStop(0, 'rgba(255,240,200,0)'); lg.addColorStop(0.5, `rgba(255,252,235,${al})`); lg.addColorStop(1, 'rgba(255,240,200,0)'); g.fillStyle = lg; g.beginPath(); g.ellipse(0, 0, len, w, 0, 0, 6.2832); g.fill(); g.restore(); };
+  ray(0, 63, 4, 1); ray(Math.PI / 2, 63, 4, 1); ray(Math.PI / 4, 40, 2.6, 0.75); ray(-Math.PI / 4, 40, 2.6, 0.75);
+  const tex = new THREE.CanvasTexture(c); tex.colorSpace = THREE.SRGBColorSpace;
+  return new THREE.SpriteMaterial({ map: tex, transparent: true, depthTest: false, depthWrite: false, fog: false });   // normal blending: white-gold on grass and in the dark alike
+})();
+const glints = [...Array(GLINT_N)].map(() => { const s = new THREE.Sprite(glintMat.clone()); s.visible = false; s.renderOrder = 20; scene.add(s); return s; });
+const _glL = [];
+function glintTick() {
+  _glL.length = 0;
+  const cam = camera.position, seen = playing && !camShot;
+  if (seen) {
+    for (const q of PROJS) if (q.st === 'ground' || q.st === 'float' || (q.st === 'animal' && q.o?.state !== 'live')) { q.m.updateMatrixWorld(true); q.m.localToWorld(_gl.set(0, 0, -0.55)); _glL.push([_gl.x, _gl.y + 0.18, _gl.z, q.i * 0.41, 1.25]); }   // up the shaft from the middle
+    for (const a of BOW.arrows) if (a.st === 'ground' || (a.st === 'animal' && a.o?.state !== 'live')) { a.m.updateMatrixWorld(true); a.m.localToWorld(_gl.set(0, 0, -ARROW_LEN * 0.8)); _glL.push([_gl.x, _gl.y + 0.12, _gl.z, (a.ph ??= rand()), 1]); }   // by the fletching
+  }
+  for (const L of _glL) L[5] = Math.hypot(L[0] - cam.x, L[1] - cam.y, L[2] - cam.z);
+  _glL.sort((a, b) => a[5] - b[5]);
+  for (let i = 0; i < GLINT_N; i++) {
+    const s = glints[i], L = _glL[i];
+    if (!L || L[5] > 110) { s.visible = false; continue; }
+    const d = L[5], tw = Math.pow(Math.max(0, Math.sin(clock * 2.4 + L[3] * 6.283)), 8), base = 0.72 + 0.28 * tw;   // a steady glow with a sharp twinkle
+    const near = clamp((d - 1.4) / 2.5, 0, 1), far = 1 - clamp((d - 85) / 25, 0, 1);
+    s.position.set(L[0], L[1], L[2]);
+    s.scale.setScalar(Math.max(0.4, d * 0.07) * L[4] * (0.85 + 0.4 * tw));   // about the same size on screen near or far (~45 px)
+    s.material.opacity = base * near * far;
+    s.material.rotation = clock * 0.35 + L[3] * 3;
+    s.visible = s.material.opacity > 0.01;
+  }
+}
 // E: pick up every arrow within 2.5 m (in the ground, or in a body that is no longer alive).
-const bowNear = (p) => BOW.arrows.filter((a) => (a.st === 'ground' || (a.st === 'animal' && a.o?.state !== 'live')) && a.m.getWorldPosition(_bC) && Math.hypot(_bC.x - p.x, _bC.z - p.z) < 2.5 && Math.abs(_bC.y - p.y) < 2.5);
+const bowNear = (p) => BOW.arrows.filter((a) => (a.st === 'ground' || (a.st === 'animal' && a.o?.state !== 'live')) && a.m.getWorldPosition(_bC) && Math.hypot(_bC.x - p.x, _bC.z - p.z) < (P.ride ? 2.8 : 2.5) && Math.abs(_bC.y - p.y) < (P.ride ? 4.5 : 2.5));   // RIDE-PICK: a longer reach from the saddle
 function bowTarget(p) {
   const n = bowNear(p).length; if (!n) return null;
-  return { label: `Pick up arrows (${n})`, key: true, act() { bowPickup(); } };
+  return { label: `${P.ride ? 'Lean down for arrows' : 'Pick up arrows'} (${n})`, key: true, act() { bowPickup(); } };
 }
 function bowPickup() {
   let got = 0, full = false;
@@ -2688,10 +2770,11 @@ function wpnUpdate(dt) {
   const h = P.h;
   W.manualT -= dt; W.punch = Math.max(0, W.punch - dt); W.recoil = Math.max(0, (W.recoil || 0) - dt);
   trauma = Math.max(0, trauma - 1.5 * dt);
-  const ok = `${hasAxe()}${hasSpear()}${!!S.tools.flintaxe}${!!S.tools.flintspear}${!!S.tools.torch}`;
+  const ok = `${hasAxe()}${hasSpear()}${!!S.tools.flintaxe}${!!S.tools.flintspear}${!!S.tools.torch}${!!S.tools.spear2}`;
   if (ok !== W.ownKey) { W.ownKey = ok; wpnSync(); }
-  { const ik = W.spearOut && spearWhere(); if (ik !== W.invOut) { W.invOut = ik; drawInv(); wpnHud(); } }   // WH: the pack line says where the thrown spear is
+  { const ik = spearsOutN() && spearWhere() + '|' + spearsHeld(); if (ik !== W.invOut) { W.invOut = ik; drawInv(); wpnHud(); } }   // WH: the pack line says where the thrown spear is
   wpnBackFit();                                      // WH: the spear's carry on the back (on foot, saddle, water)
+  wpnSpare();                                        // SPEAR2: the second spear, crossed with the first
   { const sh = (P.sit > 0 && !P.sitIn || seatedPose(P.h)) && P.h.slotOf(P.h.spear) === 'back' && !W.spearOut;   // WH: seated, the spear is set down (as Sena's is) (SIT-r3: not while he walks to the seat)
     if (sh !== !!W.seatHid && !W.props) { W.seatHid = sh; if (!W.spearOut) P.h.spear.visible = !sh; } }   // (cinematics with W.props own the carry)
   if (W.restoreDrawn && clock > 0.2) { W.restoreDrawn = false; if (W.st === 'sheathed' && !P.ride && !P.swim && !wBusy() && !W.props) wpnSnapDrawn(); }
@@ -2760,7 +2843,7 @@ function wpnUpdate(dt) {
   if (W.benchSpear && !(P.sit > 0)) wpnUnSit();     // the sit ended some other way (die, a fade)
   if (W.props && !busy) { W.propsT = (W.propsT || 0) + dt; if (W.propsT > 1.5) wpnWake(); } else W.propsT = 0;   // a rest that never woke us
   if (!!W.aim !== W.crossAim) { W.crossAim = !!W.aim; $('cross').classList.toggle('aim', W.crossAim); }
-  wpnTorch(); wpnSpearTick(dt); wpnSena(dt); wpnPuffs(dt); bowTick(dt);   // BOW
+  wpnTorch(); wpnSpearTick(dt); wpnSena(dt); wpnPuffs(dt); bowTick(dt); glintTick();   // BOW · GLINT
 }
 // The torch: in the left hand when lit, on the right hip when not (whenever Aro owns one).
 function wpnTorch() {
@@ -2777,12 +2860,12 @@ function wpnSena(dt) {
   N.h.spear.visible = !!S.tools.flintspear && !hide && !W.props;
   if (N.h.spear.userData.slot !== 'back') N.h.place(N.h.spear, 'back');
   N.h.gripL += ((senaLit ? 1 : 0) - N.h.gripL) * Math.min(1, dt * 10);
-  if (proj.st !== 'sena') N.h.gripR += (0 - N.h.gripR) * Math.min(1, dt * 10);
+  if (!PROJS.some((q) => q.st === 'sena')) N.h.gripR += (0 - N.h.gripR) * Math.min(1, dt * 10);
   if (!senaTorch.root.userData.kind) { senaTorch.root.userData.kind = 'torch'; N.h.place(senaTorch.root, 'handL'); }
 }
 // Meshes into their sockets after a load or an ownership change (crafting a flint tool).
 function wpnSync() {
-  P.h.spear.userData.setFlint(!!S.tools.flintspear); P.h.axe.userData.setFlint(!!S.tools.flintaxe); proj.m.userData.setFlint(!!S.tools.flintspear);
+  P.h.spear.userData.setFlint(!!S.tools.flintspear); P.h.axe.userData.setFlint(!!S.tools.flintaxe); for (const q of PROJS) q.m.userData.setFlint(!!S.tools.flintspear); SPARE.userData.setFlint(!!S.tools.flintspear);
   vmSpear.userData.setFlint(!!S.tools.flintspear); vmAxe.userData.setFlint(!!S.tools.flintaxe);
   torch.root.userData.kind = 'torch';
   if (!owns(W.sel)) W.sel = 'fists';
@@ -2798,17 +2881,20 @@ function wpnSync() {
   }
   wpnHud();
 }
-function wpnSave() { S.equip = W.sel; S.lastEquip = W.last; S.drawn = W.st === 'drawn' || W.st === 'drawing'; if (!W.spearOut) S.spearAt = null; }
+function wpnSave() { S.equip = W.sel; S.lastEquip = W.last; S.drawn = W.st === 'drawn' || W.st === 'drawing'; for (const q of PROJS) if (!q.st) S[spearKey(q)] = null; }
 function wpnLoad() {
   S.equip ??= 'fists'; S.lastEquip ??= 'fists';
   W.sel = owns(S.equip) ? S.equip : 'fists'; W.last = owns(S.lastEquip) ? S.lastEquip : 'fists';
   Object.assign(W, { st: 'sheathed', held: null, aim: null, queued: null, spearOut: false, props: false, stW: 0, lhW: 0, aimW: 0, camK: 0, invOut: undefined });
-  proj.st = null; proj.m.visible = false; if (proj.m.parent !== scene) scene.attach(proj.m);
-  const a = S.spearAt;
-  if (a && hasSpear()) {
-    proj.m.position.set(a.x, a.y, a.z); proj.m.quaternion.set(a.qx, a.qy, a.qz, a.qw); proj.m.scale.setScalar(1);
-    proj.m.visible = true; proj.st = a.f ? 'float' : 'ground'; W.spearOut = true;
-  } else S.spearAt = null;
+  for (const q of PROJS) {                           // SPEAR2: each spear left lying out
+    q.st = null; q.o = null; q.m.visible = false; if (q.m.parent !== scene) scene.attach(q.m);
+    const a = S[spearKey(q)];
+    if (a && spearsOwned() > q.i) {
+      q.m.position.set(a.x, a.y, a.z); q.m.quaternion.set(a.qx, a.qy, a.qz, a.qw); q.m.scale.setScalar(1);
+      q.m.visible = true; q.st = a.f ? 'float' : 'ground';
+    } else S[spearKey(q)] = null;
+  }
+  spearOutSync();
   if (W.sel === 'spear' && W.spearOut) W.sel = 'fists';
   W.ownKey = ''; wpnSync();
   bowLoad();                                         // BOW
@@ -2844,7 +2930,7 @@ function wpnUnSit() {
 // RST: the night. Everything goes away; axe, spear and torch become props by the bed; the basket on the floor.
 function wpnRest(s, layPts = {}) {
   wpnStowAll('rest', true);
-  if (W.spearOut) { if (proj.m.parent !== scene) scene.attach(proj.m); proj.st = null; proj.m.visible = false; W.spearOut = false; S.spearAt = null; N.fetch = null; P.h.spear.visible = true; W.returnedOvernight = true; }
+  if (spearsOutN()) { for (const q of PROJS) if (q.st) { if (q.m.parent !== scene) scene.attach(q.m); q.st = null; q.o = null; q.m.visible = false; S[spearKey(q)] = null; } spearOutSync(); N.fetch = null; P.h.spear.visible = true; W.returnedOvernight = true; }
   W.benchSpear = false; W.props = true;
   const put = (m, at, yaw, pitch, up = 0, roll = 0) => { if (!m || !at) return; scene.attach(m); m.scale.setScalar(1); m.rotation.set(pitch, yaw, roll, 'YXZ'); m.position.set(at.x, at.y + up, at.z); m.visible = true; };
   const rot = s?.rot || 0;
@@ -2890,14 +2976,14 @@ function wpnQUp() {
 // HUD chip (state changes only)
 function wpnHud() {
   const el = $('wpn'); if (!el) return;
-  const out = W.spearOut, key = [W.sel, W.st === 'drawn' || W.st === 'drawing', hasAxe(), hasSpear(), out, !!S.tools.flintaxe, !!S.tools.flintspear, out && spearWhere(), !!S.tools.bow, BOW.on, S.inv.arrow > 0].join();   // BOW
+  const out = W.spearOut, key = [W.sel, W.st === 'drawn' || W.st === 'drawing', hasAxe(), hasSpear(), out, !!S.tools.flintaxe, !!S.tools.flintspear, out && spearWhere(), spearsHeld(), spearsOwned(), !!S.tools.bow, BOW.on, S.inv.arrow > 0].join();   // BOW
   if (el.dataset.k === key) return; el.dataset.k = key;
   for (const s of el.querySelectorAll('[data-k]')) {
     const k = s.dataset.k; if (k === 'bow') continue;   // BOW: set below
     s.classList.toggle('cur', k === W.sel && !BOW.on); s.classList.toggle('off', !owns(k) || (k === 'spear' && out));
     s.classList.toggle('drawn', k === W.sel && (W.st === 'drawn' || W.st === 'drawing'));
     const n = s.querySelector('i');
-    if (n) n.textContent = k === 'spear' ? (out ? 'Spear' + (spearWhere() ? ' — ' + spearWhere() : ' — thrown') : S.tools.flintspear ? 'Flint spear' : 'Spear') : k === 'axe' ? (S.tools.flintaxe ? 'Flint axe' : 'Axe') : 'Fists';
+    if (n) n.textContent = k === 'spear' ? (out ? 'Spear' + (spearWhere() ? ' — ' + spearWhere() : ' — thrown') : (S.tools.flintspear ? 'Flint spear' : 'Spear') + (spearsOwned() > 1 ? ` ×${spearsHeld()}` : '')) : k === 'axe' ? (S.tools.flintaxe ? 'Flint axe' : 'Axe') : 'Fists';
   }
   const bs = el.querySelector('[data-k="bow"]');      // BOW: the bow's slot (key 5), lit while it is out
   if (bs) { bs.style.display = S.tools.bow ? '' : 'none'; bs.classList.toggle('cur', BOW.on); bs.classList.toggle('drawn', BOW.on); bs.classList.toggle('off', !(S.inv.arrow > 0)); }
@@ -2985,9 +3071,9 @@ function wpnVm(dt) {
 // G hooks
 function wpnState() {
   const par = (m) => (m.parent && m.parent.name?.startsWith('sock_') ? m.userData.slot : m.parent === scene ? 'world' : m.parent ? 'other' : null);
-  return { sel: W.sel, last: W.last, st: W.st, held: W.held, aim: W.aim && { t: W.aim.t, charge: W.aim.charge }, spearOut: W.spearOut, spearAt: S.spearAt, proj: proj.st,
-    parents: { spear: W.spearOut ? (proj.st === 'sena' ? 'sena' : 'out') : par(P.h.spear), axe: hasAxe() ? par(P.h.axe) : null, torch: S.tools.torch ? par(torch.root) : null },
-    vis: { spear: P.h.spear.visible, axe: P.h.axe.visible, torch: torch.root.visible, proj: proj.m.visible }, gripR: P.h.gripR, gripL: P.h.gripL, stW: W.stW, lhW: W.lhW };
+  return { sel: W.sel, last: W.last, st: W.st, held: W.held, aim: W.aim && { t: W.aim.t, charge: W.aim.charge }, spearOut: W.spearOut, spearAt: S.spearAt, proj: PROJS[0].st, projs: PROJS.map((q) => q.st), spearsHeld: spearsHeld(), spare: SPARE.visible,
+    parents: { spear: W.spearOut ? (PROJS[0].st === 'sena' ? 'sena' : 'out') : par(P.h.spear), axe: hasAxe() ? par(P.h.axe) : null, torch: S.tools.torch ? par(torch.root) : null },
+    vis: { spear: P.h.spear.visible, axe: P.h.axe.visible, torch: torch.root.visible, proj: PROJS[0].m.visible }, gripR: P.h.gripR, gripL: P.h.gripL, stW: W.stW, lhW: W.lhW };
 }
 
 // ---------- building ----------
@@ -3099,7 +3185,7 @@ function craft(r) {
   drawInv(); drawQuest(); save();
 }
 // Recipes the craft menu offers now: chapter reached, not yet owned (tools), and actually buildable in this build.
-const menuRecipes = () => RECIPES.filter((r) => reached(r.ch) && (r.place || r.item || r.up || !S.tools[r.id])
+const menuRecipes = () => RECIPES.filter((r) => reached(r.ch) && (r.place || r.item || r.up || !S.tools[r.id]) && (!r.need || r.need())   // SPEAR2: need = a prerequisite
   && !(r.place && !BUILD[r.id]) && !(r.up && S.home[r.id]));      // WP2: house upgrades show until built
 // WP2 home: the first brick house is "home" (village houses from the epilogue get no interior).
 const homeHouse = () => structs.find((s) => s.kind === 'house' && !s.village);
@@ -3318,7 +3404,8 @@ function horseFaced(p) {
 function findTarget() {
   const p = P.pos;
   if (ARCS.noTarget) return null;                    // ARC-A3: a staged story beat (the raid's end): no E target under the letterbox
-  if (!P.ride) { const bt = bowTarget(p); if (bt) return bt; }   // BOW: arrows to pick up
+  if (P.ride) { const st = wpnTarget(p) || bowTarget(p); if (st) return st; }   // RIDE-PICK: lean from the saddle for a spear or arrows
+  else { const bt = bowTarget(p); if (bt) return bt; }   // BOW: arrows to pick up
   const w4 = wp4Target(p); if (P.ride) return w4;     // WP4 horses: ride, feed, offer, tame; only "Dismount" while riding
   if (w4) { const ct = cmbTarget(p); if (ct) return ct; }   // WH: reviving a downed Sena always beats the horse
   if (w4 && horseFaced(p)) return w4;
@@ -11993,7 +12080,7 @@ function drawMini() {
   for (const ch of kids) friend(ch.pos.x, ch.pos.z, '#5fcf86', 3.2);   // FPP-world: Lio
   friend(N.pos.x, N.pos.z, '#ff7fae', 3.8);
   if (S.pin) put(S.pin.x, S.pin.z, 'pin', true);
-  if (S.spearAt) put(S.spearAt.x, S.spearAt.z, 'pin', false, 0.8);   // WPN the thrown spear
+  for (const a of [S.spearAt, S.spearAt2]) if (a) put(a.x, a.z, 'pin', false, 0.8);   // WPN the thrown spears
   // the quest: on the map, or on the rim pointing at it with its distance
   const qw = questAt();
   if (qw) {
@@ -12063,7 +12150,7 @@ function drawMap() {
   for (const c of kids) { const [x, y] = toMap(c.pos.x, c.pos.z); marker(g, x, y, 'kid', 1.3); label(x, y, c.k.name || 'Lio'); }   // FPP-world
   { const [x, y] = toMap(N.pos.x, N.pos.z); marker(g, x, y, 'sena', 1.4); label(x, y, 'Sena'); }
   if (S.pin) { const [x, y] = toMap(S.pin.x, S.pin.z); marker(g, x, y, 'pin', 1.7); }
-  if (S.spearAt) { const [x, y] = toMap(S.spearAt.x, S.spearAt.z); marker(g, x, y, 'pin', 0.8); label(x, y, 'Spear'); }   // WPN
+  for (const a of [S.spearAt, S.spearAt2]) if (a) { const [x, y] = toMap(a.x, a.z); marker(g, x, y, 'pin', 0.8); label(x, y, 'Spear'); }   // WPN
   const [px, py] = toMap(P.pos.x, P.pos.z), qw = questAt(), qm = qw && toMap(qw[0], qw[1]);
   { // FPP-world: place the labels; the player arrow and the quest diamond count as taken
     const taken = [[px - 13, py - 13, px + 13, py + 13]];
@@ -13682,7 +13769,7 @@ Object.assign(window.G, {
     charge(t) { if (W.aim) { W.aim.t = t; W.aim.charge = Math.min(1, t / 0.6); } return !!W.aim; },
     release: () => wpnRelease(), cancel: () => wpnCancelAim(),
     arc: () => ({ pts: Array.from({ length: ARC.n }, (_, i) => [arcPos[i * 3], arcPos[i * 3 + 1], arcPos[i * 3 + 2]]), hit: ARC.hit, end: ARC.end.toArray() }),
-    pickup: () => wpnPickup(), fetch() { if (!W.spearOut) return false; proj.m.getWorldPosition(_w1); N.fetch = { x: _w1.x, z: _w1.z, ph: 'go', t: 0 }; return true; },
+    pickup: () => { const q = PROJS.find((s) => s.st); if (q) { proj = q; wpnPickup(); } }, fetch() { const q = PROJS.find((s) => s.st === 'ground' || s.st === 'float'); if (!q) return false; q.m.getWorldPosition(_w1); N.fetch = { x: _w1.x, z: _w1.z, ph: 'go', t: 0, i: q.i }; return true; }, PROJS,
     fit(kind, slot, v = {}) { const f = FIT[kind][slot]; Object.assign(f, v); for (const h of [P.h, N.h]) for (const m of [h.spear, h.axe, torch.root, senaBasket]) if (m.userData.kind === kind && m.userData.slot === slot && Object.values(h.sock).includes(m.parent)) h.place(m, slot); return JSON.stringify(f); },
     fitDump: () => JSON.stringify(FIT),
     axes(on = true) { for (const h of [P.h, N.h]) for (const k in h.sock) { const sk = h.sock[k]; let a = sk.getObjectByName('wpnAxes'); if (on && !a) { a = new THREE.AxesHelper(0.15); a.name = 'wpnAxes'; a.material.depthTest = false; a.renderOrder = 9; sk.add(a); } if (a) a.visible = on; } },
