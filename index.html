@@ -100,6 +100,11 @@
   #hud > * { transition: opacity 0.6s; }
   #hud.cinew #quest, #hud.cinew #bars, #hud.cinew #help, #hud.cinew #prompt, #hud.cinew #inv, #hud.cinew #wpn, #hud.cinew #clock, #hud.cinew #buff, #hud.cinew #fps, #hud.cinew #cross,
   #hud.cine #quest, #hud.cine #bars, #hud.cine #help, #hud.cine #prompt, #hud.cine #toasts, #hud.cine #inv, #hud.cine #wpn, #hud.cine #clock, #hud.cine #buff, #hud.cine #fps, #hud.cine #cross { opacity: 0; }
+  /* KILLCAM: a soft vignette and the skip hint while the arrow cam runs (the letterbox comes from .cine) */
+  #kchint { position: absolute; left: 50%; bottom: 13vh; transform: translateX(-50%); font-size: 12px; letter-spacing: 1px; color: rgba(255, 245, 225, 0.6); opacity: 0; transition: opacity 0.4s; pointer-events: none; z-index: 6; }
+  #hud.killcam #kchint { opacity: 1; transition-delay: 0.6s; }
+  #kcvig { position: fixed; inset: 0; pointer-events: none; opacity: 0; transition: opacity 0.35s; background: radial-gradient(ellipse at center, transparent 55%, rgba(0, 0, 0, 0.55)); z-index: 1; }
+  #hud.killcam #kcvig { opacity: 1; }
   #craft { position: fixed; inset: 0; display: none; place-content: center; background: rgba(0, 0, 0, 0.45); }
   #craft.on { display: grid; }
   /* CRAFT-UI: cards with a drawn icon, material chips (click one to pin where to find it), kind tabs */
@@ -376,7 +381,7 @@
 </style>
 </head>
 <body>
-<div id="hud">
+<div id="hud"><div id="kcvig"></div><div id="kchint">Click or press any key to skip</div>
   <div id="quest" class="panel"><div id="chapter" class="serif"></div><div id="goals"></div></div>
   <div id="clock" class="panel"></div>
   <div id="matchip" class="panel"></div>
@@ -431,6 +436,7 @@
   <div class="tabs" id="pause-tabs"><button data-t="game" class="cur">Game</button><button data-t="controls">Controls</button><button data-t="video">Video</button><button data-t="audio">Audio</button><button data-t="content">Content</button></div>
   <!-- MAT: rows tagged data-tab; existing rows are sorted into tabs by their input id (mature foundation, bindSettings) -->
   <div class="row" data-tab="game"><span>Difficulty<small id="opt-diff-note">Story and Survivor can be swapped at any time</small></span><select id="opt-diff"><option value="story">Story</option><option value="survivor">Survivor</option><option value="hardcore">Hardcore</option></select></div>
+  <div class="row" data-tab="game"><span>Arrow cam<small>Slow motion behind the arrow when it strikes game. Any key skips it</small></span><select id="opt-kc"><option value="every">Every hit</option><option value="long">Long shots (15 m+)</option><option value="off">Off</option></select></div>
   <div class="row" data-tab="game"><span>Timed choices<small>Off gives you all the time you need to decide</small></span><input id="opt-ctimer" type="checkbox" /></div>
   <div class="row" data-tab="game"><span>Content notice<small>Read the 21+ notice again, or switch to toned-down mode</small></span><button id="opt-notice" class="small">Show</button></div>
   <div class="row" data-tab="game"><span class="credits">Credits: models and animations by Quaternius (Universal Base Characters, Universal Animation Library 1 &amp; 2, Ultimate Animated Animals incl. horses and bull), CC0 1.0. Running Brown Bear by Google Data Arts Team, CC-BY 3.0, via poly.pizza (poly.pizza/m/Coppphok4P).</span><span></span></div>

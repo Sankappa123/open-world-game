@@ -40,7 +40,7 @@ npm start       # production: serves dist/ and the save API on one port
 | `save.js`, `quality.js`, `util.js` | Saving, graphics quality, helpers |
 | `icons.js` | Hand-drawn SVG icons for every item and recipe (`icon(key)`, `iconKey(recipe)`), used by the craft menu and the bag |
 
-`main.js` is large. Find code by its section tags: WP1–WP6 (expansion), WPN (weapons), RST (rest and sleep), FPP (first person), MAT, GORE, SURV, CMB, ARC, ROM, MUS, HUD-POLISH (goal progress counts, the opt-in fps readout), SPEAR2 (two spears: `PROJS`, `proj` is the one being handled, `W.spearOut` = none left to throw; `SPARE` is the second one crossed on the back), RIDE-PICK (spear and arrows from the saddle), GLINT (the twinkle over thrown spears and loose arrows), CRAFT-UI (the Tab menu: cards with icons, kind tabs, material chips that pin the nearest source via `matSource`; a material pin carries `label` and `k`), MINIMAP (the minimap and map: pixel-density-aware canvases, the 1024 px map base, building glyphs, threats, the quest distance, the cave plan, N or - / = to zoom).
+`main.js` is large. Find code by its section tags: WP1–WP6 (expansion), WPN (weapons), RST (rest and sleep), FPP (first person), MAT, GORE, SURV, CMB, ARC, ROM, MUS, HUD-POLISH (goal progress counts, the opt-in fps readout), SPEAR2 (two spears: `PROJS`, `proj` is the one being handled, `W.spearOut` = none left to throw; `SPARE` is the second one crossed on the back), RIDE-PICK (spear and arrows from the saddle), GLINT (the twinkle over thrown spears and loose arrows), KILLCAM (the arrow cam: `kcPredict` runs the arrow's flight ahead on the loose, `kcStep` slows time from the frame loop, `kcCamera` owns the camera; setting `arrowCam`; tests that shoot call `G.killcam.mode('off')`), CRAFT-UI (the Tab menu: cards with icons, kind tabs, material chips that pin the nearest source via `matSource`; a material pin carries `label` and `k`), MINIMAP (the minimap and map: pixel-density-aware canvases, the 1024 px map base, building glyphs, threats, the quest distance, the cave plan, N or - / = to zoom).
 
 Caves (`CAVE-LOOK` in `caves.js` and `world.js`):
 - The dome's wall shape lives in two places that must agree: the JS that builds the mesh and `CAVE_DOME_GLSL`, which the terrain shader uses to cut the hillside out of the hollow. Change `DOME_L` or `DOME_SOFT` and both follow.
@@ -61,7 +61,7 @@ The models in `public/models/` are CC0. Credits are in `public/models/CREDITS.tx
 - The scripted runs are in `tools/test/steps/`:
   - `play.json`: the full story;
   - `play_survivor.json`: Survivor mode;
-  - `bow.json`, `spear2.json` (two spears, the glint, picking up from the saddle), `old.json` (old-save migration), `epi.json`, `ford.json`, `shots.json`.
+  - `bow.json`, `killcam.json` (the arrow cam), `spear2.json` (two spears, the glint, picking up from the saddle), `old.json` (old-save migration), `epi.json`, `ford.json`, `shots.json`.
 - Never click "New story" without `/api/` interception. Never touch the real save unless the user asks.
 - When several agents run in parallel, give each its own Vite port and Chrome debug (CDP) port. On the M4 Air, run about 2 agents at a time.
 

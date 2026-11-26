@@ -2197,9 +2197,9 @@ function wpnTarget(p) {
 function wpnSpearTick(dt) {
   if (!spearsOutN()) return;
   W.spearLeftT += dt;
-  for (const q of PROJS) if (q.st) { proj = q; spearTickOne(); }
+  for (const q of PROJS) if (q.st) { proj = q; spearTickOne(dt); }
 }
-function spearTickOne() {
+function spearTickOne(dt) {
   if (proj.st === 'animal') {
     proj.t += dt; const o = proj.o;
     if (!o || !o.root.parent || !o.root.visible || o.looted || (o.state === 'live' && proj.t > 1.2)) wpnDropSpear(o);
@@ -2281,6 +2281,7 @@ function bowLoose() {
   wpnCancelAim(); P.cool = 0.35; W.punch = 0.08;
   A.hit(220, 0.08, 0.3); A.hit(1400, 0.05, 0.12);   // twang and the whoosh
   bowTrim(); drawInv();
+  kcMaybe(ar);                                       // KILLCAM: a strike on game: follow the arrow in
 }
 // Full draw held past ~4 s: stamina drains, the aim starts to shake (and the shot strays); spent, the string comes down.
 function bowHold(dt) {
@@ -2459,7 +2460,7 @@ function bowTick(dt) {
         else if (hit) { ar.skip = hit; if (ar.tip.y < getHeight(ar.tip.x, ar.tip.z) + 0.05) bowLandGround(ar); }   // GORE: a near miss flies on
         else if (++ar.steps > 600) bowRemove(ar);
       }
-      if (ar.st === 'air') bowPoseArrow(ar);
+      if (ar.st === 'air') { bowPoseArrow(ar); if (KC.on && KC.ar === ar) ar.m.position.addScaledVector(ar.vel, ar.acc); }   // KILLCAM: between the 1/60 s steps (slow motion)
     } else if (ar.st === 'animal') {
       const o = ar.o;
       if (!o || !o.root.parent || !o.root.visible || o.looted) {   // the body is gone: the arrow falls at its feet
@@ -2487,7 +2488,7 @@ const glints = [...Array(GLINT_N)].map(() => { const s = new THREE.Sprite(glintM
 const _glL = [];
 function glintTick() {
   _glL.length = 0;
-  const cam = camera.position, seen = playing && !camShot;
+  const cam = camera.position, seen = playing && !camShot && !KC.on;   // KILLCAM: no locator stars in the shot
   if (seen) {
     for (const q of PROJS) if (q.st === 'ground' || q.st === 'float' || (q.st === 'animal' && q.o?.state !== 'live')) { q.m.updateMatrixWorld(true); q.m.localToWorld(_gl.set(0, 0, -0.55)); _glL.push([_gl.x, _gl.y + 0.18, _gl.z, q.i * 0.41, 1.25]); }   // up the shaft from the middle
     for (const a of BOW.arrows) if (a.st === 'ground' || (a.st === 'animal' && a.o?.state !== 'live')) { a.m.updateMatrixWorld(true); a.m.localToWorld(_gl.set(0, 0, -ARROW_LEN * 0.8)); _glL.push([_gl.x, _gl.y + 0.12, _gl.z, (a.ph ??= rand()), 1]); }   // by the fletching
@@ -2505,6 +2506,91 @@ function glintTick() {
     s.material.rotation = clock * 0.35 + L[3] * 3;
     s.visible = s.material.opacity > 0.01;
   }
+}
+// ----- KILLCAM: the arrow cam. On the loose, the arrow's flight is run ahead (the same steps, the same bone-accurate hit
+// test); when it will strike game (not raiders) from KC_MIN metres or more, time slows and the camera rides behind the
+// arrow, swings out to the side as it closes, holds on the strike, then watches the animal go down before play
+// resumes. About three seconds; any key or click skips it. Settings > Game: Arrow cam (every hit / long shots / off).
+const KC = { on: false, ar: null, o: null, ph: '', t: 0, k: 1, H: new THREE.Vector3(), d: new THREE.Vector3(), s: new THREE.Vector3(), L: 1, next: 0, fov: 60, kFly: 0.2 };
+const KC_MIN = () => (settings.arrowCam === 'long' ? 15 : 8);
+const _kcP = new THREE.Vector3(), _kcV = new THREE.Vector3(), _kcT = new THREE.Vector3(), _kcA = new THREE.Vector3(), _kcB = new THREE.Vector3(), _kcC = new THREE.Vector3(), _kcLk = new THREE.Vector3(), _kcCam = new THREE.Vector3();
+function kcPredict(ar) {                             // where and when this arrow will strike game, or null
+  const pos = _kcP.copy(ar.pos), vel = _kcV.copy(ar.vel), tip = _kcT.copy(ar.tip.lengthSq() ? ar.tip : ar.pos), f = { pos, vel, tip, noOb: ar.noOb || 0 };
+  let skip = null;
+  for (let i = 0; i < 360; i++) {
+    const hit = bowStep(pos, vel, tip, f);
+    if (!hit) continue;
+    if (hit === 'obst' || hit === 'ground') return null;
+    if (hit !== skip && !hit.foe && goreArrowAim(f, hit)) return { o: hit, t: (i + 1) * SP_DT, pt: (f.hitPt || tip).clone() };
+    skip = hit;
+    if (tip.y < getHeight(tip.x, tip.z) + 0.05) return null;
+  }
+  return null;
+}
+function kcMaybe(ar) {
+  if ((settings.arrowCam || 'every') === 'off' || KC.on || clock < KC.next || camShot || busy || W.props || paused || menuOpen) return;
+  const hit = kcPredict(ar); if (!hit || hit.o.state !== 'live') return;
+  const L = Math.hypot(hit.pt.x - ar.pos.x, hit.pt.y - ar.pos.y, hit.pt.z - ar.pos.z); if (L < KC_MIN()) return;
+  Object.assign(KC, { on: true, ar, o: hit.o, ph: 'fly', t: 0, L, fov: camera.fov });
+  KC.H.copy(hit.pt); KC.d.copy(ar.vel).normalize();
+  KC.kFly = clamp(hit.t / 1.5, 0.08, 0.45);          // the flight takes about 1.5 s on screen, near or far
+  // the side the camera swings out to: the lower ground of the two, so it never ends up inside a slope
+  const sx = -KC.d.z, sz = KC.d.x, n = Math.hypot(sx, sz) || 1, hA = getHeight(KC.H.x + (sx / n) * 2.6, KC.H.z + (sz / n) * 2.6), hB = getHeight(KC.H.x - (sx / n) * 2.6, KC.H.z - (sz / n) * 2.6);
+  KC.s.set(sx / n, 0, sz / n).multiplyScalar(hA <= hB ? 1 : -1);
+  cine(true); $('hud').classList.add('killcam');
+  A.hit(320, 0.12, 0.9);                             // the drawn-out whoosh
+}
+function kcEnd() {
+  if (!KC.on) return;
+  KC.on = false; KC.k = 1; KC.next = clock + 2.5; KC.ar = KC.o = null;
+  cine(false); $('hud').classList.remove('killcam');
+  camera.fov = KC.fov; camera.updateProjectionMatrix();
+}
+const kcSm = (x) => { x = clamp(x, 0, 1); return x * x * (3 - 2 * x); };
+// Advances the cam in real time; returns the time scale for the frame (1 when off).
+function kcStep(raw) {
+  if (!KC.on) return 1;
+  if (!playing || camShot || P.downed > 0 || MAT.dead) { kcEnd(); return 1; }
+  KC.t += raw;
+  const ar = KC.ar, o = KC.o;
+  if (KC.ph === 'fly') {
+    const A2 = ar.m.position, rem = A2.distanceTo(KC.H), w = kcSm((KC.L * 0.38 - rem) / (KC.L * 0.38));
+    KC.k = KC.kFly + (0.045 - KC.kFly) * w;           // eases from the flight's pace to a crawl in the last third
+    if (ar.st === 'animal') { KC.ph = 'hit'; KC.t = 0; A.hit(140, 0.3, 0.5); A.tone(68, 0.7, 0.1); trauma = Math.min(1, trauma + 0.25); }
+    else if (ar.st !== 'air' || ar.gone || KC.t > 6) { KC.ph = 'miss'; KC.t = 0; }
+  } else if (KC.ph === 'hit') { KC.k = 0.03; if (KC.t > 0.42) { KC.ph = 'after'; KC.t = 0; } }
+  else if (KC.ph === 'after') { KC.k = 0.22 + 0.5 * kcSm(KC.t / 1.6); if (KC.t > 1.7) kcEnd(); }
+  else if (KC.ph === 'miss') { KC.k = 0.35; if (KC.t > 0.5) kcEnd(); }
+  return KC.k;
+}
+// The camera while it runs (updateCamera hands over to this).
+function kcCamera() {
+  const ar = KC.ar, o = KC.o; if (!ar || !o) { kcEnd(); return; }
+  P.h.root.visible = true;
+  // riding just behind and above the arrow; the side spot stands beside the strike a little ahead of it, so the arrow
+  // flies in across the frame. Both at least ~1 m over the ground (lower, the grass cards show as streaks).
+  const chase = (a) => _kcA.copy(a).addScaledVector(KC.d, -1.6).addScaledVector(KC.s, 0.18).add(_kcC.set(0, 0.16, 0));
+  const side = _kcB.copy(KC.H).addScaledVector(KC.s, 2.6).addScaledVector(_kcC.set(KC.d.x, 0, KC.d.z).normalize(), 0.35);
+  side.y = Math.max(KC.H.y + 0.35, getHeight(side.x, side.z) + 1.0);
+  let fov = 46;
+  if (KC.ph === 'fly' || KC.ph === 'miss') {
+    const A2 = ar.m.position, rem = A2.distanceTo(KC.H), w = KC.ph === 'miss' ? 1 : kcSm((KC.L * 0.38 - rem) / (KC.L * 0.38));
+    chase(A2); _kcCam.copy(_kcA).lerp(side, w);
+    _kcLk.copy(A2).addScaledVector(KC.d, 8).lerp(KC.ph === 'miss' ? A2 : _kcC.copy(A2).lerp(KC.H, 0.7), w);
+    fov = 46 - 12 * w;
+  } else {
+    // the strike, then a slow quarter-orbit round the animal as it goes down, easing back a little
+    const c = o.root.position, ty = c.y + 0.55 * (o.root.scale.x || 1), k = KC.ph === 'hit' ? 0 : kcSm(KC.t / 1.7);
+    const bx = side.x - c.x, bz = side.z - c.z, r0 = Math.hypot(bx, bz) || 2.4, a0 = Math.atan2(bx, bz), a = a0 + 0.55 * k * Math.sign(KC.s.x * KC.d.z - KC.s.z * KC.d.x || 1), r = r0 + 1.1 * k;
+    _kcCam.set(c.x + Math.sin(a) * r, 0, c.z + Math.cos(a) * r);
+    _kcCam.y = Math.max(side.y + 0.3 * k, getHeight(_kcCam.x, _kcCam.z) + 1.0);
+    _kcLk.copy(KC.H).lerp(_kcC.set(c.x, ty, c.z), KC.ph === 'hit' ? 0 : kcSm(KC.t / 0.6));
+    if (KC.ph === 'hit') _kcCam.lerp(KC.H, 0.12 * kcSm(KC.t / 0.42));   // a small push-in on the strike
+    fov = 34 + 8 * k;
+  }
+  _kcCam.y = Math.max(_kcCam.y, getHeight(_kcCam.x, _kcCam.z) + (KC.ph === 'fly' ? 0.9 : 1.0));
+  camPos.copy(_kcCam); camera.position.copy(_kcCam); camera.lookAt(_kcLk);
+  if (Math.abs(camera.fov - fov) > 0.05) { camera.fov = fov; camera.updateProjectionMatrix(); }
 }
 // E: pick up every arrow within 2.5 m (in the ground, or in a body that is no longer alive).
 const bowNear = (p) => BOW.arrows.filter((a) => (a.st === 'ground' || (a.st === 'animal' && a.o?.state !== 'live')) && a.m.getWorldPosition(_bC) && Math.hypot(_bC.x - p.x, _bC.z - p.z) < (P.ride ? 2.8 : 2.5) && Math.abs(_bC.y - p.y) < (P.ride ? 4.5 : 2.5));   // RIDE-PICK: a longer reach from the saddle
@@ -12259,6 +12345,7 @@ document.addEventListener('fullscreenchange', () => { $('opt-full').checked = !!
 const GAME_KEYS = /^(Key[WASDEFCVGMNQBTRHXIZ]|Minus|Equal|Digit[1-5]|Space|ShiftLeft|ShiftRight|ControlLeft|ControlRight|AltLeft|Tab|Escape|Arrow(Up|Down|Left|Right))$/;   // MAT: I body, Z focus, AltLeft dodge
 addEventListener('keydown', (e) => {
   if (!playing) return;
+  if (KC.on) { if (!e.repeat) kcEnd(); e.preventDefault(); return; }   // KILLCAM: any key skips it
   if (GAME_KEYS.test(e.code) && !(e.ctrlKey && /^Key[RL]$/.test(e.code))) e.preventDefault();   // keep browser shortcuts out of the game (reload stays)
   if (matKey(e)) return;                             // MAT: the choose() panel (1-4, E, Esc) and the downed/death input lock
   if (rstKey(e)) return;                             // RST: the rest menu (1/2/E/Esc) and skipping the sequence
@@ -12306,6 +12393,7 @@ addEventListener('keyup', (e) => {
 });
 addEventListener('blur', () => { for (const k in keys) keys[k] = false; bagOpen(false); });
 canvas.addEventListener('mousedown', (e) => {
+  if (KC.on) { kcEnd(); return; }                    // KILLCAM: a click skips it
   if (!playing || menuOpen || busy || paused || P.downed > 0) return;   // MAT: no attacks while downed
   if (!locked()) { lockHintPing(); lock(); if (!lockBroken) return; }   // the first click only captures the mouse (MAT-SV: and shows the hint again)
   if (BOW.on && !placing && (e.button === 2 || (e.button === 0 && W.aim))) { if (e.button === 2) bowAimStart(); else bowLoose(); return; }   // BOW
@@ -12742,6 +12830,7 @@ function updateCamera(dt, title) {
     camera.position.copy(camPos); camera.lookAt(0, getHeight(0, 0) + 1.2, 2);
     return;
   }
+  if (KC.on) { kcCamera(); return; }                 // KILLCAM
   // WP2 rest shot: a fixed view from the doorway onto the bed, in third person
   if (camShot) {
     if (camShot.dolly || camShot.release) { P.h.root.visible = true; rstCamera(dt); return; }   // RST bedside dolly and the release behind Aro
@@ -12951,6 +13040,8 @@ const FPI = { spear: fitMat('spear', 'hand')?.invert(), axe: fitMat('axe', 'hand
   bob.oninput = () => { settings.fppBob = +bob.value; show(); saveSettings(); };
   fov.oninput = () => { settings.fov = +fov.value; show(); saveSettings(); };
   rm.onchange = () => { settings.reduceMotion = rm.checked; saveSettings(); };
+  const kc = $('opt-kc');                            // KILLCAM
+  if (kc) { kc.value = settings.arrowCam || 'every'; kc.onchange = () => { settings.arrowCam = kc.value; saveSettings(); }; }
   const fps = $('opt-fps');                          // HUD-POLISH: the fps readout is opt-in (it sat over the scene at the right edge)
   if (fps) { fps.checked = !!settings.showFps; $('hud').classList.toggle('showfps', fps.checked); fps.onchange = () => { settings.showFps = fps.checked; $('hud').classList.toggle('showfps', fps.checked); saveSettings(); }; }
 })();
@@ -13680,7 +13771,7 @@ warmShaders();                                       // SAVE-PERF: compile behin
 let last = performance.now(), frames = 0, ftAcc = 0, ftN = 0, fpsShown = 0, prAt = 0;   // SAVE-PERF prAt: last resolution step
 function frame(now) {
   requestAnimationFrame(frame);
-  const raw = Math.max(0, (now - last) / 1000), dt = paused ? 0 : Math.min(0.05, raw) * cmbTimeK(raw);   // CMB slow motion (parry, perfect dodge, finisher) · MUS fix: a stale first rAF stamp gave raw < 0 (clock went to -18 s)
+  const raw = Math.max(0, (now - last) / 1000), dt = paused ? 0 : Math.min(0.05, raw) * cmbTimeK(raw) * kcStep(Math.min(0.05, raw));   // KILLCAM slow motion   // CMB slow motion (parry, perfect dodge, finisher) · MUS fix: a stale first rAF stamp gave raw < 0 (clock went to -18 s)
   last = now; clock += dt;
   hitStop = Math.max(0, hitStop - raw);              // WPN hitstop runs in real time
   // Adaptive resolution: nudge the internal render size inside the preset's range to hold a smooth frame rate.
@@ -13731,7 +13822,7 @@ function frame(now) {
   fppHud();                                          // FHW-r4: first-person HUD (stowed pack, F1 chip and fps up top)
   renderer.render(scene, camera);
   fppPost();                                         // FPP
-  if (vmOn) { renderer.autoClear = false; renderer.clearDepth(); renderer.render(vmScene, vmCam); renderer.autoClear = true; }   // WPN
+  if (vmOn && !KC.on) { renderer.autoClear = false; renderer.clearDepth(); renderer.render(vmScene, vmCam); renderer.autoClear = true; }   // WPN
 }
 requestAnimationFrame(frame);
 window.THREE = THREE; window.NAT = NAT; window.DEBUG = DEBUG;
@@ -13911,7 +14002,7 @@ Object.assign(window.G, {
     voices: () => MUS.m?.voices() ?? 0, playing: () => MUS.m?.state ?? null, duck: () => (MUS.m ? +MUS.m.duckNode.gain.value.toFixed(2) : null), log: () => MUS.m?.M.log.slice() ?? [], snap: musicSnap, why: () => MUS.why,
   },
 });
-Object.assign(window.G, { bow: { toggle: bowToggle, aim: bowAimStart, BOW, BOWFP, BOWC, bowMesh, quiverMesh, rocky: bowRocky,   // BOW-FPP hooks: fp(), give(), shoot(charge, yaw, pitch), view(v)
+Object.assign(window.G, { killcam: { KC, mode(m) { settings.arrowCam = m; return m; }, end: () => kcEnd(), predict: (ar) => kcPredict(ar) }, bow: { toggle: bowToggle, aim: bowAimStart, BOW, BOWFP, BOWC, bowMesh, quiverMesh, rocky: bowRocky,   // BOW-FPP hooks: fp(), give(), shoot(charge, yaw, pitch), view(v)
   fp: () => { const v = (o) => { o.updateWorldMatrix(true, false); const w = new THREE.Vector3().setFromMatrixPosition(o.matrixWorld).project(vmCam); return [+w.x.toFixed(3), +w.y.toFixed(3)]; }; return { on: BOWFP.on, bow: vmBow.visible, nock: vmNockA.visible, arms: AR.root.visible, grip: v(vmBow), tip: vmNockA.visible ? v(vmNockA) : null, hr: v(AR.bones.hand_r), hl: v(AR.bones.hand_l), nockEnd: vmNockA.visible ? v(vmNockA.clone().translateZ(-ARROW_LEN)) : null, gapL: BOWFP.wantL ? +AR.bones.hand_l.getWorldPosition(new THREE.Vector3()).distanceTo(BOWFP.wantL).toFixed(3) : null, gapR: BOWFP.wantR ? +AR.bones.hand_r.getWorldPosition(new THREE.Vector3()).distanceTo(BOWFP.wantR).toFixed(3) : null }; },
   give(n = 24) { S.tools.bow = S.tools.quiver = true; S.inv.arrow = n; drawInv(); if (!BOW.on) bowToggle(); return BOW.on; },
   view(v) { view = v; camPitch = clamp(camPitch, pitchMin(), fppPitchMax()); return view; },
