@@ -4,7 +4,7 @@
 //
 // CONTENT GUARDRAILS (spec §2 as updated by §12; binding on every package):
 // - Romance is strictly non-explicit: hand-holding, embrace, kiss, resting together clothed. Intimacy cuts or fades to
-//   black at the embrace, then the next morning. No sex scenes, sexual sounds/text, nudity, undressing or underwear meshes.
+//   black at the embrace, then the next morning.
 //   Romance only between Aro and Sena, both adults; never while a child is within 15 m or awake in the house.
 // - No sexual violence or threat of it, anywhere. Korr wants Sena as a HEALER, never anything else.
 // - Children (Lio, Pell, any child) are never harmed, targeted, endangered on screen or shown dead; no gore near them.

@@ -122,7 +122,7 @@ export function makeHuman({ female = false, light = false, fair = false, pretty 
   const kid = child ? childBody(model, body, bones, CHILD[child] || CHILD.girl) : null;   // CHILD: proportions + clothes, before the scale
   if (pretty && who === 'female' && !child) senaFigure(body, bones);   // SENA-FACE: a slender, toned figure, before the clothes are cut to it
   const dObj = dress && typeof dress === 'object' ? dress : null;   // SENA-LOOK: { color, style: 'twopiece' }
-  const clothes = !child && dress !== false ? adultDress(model, body, bones, who, dObj ? dObj.color : typeof dress === 'number' ? dress : who === 'female' ? 0x7d5c40 : 0x6a5038, dObj ? dObj.style : null) : null;   // ADULT-DRESS: never the base mesh's underwear
+  const clothes = !child && dress !== false ? adultDress(model, body, bones, who, dObj ? dObj.color : typeof dress === 'number' ? dress : who === 'female' ? 0x7d5c40 : 0x6a5038, dObj ? dObj.style : null, !!(fair && pretty && lib.fairImg)) : null;   // ADULT-DRESS: never the base mesh's underwear
   if (fair && who === 'female' && !child && lib.fairImg) { body.userData.skinMap0 = body.userData.skinMap0 || body.material.map; body.material.map = senaFairSkin(lib.fairImg); }   // SENA-FACE: after the dress (its bra cover reads the base map)
   const grip = sock.hand;
   const spear = makeSpear(), axe = makeAxe();
@@ -794,8 +794,8 @@ function weave() {
 // UV seams), the eyes are kept, and a child's face is painted: rosy cheeks, faint fine brows, a small closed mouth.
 // SENA-FACE: Sena's fair skin and a soft, pretty face, painted on her own copy of the light female skin (the user's
 // brief: fair, not dark; a cute face). Same UV layout as the base map, so the body is unchanged. The base mesh's painted
-// bra and brief (dark, grainy) are repainted hide brown everywhere outside the face, as the dark map's are (the hide
-// shells cover them; this keeps any texel that shows hide). Then a touch lighter overall, and on the face: lined upper lids with a small lash wing, rosy cheeks and full rosy lips with a highlight. Face texels (1024 map):
+// bra and brief (dark, grainy) are filled in with the skin round them everywhere outside the face, so the band can sit
+// lower than the painted bra (a neckline) and only skin shows above it. Then a touch lighter overall, and on the face: lined upper lids with a small lash wing, rosy cheeks and full rosy lips with a highlight. Face texels (1024 map):
 // eyes about (132,182) and (244,182), nose tip (187,232), lips centred (187,270).
 // SENA-FACE: her face, reshaped on her own copy of the body geometry. The face texels say where each vertex is (the
 // same map as senaFairSkin): eyes about (132,182) and (244,182), nose (187,230), lips (187,268), chin below 300.
@@ -909,7 +909,7 @@ function senaFigure(body, bones) {
       for (let i = 0; i < n; i++) {
         w.fromBufferAttribute(p, i).applyMatrix4(M);
         const d = w.distanceTo(c); if (d > 0.1 || w.z < c.z - 0.015 || Math.sign(w.x - cx) !== side) continue;
-        const k = 0.1 * sm(1 - d / 0.1) * sm((w.z - c.z + 0.015) / 0.03);
+        const k = 0.14 * sm(1 - d / 0.1) * sm((w.z - c.z + 0.015) / 0.03);
         w.sub(c).multiplyScalar(1 + k).add(c); w.applyMatrix4(Mi); p.setXYZ(i, w.x, w.y, w.z);
       }
     }
@@ -935,11 +935,30 @@ function senaFairSkin(img) {
   const S = 1024, cv = document.createElement('canvas'); cv.width = cv.height = S;
   const g = cv.getContext('2d', { willReadFrequently: true });
   g.drawImage(img, 0, 0, S, S);
-  const id = g.getImageData(0, 0, S, S), px = id.data;
+  const id = g.getImageData(0, 0, S, S), px = id.data, hole = new Uint8Array(S * S);
   for (let y = 0; y < S; y++) for (let x = 0; x < S; x++) {
     if (x < 400 && y < 340) continue;                // the face: its own darks are eyes and brows
-    const o = (y * S + x) * 4; if (px[o] + px[o + 1] + px[o + 2] < 300) { px[o] = 86; px[o + 1] = 58; px[o + 2] = 38; }
+    const o = (y * S + x) * 4; if (px[o] + px[o + 1] + px[o + 2] < 300) hole[y * S + x] = 1;
   }
+  for (let it = 0; it < 4; it++) {                   // and the paint's grey lace edge: the mask grown 4 px
+    const grow = [];
+    for (let y = 1; y < S - 1; y++) for (let x = 1; x < S - 1; x++) { if (hole[y * S + x]) continue; if (hole[y * S + x - 1] || hole[y * S + x + 1] || hole[(y - 1) * S + x] || hole[(y + 1) * S + x]) grow.push(y * S + x); }
+    for (const j of grow) hole[j] = 1;
+  }
+  // the base mesh's painted bra and brief are filled in with the skin round them (grown inward a ring at a time), so
+  // wherever her hide does not reach, skin shows, never painted underwear
+  for (let pass = 0; pass < 80; pass++) {
+    let left = 0; const fill = [];
+    for (let y = 1; y < S - 1; y++) for (let x = 1; x < S - 1; x++) {
+      if (!hole[y * S + x]) continue; left++;
+      let r = 0, gg = 0, b = 0, c = 0;
+      for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) { const j = (y + dy) * S + x + dx; if (hole[j]) continue; const o = j * 4; r += px[o]; gg += px[o + 1]; b += px[o + 2]; c++; }
+      if (c >= 2) fill.push(y * S + x, r / c, gg / c, b / c);
+    }
+    for (let q = 0; q < fill.length; q += 4) { const j = fill[q], o = j * 4; px[o] = fill[q + 1]; px[o + 1] = fill[q + 2]; px[o + 2] = fill[q + 3]; hole[j] = 0; }
+    if (!left || !fill.length) break;
+  }
+  for (let j = 0; j < S * S; j++) if (hole[j]) { const o = j * 4; px[o] = 196; px[o + 1] = 150; px[o + 2] = 120; }   // (any left: plain skin)
   g.putImageData(id, 0, 0);
   g.globalCompositeOperation = 'screen'; g.fillStyle = 'rgba(255, 232, 214, 0.16)'; g.fillRect(0, 0, S, S);   // a little fairer
   { const fg = g.createRadialGradient(187, 205, 30, 187, 205, 190); fg.addColorStop(0, 'rgba(255, 236, 222, 0.16)'); fg.addColorStop(1, 'rgba(255, 236, 222, 0)'); g.fillStyle = fg; g.fillRect(0, 0, 400, 400); }   // the face a shade lighter (it sits in the hair's shade)
@@ -1037,7 +1056,7 @@ function hideTex() {                                                   // a soft
   hideT = new THREE.CanvasTexture(c); hideT.wrapS = hideT.wrapT = THREE.RepeatWrapping; hideT.repeat.set(3, 3); hideT.colorSpace = THREE.SRGBColorSpace;
   return hideT;
 }
-function adultDress(model, body, bones, who, color, style = null) {
+function adultDress(model, body, bones, who, color, style = null, fairNeck = false) {
   model.updateMatrixWorld(true); body.updateWorldMatrix(true, false);
   const two = style === 'twopiece' && who === 'female';   // SENA-LOOK: a hide breast-band and a short hip-slung skirt (the user's choice for Sena; non-explicit)
   const cache = (DRESS_GEO[who + (two ? ':two' : '')] ||= {});
@@ -1058,7 +1077,7 @@ function adultDress(model, body, bones, who, color, style = null) {
     if (!g) {
       const TOP = two ? /^(spine_0[23]|clavicle_[lr])$/ : /^(pelvis|spine_0[123]|clavicle_[lr]|upperarm_[lr])$/, yHipCut = bw('thigh_l').y - 0.04;
       const s2 = bw('spine_02').y, s3 = bw('spine_03').y, nk = bw('neck_01').y;
-      const yLo = s2 + (s3 - s2) * 0.6, yHi = s3 + (nk - s3) * 0.36;   // SENA-LOOK: the band covers the bust only; bare shoulders and midriff (SENA-FACE: a little smaller; the bra cover below still hides every painted texel)
+      const yLo = s2 + (s3 - s2) * 0.6, yHi = s3 + (nk - s3) * (two && fairNeck ? 0.325 : 0.36);   // SENA-LOOK: the band covers the bust only; bare shoulders and midriff (SENA-FACE: a little smaller; the bra cover below still hides every painted texel)
       const keep = (i) => TOP.test(main[i]) && !(main[i] === 'pelvis' && wy[i] < yHipCut) && (!two || (wy[i] > yLo && wy[i] < yHi));
       const off = (i) => (/^upperarm/.test(main[i]) ? 0.012 : 0.016) * unit;
       g = g0.clone(); const p = g.attributes.position, nr = g.attributes.normal;
@@ -1122,11 +1141,11 @@ function adultDress(model, body, bones, who, color, style = null) {
       return [rx, (rz1 - rz0) / 2, (rz1 + rz0) / 2];
     };
     const thY = bw('thigh_l').y, hip = ext(thY - 0.08, thY + 0.03), waist = ext(yW - 0.03, yW + 0.03);
-    const fl = two ? 0.18 : fem ? 1 : 0.55, cz = hip[2];   // SENA-FACE: the two-piece skirt fitted, not flared
+    const fl = two ? 0.1 : fem ? 1 : 0.55, cz = hip[2];   // SENA-FACE: the two-piece skirt fitted, not flared
     // a ring = [y, rx, rz, zc]; for the two-piece the upper rings are [fraction of the way from the top edge down to
     // the hip ring] and take their height and girth per vertex (SENA-LOOK r3, below)
     const rings = two ? [[0], [0.34], [0.67]] : [[yW, waist[0] + 0.022, waist[1] + 0.024, waist[2]]];
-    const hx = two ? 0.03 : 0.045, hz = two ? 0.034 : 0.05;   // SENA-FACE: the two-piece sits closer over the hips
+    const hx = two ? 0.022 : 0.045, hz = two ? 0.026 : 0.05;   // SENA-FACE: the two-piece sits closer over the hips
     rings.push([yH, hip[0] + hx, hip[1] + hz, cz]);
     const nR = two ? 8 : 4;   // SENA-JOG A3r2: the two-piece has twice the rings below the hips, so the drape bends in a curve, not a hard fold
     for (let r = 1; r <= nR; r++) { const t = r / nR; rings.push([yH + (yK - yH) * t, hip[0] + hx + (0.015 + 0.075 * fl) * t, hip[1] + hz + (0.025 + 0.07 * fl) * t, cz]); }
@@ -1163,7 +1182,7 @@ function adultDress(model, body, bones, who, color, style = null) {
       const a = (k / SEG) * Math.PI * 2; let [y, rx, rz, zc] = ring;
       if (ring.length === 1) { const t = ring[0]; y = topY(a) + (yH - topY(a)) * t; const e = extAt(y); rx = e[0] + 0.008 + 0.037 * t; rz = e[1] + 0.008 + 0.042 * t; zc = e[2] + (cz - e[2]) * t; }
       let x = Math.sin(a) * rx, z = zc + Math.cos(a) * rz;
-      if (two) { const up = ring.length === 1, g = up ? girth(y, zc, k % SEG, 0.015) + 0.014 + 0.016 * ring[0] : girth(y, zc, k % SEG) + 0.018 + 0.006 * Math.max(0, Math.min(1, (yH - y) / (yH - yK))), r = Math.hypot(x, z - zc); if (g > r) { x *= g / r; z = zc + (z - zc) * g / r; } }
+      if (two) { const up = ring.length === 1, g = up ? girth(y, zc, k % SEG, 0.015) + 0.014 + 0.016 * ring[0] : girth(y, zc, k % SEG) + 0.015 + 0.005 * Math.max(0, Math.min(1, (yH - y) / (yH - yK))), r = Math.hypot(x, z - zc); if (g > r) { x *= g / r; z = zc + (z - zc) * g / r; } }
       // KILT-A3 (verifier A3: a skin-coloured hole in the back of Aro's kilt mid-stride): the back panel hangs mostly
       // from the pelvis, and the leg swinging back pushed the buttock up to 3.5 cm through it just under the belt. Below
       // the belt the back now stands 4 cm further out (tapering to nothing at the sides): 0 pokes in walk, run, back,
@@ -1239,7 +1258,8 @@ function adultDress(model, body, bones, who, color, style = null) {
     // A3c: 1 mm off the skin, not 5: at the deep cleavage and under the arm the 5 mm shell went into the facing skin and
     // the bra showed through the gap. A depth bias keeps the thin shell in front of the skin at a distance.
     const braMat = mat(1); braMat.polygonOffset = true; braMat.polygonOffsetFactor = -1; braMat.polygonOffsetUnits = -4;
-    const br = senaLoin(body, cache, 'bra', (i) => wy[i] > yLo && wy[i] < yN && !NOT.test(main[i]), 250, unit, braMat, 6, 0.001, [86, 58, 38]); if (br) { br.name = 'dressBra'; out.parts.push(br); }
+    const yCap = fairNeck ? bw('spine_03').y + (yN - bw('spine_03').y) * 0.325 : yN;   // SENA-FACE: on her fair skin the bra paint is gone, so the cover stops at the band's top
+    const br = senaLoin(body, cache, 'bra', (i) => wy[i] > yLo && wy[i] < yCap && !NOT.test(main[i]), 250, unit, braMat, 6, 0.001, [86, 58, 38]); if (br) { br.name = 'dressBra'; out.parts.push(br); }
     // A3c: and the bra texels themselves are repainted hide brown in Sena's own copy of the skin map, so that where the arm
     // presses into her side and hides the shell (a few pixels in close side views), hide shows, never the lace.
     if (cache.braTex) { body.userData.skinMap0 = body.material.map; body.material.map = cache.braTex; }   // skinMap0: the unpainted map (tests)

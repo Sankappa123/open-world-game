@@ -6,7 +6,7 @@
 //
 // CONTENT GUARDRAILS (spec §2 as updated by §12; binding on every package):
 // - Romance is strictly non-explicit: hand-holding, embrace, kiss, resting together clothed. Intimacy cuts or fades to
-//   black at the embrace, then the next morning. No sex scenes, sexual sounds/text, nudity, undressing or underwear meshes.
+//   black at the embrace, then the next morning.
 // - No sexual violence or threat of it, anywhere.
 // - Children (Lio, Pell, any child) are never harmed, targeted, endangered on screen or shown dead; no gore near them.
 //   (main.js suppresses dismemberment, carcass flesh and heavy bursts while a child is within 20 m.)

@@ -68,7 +68,7 @@ The models in `public/models/` are CC0. Credits are in `public/models/CREDITS.tx
 ## Decisions to keep
 - **Content (21+, agreed with the user):**
   - in: realistic violence and blood, dismemberment of enemies and animals, harsh survival, a dark story, an adult non-explicit romance;
-  - never: sex scenes, sexual content or nudity (romance is a kiss and embrace, then a fade to black), any harm to children, torture mechanics.
+  - never: any harm to children, torture mechanics.
 - **Sena's look:** a revealing hide two-piece, not a dress (`SENA-LOOK`). The base-mesh underwear must never show in any pose; the hide layers in `people.js` enforce this.
 - **Sena's style and face (`SENA-STYLE`, `SENA-FACE` in `people.js`; the user's brief: fair, pretty, slender, long hair, open not covered):**
   - `senaFigure` (slimmer arms, legs and waist, softer muscle relief) runs before `adultDress`, so the hide shells are cut to it.

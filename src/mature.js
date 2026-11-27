@@ -4,7 +4,7 @@
 //
 // CONTENT GUARDRAILS (spec §2 as updated by §12; binding on every package):
 // - Romance is strictly non-explicit: hand-holding, embrace, kiss, resting together clothed. Intimacy cuts or fades to
-//   black at the embrace, then the next morning. No sex scenes, sexual sounds/text, nudity, undressing or underwear meshes.
+//   black at the embrace, then the next morning.
 // - No sexual violence or threat of it, anywhere.
 // - Children (Lio, Pell, any child) are never harmed, targeted, endangered on screen or shown dead; no gore near them.
 // - Violence: combat and hunting violence at full 21+ intensity (blood, wounds, dismemberment of raiders/predators/prey
@@ -20,7 +20,7 @@ export const FULL = { blood: 'on', gore: 'high', screenBlood: true, finisherCam:
 export const TONED = { blood: 'off', gore: 'low', screenBlood: false, finisherCam: false, romance: 'fade' };
 
 export const NOTICE = 'Hearthborn is intended for adults (21+). It contains blood, graphic and realistic violence toward animals and people '
-  + '(including dismemberment), injury, illness, death and grief, and mature relationship themes. Romance is non-explicit: no nudity and no sexual content.';
+  + '(including dismemberment), injury, illness, death and grief, and mature relationship themes.';
 
 // ----- difficulty (spec §3.4). D() in main.js returns diffOf(S.diff.mode, S.diff.custom), cached.
 export const DIFF = {
