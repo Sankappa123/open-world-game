@@ -70,4 +70,8 @@ The models in `public/models/` are CC0. Credits are in `public/models/CREDITS.tx
   - in: realistic violence and blood, dismemberment of enemies and animals, harsh survival, a dark story, an adult non-explicit romance;
   - never: sex scenes, sexual content or nudity (romance is a kiss and embrace, then a fade to black), any harm to children, torture mechanics.
 - **Sena's look:** a revealing hide two-piece, not a dress (`SENA-LOOK`). The base-mesh underwear must never show in any pose; the hide layers in `people.js` enforce this.
+- **Sena's style and face (`SENA-STYLE`, `SENA-FACE` in `people.js`; the user's brief: fair, pretty, slender, long hair, open not covered):**
+  - `senaFigure` (slimmer arms, legs and waist, softer muscle relief) runs before `adultDress`, so the hide shells are cut to it.
+  - `senaStyle` adds the hem fringe, belt, pouch, wraps and hair feather, and the winter furs (collar, cuffs, leg wraps, hem trim) shown by `h.setWinter(on)`; the winter chapters call it instead of the old poncho mantle.
+  - `senaFairSkin` paints her own copy of `female_light.jpg` (bra and brief texels in hide brown, light makeup); `senaSculpt`, `senaBrows`, `senaEyes` and `senaFaceNormal` reshape and soften the face; `senaHair` lengthens and warms the long hair. Face texels: eyes (132,182) and (244,182), lips (187,268).
 - The user wants polished, professional results with realistic CC0 visuals. Commit at checkpoints.

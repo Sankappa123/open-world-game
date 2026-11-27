@@ -461,7 +461,7 @@ addEventListener('beforeunload', () => save({ beacon: true }));
 
 // ---------- characters ----------
 const P = { pos: new THREE.Vector3(0, 0, 4), face: Math.PI, h: makeHuman({ hairColor: 0x3d2f26 }), sneak: false, speed: 0, cool: 0, step: 0, vx: 0, vz: 0, vy: 0, jy: 0, air: false, auto: false, tired: false };
-const N = { pos: new THREE.Vector3(2, 0, 2.5), face: 0, h: makeHuman({ female: true, hairColor: 0x4a382c, dress: { color: 0x6e4a2e, style: 'twopiece' } }), node: null   /* SENA-LOOK: the user's choice (2026-11-17): an attractive hide two-piece, not the dress */, wait: 4, speed: 0, act: 0 };
+const N = { pos: new THREE.Vector3(2, 0, 2.5), face: 0, h: makeHuman({ female: true, fair: true, pretty: true, hairColor: 0x4a382c, dress: { color: 0x6e4a2e, style: 'twopiece' } }), node: null   /* SENA-LOOK: the user's choice (2026-11-17): an attractive hide two-piece, not the dress */, wait: 4, speed: 0, act: 0 };
 scene.add(P.h.root, N.h.root);
 const villagers = [];
 let camYaw = 0.4, camPitch = 0.22, camDist = 4.8, view = 'tpp', jumpTap = false;
@@ -8431,6 +8431,7 @@ const cmbG = {                                       // CMB test hooks; publishe
   reviveSena: () => cmbSenaRevive('P'), decide: (f) => TRIBE.decide(f), pred: PRED, tribe: TRIBE, cloakK: cmbCloakK, finishable: (o) => cmbFinishable(o),
   slow: () => (C.slow > 0 ? C.slowK : 1), timeK: () => C.slowK, settings: () => settings, duel: (x, z, o) => cmbDuel(x, z, o),
   remove: (o) => remove(o), camShot: () => camShot, targets: () => ({ ...TRIBE.stats }),
+  cam(px, py, pz, lx, ly, lz) { camShot = { pos: new THREE.Vector3(px, py, pz), look: new THREE.Vector3(lx, ly, lz), t: 1e9, snap: true }; return true; }, camOff() { camShot = null; },   // debug: a fixed camera (photos)
 };
 // module-level API for ARC (spec §7 M4 task 12: spawnRaider(x, z, opts) -> foe, foes[], updateFoes(dt), clearFoes())
 function spawnRaider(x, z, opts = {}) { return settings.matureStory === false ? null : TRIBE.spawnRaider(x, z, opts); }   // Mature story Off: no raiders (§5.6)
@@ -9375,6 +9376,7 @@ function arcSync() {
   arcSenaFur(A.season === 'winter');                 // ARC-FIX: a heavier hide mantle over her dress for the winter chapters
 }
 function arcSenaFur(on) {
+  if (N.h.setWinter?.(on)) return;                   // SENA-STYLE: a fur collar, leg wraps and cuffs (open in front), not a poncho
   if (on && !ARCS.senaFur) ARCS.senaFur = arcFurMantle(N.h, 0x5e4c3c);
   if (ARCS.senaFur) ARCS.senaFur.visible = on;
 }
@@ -12339,9 +12341,19 @@ async function fullscreen(on) {
     if (on && !document.fullscreenElement) { await document.documentElement.requestFullscreen({ navigationUI: 'hide' }); await navigator.keyboard?.lock?.(); setTimeout(lock, 150); }
     else if (!on && document.fullscreenElement) { navigator.keyboard?.unlock?.(); await document.exitFullscreen(); }
   } catch {}
-  $('opt-full').checked = !!document.fullscreenElement;
+  dispShow();
 }
-document.addEventListener('fullscreenchange', () => { $('opt-full').checked = !!document.fullscreenElement; });
+// DISPLAY: Windowed or Fullscreen, chosen on the title screen or in Settings > Video. The choice is saved and used
+// each time the game starts; the controls show the mode the page is really in (holding Esc leaves fullscreen).
+function dispShow() {
+  const on = !!document.fullscreenElement;
+  const sel = $('opt-full'); if (sel) sel.value = on ? 'full' : 'window';
+  for (const b of document.querySelectorAll('#dispmode button')) { const cur = (b.dataset.mode === 'full') === (playing ? on : !!settings.fullscreen); b.classList.toggle('on', cur); b.setAttribute('aria-checked', cur); }
+}
+function dispSet(full) { settings.fullscreen = full; saveSettings(); fullscreen(full); dispShow(); }
+document.addEventListener('fullscreenchange', dispShow);
+for (const b of document.querySelectorAll('#dispmode button')) b.addEventListener('click', () => dispSet(b.dataset.mode === 'full'));
+dispShow();
 const GAME_KEYS = /^(Key[WASDEFCVGMNQBTRHXIZ]|Minus|Equal|Digit[1-5]|Space|ShiftLeft|ShiftRight|ControlLeft|ControlRight|AltLeft|Tab|Escape|Arrow(Up|Down|Left|Right))$/;   // MAT: I body, Z focus, AltLeft dodge
 addEventListener('keydown', (e) => {
   if (!playing) return;
@@ -12465,12 +12477,12 @@ function pause(on) {
 function bindSettings() {
   const sens = $('opt-sens'), inv = $('opt-inv'), qual = $('opt-qual'), full = $('opt-full'), vol = $('opt-vol');
   sens.value = settings.sens; $('opt-sens-v').textContent = settings.sens.toFixed(2) + '×';
-  inv.checked = settings.invertY; qual.value = settings.quality; full.checked = settings.fullscreen; vol.value = settings.volume;
+  inv.checked = settings.invertY; qual.value = settings.quality; vol.value = settings.volume; dispShow();
   sens.oninput = () => { settings.sens = +sens.value; $('opt-sens-v').textContent = settings.sens.toFixed(2) + '×'; saveSettings(); };
   inv.onchange = () => { settings.invertY = inv.checked; saveSettings(); };
   vol.oninput = () => { settings.volume = +vol.value; if (A.out) A.out.gain.value = settings.volume; saveSettings(); };
   qual.onchange = () => { settings.quality = qual.value; saveSettings(); applyQuality(); };
-  full.onchange = () => { settings.fullscreen = full.checked; saveSettings(); fullscreen(full.checked); };
+  full.onchange = () => dispSet(full.value === 'full');   // DISPLAY
   const oad = $('opt-autodraw'), osh = $('opt-shake'), oarc = $('opt-arc');   // WPN
   oad.checked = settings.autoDraw ?? true; osh.checked = settings.shake ?? true; oarc.value = settings.arc ?? 'on';   // WPN
   oad.onchange = () => { settings.autoDraw = oad.checked; saveSettings(); }; osh.onchange = () => { settings.shake = osh.checked; saveSettings(); }; oarc.onchange = () => { settings.arc = oarc.value; saveSettings(); };   // WPN

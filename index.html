@@ -214,6 +214,12 @@
   #title p { max-width: 560px; margin: 10px auto 26px; color: var(--ink); font-size: 17px; text-shadow: 0 1px 8px #000; }
   #title button { font: 16px Georgia, serif; letter-spacing: 0.12em; color: var(--ink); background: rgba(18, 14, 10, 0.7); border: 1px solid var(--gold); border-radius: 4px; padding: 12px 30px; margin: 5px; cursor: pointer; }
   #title button:hover { background: var(--gold); color: #1c140a; }
+  /* DISPLAY: the windowed / fullscreen switch on the title screen */
+  #dispmode { display: inline-flex; align-items: center; gap: 0; margin-top: 16px; border: 1px solid var(--line); border-radius: 999px; padding: 3px; background: rgba(18, 14, 10, 0.55); }
+  #dispmode span { font-size: 12px; letter-spacing: 0.12em; text-transform: uppercase; color: var(--dim); padding: 0 10px 0 12px; }
+  #title #dispmode button { font: 13px Georgia, serif; letter-spacing: 0.06em; margin: 0; padding: 6px 16px; border: 0; border-radius: 999px; background: transparent; color: var(--dim); }
+  #title #dispmode button:hover { background: rgba(224, 181, 106, 0.18); color: var(--ink); }
+  #title #dispmode button.on { background: var(--gold); color: #1c140a; }
   #title .keys { margin-top: 24px; font-size: 13px; color: var(--dim); text-shadow: 0 1px 4px #000; }
   /* WPN weapon chip, aim crosshair */
   #wpn { position: absolute; right: 18px; top: 136px; padding: 6px 7px 5px; font-size: 12px; color: var(--dim); }
@@ -455,7 +461,7 @@
   <div class="row"><span>Invert mouse Y</span><input id="opt-inv" type="checkbox" /></div>
   <div class="row"><span>Graphics quality<small>Lower is faster; auto picks by graphics card <b id="opt-qual-v"></b></small></span>
     <select id="opt-qual"><option value="auto">Auto</option><option value="low">Low</option><option value="medium">Medium</option><option value="high">High</option></select></div>
-  <div class="row"><span>Fullscreen<small>Keeps Ctrl, Tab, Alt and Esc inside the game</small></span><input id="opt-full" type="checkbox" /></div>
+  <div class="row"><span>Display<small>Fullscreen keeps Ctrl, Tab, Alt and Esc inside the game (hold Esc to leave it). Windowed plays in the browser tab</small></span><select id="opt-full"><option value="window">Windowed</option><option value="full">Fullscreen</option></select></div>
   <div class="row"><span>Volume</span><input id="opt-vol" type="range" min="0" max="1" step="0.05" /></div>
   <div class="row"><span>Draw weapon when wolves come close</span><input id="opt-autodraw" type="checkbox" /></div>
   <div class="row"><span>Camera shake on hits</span><input id="opt-shake" type="checkbox" /></div>
@@ -489,6 +495,7 @@
     <button id="btn-new">Loading…</button>
     <button id="btn-stones" style="display:none">The Stones</button>
     <div id="savenote"></div>
+    <div id="dispmode" role="radiogroup" aria-label="Display"><span>Display</span><button type="button" data-mode="window" role="radio">Windowed</button><button type="button" data-mode="full" role="radio">Fullscreen</button></div>
     <div class="keys">Mouse to look · WASD to move · E to gather, sit or ride · Tab to craft · M for the map · Esc for the menu</div>
   </div>
 </div>

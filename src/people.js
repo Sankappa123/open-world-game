@@ -49,6 +49,7 @@ export async function loadPeople() {
   const skin = (f) => { const t = tl.load('/models/' + f); t.flipY = false; t.colorSpace = THREE.SRGBColorSpace; return t; };
   Object.assign(lib, { male, female, hair: { parted: hairM, beard, long: hairF, buns, buzz }, light: { male: skin('male_light.jpg'), female: skin('female_light.jpg') } });
   lib.childSkin = childSkin('/models/male_light.jpg');   // CHILD: a child's face (no stubble, soft brows) on the male base mesh
+  lib.fairImg = await new Promise((res) => { const i = new Image(); i.onload = () => res(i); i.onerror = () => res(null); i.src = '/models/female_light.jpg'; });   // SENA-FACE: her fair skin
 
   // Keep rotations only (so each body keeps its own proportions) plus the hip height, scaled per body.
   const refHip = anims.scene.getObjectByName('pelvis').position.length();
@@ -80,7 +81,7 @@ export async function loadPeople() {
   }
 }
 
-export function makeHuman({ female = false, light = false, tint = 0xffffff, hair = female ? 'long' : 'parted', beard = !female, hairColor = 0x6a5140, scale = 1, child = null, dress = true } = {}) {   // ADULT-DRESS: dress true | hide colour | false
+export function makeHuman({ female = false, light = false, fair = false, pretty = false, tint = 0xffffff, hair = female ? 'long' : 'parted', beard = !female, hairColor = 0x6a5140, scale = 1, child = null, dress = true } = {}) {   // ADULT-DRESS: dress true | hide colour | false
   // CHILD: children (Lio, Pell, the village children) are built on the MALE base mesh (flat chest, no adult female shape)
   // with child proportions from bone scales and a full tunic; see childBody below. The rig choice never follows `female`.
   if (child) { beard = false; light = true; }
@@ -111,14 +112,18 @@ export function makeHuman({ female = false, light = false, tint = 0xffffff, hair
     m.castShadow = true; m.frustumCulled = false;
     body.parent.add(m);
     m.bind(new THREE.Skeleton(src.skeleton.bones.map((b) => bones[b.name]), src.skeleton.boneInverses), src.bindMatrix);
+    if (pretty && name === hair) senaHair(m, bones);   // SENA-FACE: longer, softer, warmer hair
   }
+  if (pretty && who === 'female' && !child) { senaSculpt(body); model.traverse((o) => { if (o.isSkinnedMesh && o.name === 'Eyebrows') senaBrows(o); if (o.isSkinnedMesh && o.name === 'Eyes') senaEyes(o); }); const nm = senaFaceNormal(body.material.normalMap); if (nm) body.material.normalMap = nm; }   // SENA-FACE: a softer, prettier face (and no creases or hollows painted in its relief)
 
   // WPN sockets: the right hand (h.grip is an alias), the left hand, the back (spine_03) and both hips (pelvis).
   const sock = {};
   for (const [slot, b] of Object.entries(SLOT_BONE)) { sock[slot] = new THREE.Group(); sock[slot].name = 'sock_' + slot; bones[b].add(sock[slot]); }
   const kid = child ? childBody(model, body, bones, CHILD[child] || CHILD.girl) : null;   // CHILD: proportions + clothes, before the scale
+  if (pretty && who === 'female' && !child) senaFigure(body, bones);   // SENA-FACE: a slender, toned figure, before the clothes are cut to it
   const dObj = dress && typeof dress === 'object' ? dress : null;   // SENA-LOOK: { color, style: 'twopiece' }
   const clothes = !child && dress !== false ? adultDress(model, body, bones, who, dObj ? dObj.color : typeof dress === 'number' ? dress : who === 'female' ? 0x7d5c40 : 0x6a5038, dObj ? dObj.style : null) : null;   // ADULT-DRESS: never the base mesh's underwear
+  if (fair && who === 'female' && !child && lib.fairImg) { body.userData.skinMap0 = body.userData.skinMap0 || body.material.map; body.material.map = senaFairSkin(lib.fairImg); }   // SENA-FACE: after the dress (its bra cover reads the base map)
   const grip = sock.hand;
   const spear = makeSpear(), axe = makeAxe();
   spear.userData.kind = 'spear'; axe.userData.kind = 'axe';
@@ -141,7 +146,8 @@ export function makeHuman({ female = false, light = false, tint = 0xffffff, hair
   // CHILD: the clips' hip height, for the shorter legs; and a child's carriage: the chest eases back a little (the
   // tummy leads, not the chest), and the adult clips carry the head forward over the chest, which on a big child's head
   // reads as a stoop, so the neck and head tip back.
-  if (clothes?.rig) h.overrides.push({ id: 'skirtRig', order: 98, fn: clothes.rig });   // SENA-LOOK r3: the skirt's drape bones, after every pose override
+  if (clothes?.rig) h.overrides.push({ id: 'skirtRig', order: 98, fn: clothes.rig });
+  h.setWinter = (on) => { if (!clothes?.winter) return false; for (const o of clothes.winter) o.visible = !!on; for (const o of clothes.summer || []) o.visible = !on; h.winter = !!on; return true; };   // SENA-STYLE: her winter furs   // SENA-LOOK r3: the skirt's drape bones, after every pose override
   // SENA-LOOK A3: lying down (h.laceW, set each frame by the lying pose in main) the strand keeps to her chest the way it
   // sits when she stands; it rode the neck bone, so with the head thrown back it stood up off her chest in a loop.
   const lace = clothes?.parts?.find((o) => o.name === 'senaLace');
@@ -786,6 +792,179 @@ function weave() {
 // The child's skin: the male texture evened out into smooth young skin. The whole sheet is blurred and laid under an
 // even skin tone (no painted muscle shading on the arms and legs, no stubble, no brow shadow, no colour steps at the
 // UV seams), the eyes are kept, and a child's face is painted: rosy cheeks, faint fine brows, a small closed mouth.
+// SENA-FACE: Sena's fair skin and a soft, pretty face, painted on her own copy of the light female skin (the user's
+// brief: fair, not dark; a cute face). Same UV layout as the base map, so the body is unchanged. The base mesh's painted
+// bra and brief (dark, grainy) are repainted hide brown everywhere outside the face, as the dark map's are (the hide
+// shells cover them; this keeps any texel that shows hide). Then a touch lighter overall, and on the face: lined upper lids with a small lash wing, rosy cheeks and full rosy lips with a highlight. Face texels (1024 map):
+// eyes about (132,182) and (244,182), nose tip (187,232), lips centred (187,270).
+// SENA-FACE: her face, reshaped on her own copy of the body geometry. The face texels say where each vertex is (the
+// same map as senaFairSkin): eyes about (132,182) and (244,182), nose (187,230), lips (187,268), chin below 300.
+// Slightly larger eyes, a narrower nose, fuller lips and a softer, slimmer jaw and chin. Positions only (millimetres);
+// the normals, skin and UVs are the base mesh's.
+function senaSculpt(body) {
+  const g = body.geometry = body.geometry.clone(), p = g.attributes.position, uv = g.attributes.uv; if (!uv) return;
+  body.updateMatrixWorld(true);
+  const M = body.matrixWorld, Mi = M.clone().invert(), n = p.count, V = THREE.Vector3;
+  const tx = (i) => uv.getX(i) * 1024, ty = (i) => uv.getY(i) * 1024, inFace = (i) => tx(i) < 400 && ty(i) < 345;
+  const W = []; for (let i = 0; i < n; i++) W.push(inFace(i) ? new V().fromBufferAttribute(p, i).applyMatrix4(M) : null);
+  const cen = (x0, y0, r) => { const c = new V(); let k = 0; for (let i = 0; i < n; i++) if (W[i] && Math.hypot(tx(i) - x0, ty(i) - y0) < r) { c.add(W[i]); k++; } return k ? c.divideScalar(k) : null; };
+  const eyeL = cen(132, 182, 16), eyeR = cen(244, 182, 16), nose = cen(187, 230, 14), lips = cen(187, 268, 18);
+  if (!eyeL || !eyeR || !nose || !lips) return;
+  const sm = (x) => { x = Math.max(0, Math.min(1, x)); return x * x * (3 - 2 * x); };
+  for (let i = 0; i < n; i++) {
+    const w = W[i]; if (!w) continue;
+    const x = tx(i), y = ty(i);
+    for (const [ex, e] of [[132, eyeL], [244, eyeR]]) {             // eyes: 9% larger round their centre
+      const k = sm(1 - Math.hypot(x - ex, y - 182) / 42); if (k > 0) { w.x += (w.x - e.x) * 0.09 * k; w.y += (w.y - e.y) * 0.09 * k; }
+    }
+    { const k = sm(1 - Math.hypot(x - 187, y - 230) / 28); if (k > 0) w.x -= (w.x - nose.x) * 0.13 * k; }   // a narrower nose
+    { const d = Math.hypot((x - 187) / 46, (y - 268) / 22), k = sm(1 - d); if (k > 0) { w.y += (w.y - lips.y) * 0.16 * k; w.z += 0.0012 * k; } }   // fuller lips
+    { const k = sm((y - 250) / 85) * sm(1 - Math.abs(x - 187) / 175); if (k > 0) w.x -= (w.x - nose.x) * 0.085 * k; }   // a slimmer jaw toward the chin
+    { const k = sm((y - 295) / 45) * sm(1 - Math.abs(x - 187) / 60); if (k > 0) w.y += 0.0035 * k; }   // a smaller, softer chin
+    w.applyMatrix4(Mi); p.setXYZ(i, w.x, w.y, w.z);
+  }
+  p.needsUpdate = true; g.computeBoundingSphere();
+}
+// SENA-FACE: her hair, on its own copy of the long-hair geometry: below the jaw it falls three times as far, past the shoulders,
+// thinning to soft ends, in a warm chestnut with a little sheen.
+function senaHair(m, bones) {
+  const g = m.geometry = m.geometry.clone(), p = g.attributes.position, n = p.count, V = THREE.Vector3;
+  m.updateMatrixWorld(true);
+  const M = m.matrixWorld, Mi = M.clone().invert(), hd = bones.Head.getWorldPosition(new V()), nk = bones.neck_01.getWorldPosition(new V());
+  const yCut = hd.y + 0.01;                                       // about the ears: everything below falls further
+  for (let i = 0; i < n; i++) {
+    const w = new V().fromBufferAttribute(p, i).applyMatrix4(M); if (w.y >= yCut) continue;
+    const dy = yCut - w.y, k = Math.min(1, dy / 0.1);
+    w.y = yCut - dy * (1 + 1.6 * Math.min(1, dy / 0.03));          // longer: past the shoulders (eased in just below the ears)
+    const back = w.z < hd.z ? 1 : 0.55;                            // the back falls straight, the sides ease in toward the neck
+    w.x = hd.x + (w.x - hd.x) * (1 - 0.1 * k * back); w.z = hd.z + (w.z - hd.z) * (1 - 0.06 * k);
+    w.applyMatrix4(Mi); p.setXYZ(i, w.x, w.y, w.z);
+  }
+  p.needsUpdate = true; g.computeBoundingSphere();
+  m.material.roughness = 0.55; m.material.metalness = 0;
+  m.material.color.set(0x6a4028);                                 // warm chestnut
+}
+// SENA-FACE: the base normal map gives the face deep creases beside the nose and hollow cheeks (an older, harder look).
+// Her own copy eases the face region (the same texels as the face paint) to flat, feathered at the edge; the body's
+// relief is unchanged.
+// SENA-FACE: thinner, arched brows in a soft brown (the base brows are thick and take the dark hair colour), and the
+// eyeballs a touch larger to fill the larger openings (senaSculpt). Each brow / eye is scaled round its own centre.
+const sideSplit = (o, f) => {
+  const g = o.geometry = o.geometry.clone(), p = g.attributes.position, n = p.count, V = THREE.Vector3;
+  o.updateMatrixWorld(true);
+  const M = o.matrixWorld, Mi = M.clone().invert(), W = []; let cx = 0;
+  for (let i = 0; i < n; i++) { W.push(new V().fromBufferAttribute(p, i).applyMatrix4(M)); cx += W[i].x; } cx /= n;
+  for (const s of [-1, 1]) {
+    const ids = W.map((w, i) => (Math.sign(w.x - cx) === s ? i : -1)).filter((i) => i >= 0); if (!ids.length) continue;
+    const c = new V(); let x0 = 1e9, x1 = -1e9; for (const i of ids) { c.add(W[i]); x0 = Math.min(x0, W[i].x); x1 = Math.max(x1, W[i].x); } c.divideScalar(ids.length);
+    for (const i of ids) { f(W[i], c, (W[i].x - x0) / ((x1 - x0) || 1), s); W[i].applyMatrix4(Mi); p.setXYZ(i, W[i].x, W[i].y, W[i].z); }
+  }
+  p.needsUpdate = true; g.computeBoundingSphere();
+};
+function senaBrows(o) {
+  sideSplit(o, (w, c, u, s) => {
+    const out = s > 0 ? u : 1 - u;                                  // 0 at the nose end, 1 at the temple
+    w.y = c.y + (w.y - c.y) * (0.58 - 0.18 * out);                  // thinner, tapering toward the temple
+    w.y += 0.0035 * Math.sin(out * Math.PI) - 0.002 * out;          // a soft arch
+  });
+  o.material.color.set(0x5c3d2a);
+}
+function senaEyes(o) { sideSplit(o, (w, c) => { w.sub(c).multiplyScalar(1.07).add(c); }); }
+// SENA-FACE: a slender, toned figure (the base is a heavy "superhero" build: broad shoulders, thick arms and thighs,
+// deeply cut abs). Her own copy of the body: the arms drawn in toward their bones by ~15% and the legs by ~10%
+// (eased in from the shoulder and hip joints, eased off at the wrist and ankle so nothing steps), the waist a little
+// narrower (hips unchanged), and the muscle relief softened. Runs before adultDress, so every hide shell is cut to it.
+function senaFigure(body, bones) {
+  const g = body.geometry = body.geometry.clone(), p = g.attributes.position, si = g.attributes.skinIndex, sw = g.attributes.skinWeight, n = p.count;
+  body.updateMatrixWorld(true);
+  const M = body.matrixWorld, Mi = M.clone().invert(), V = THREE.Vector3, names = body.skeleton.bones.map((b) => b.name);
+  const bw = (nm) => bones[nm].getWorldPosition(new V());
+  const sm = (x) => { x = Math.max(0, Math.min(1, x)); return x * x * (3 - 2 * x); };
+  const LIMB = { upperarm_l: ['lowerarm_l', 0.15, 0.3, 0], upperarm_r: ['lowerarm_r', 0.15, 0.3, 0], lowerarm_l: ['hand_l', 0.14, 0, 1], lowerarm_r: ['hand_r', 0.14, 0, 1],
+    thigh_l: ['calf_l', 0.1, 0.35, 0], thigh_r: ['calf_r', 0.1, 0.35, 0], calf_l: ['foot_l', 0.09, 0, 1], calf_r: ['foot_r', 0.09, 0, 1] };   // [child, amount, ease-in to, ease-off at the end]
+  const seg = {}; for (const b in LIMB) if (bones[b] && bones[LIMB[b][0]]) { const A = bw(b), B = bw(LIMB[b][0]); seg[b] = [A, B.clone().sub(A)]; }
+  const yH = bw('thigh_l').y, yW = (bw('spine_01').y + bw('spine_02').y) / 2, yC = bw('spine_03').y, cx = bw('pelvis').x, cz = bw('spine_01').z;
+  const w = new V(), q = new V();
+  for (let i = 0; i < n; i++) {
+    let best = 0, bn = ''; for (let k = 0; k < 4; k++) { const wt = sw.getComponent(i, k); if (wt > best) { best = wt; bn = names[si.getComponent(i, k)] || ''; } }
+    w.fromBufferAttribute(p, i).applyMatrix4(M);
+    const L = LIMB[bn], S = seg[bn];
+    if (L && S) {
+      const [A, d] = S, len2 = d.lengthSq(), s = Math.max(0, Math.min(1, q.copy(w).sub(A).dot(d) / len2));
+      const k = L[1] * (L[2] ? sm(s / L[2]) : 1) * (L[3] ? 1 - 0.65 * sm((s - 0.78) / 0.22) : 1);
+      const c = q.copy(A).addScaledVector(d, s); w.sub(c).multiplyScalar(1 - k).add(c);
+    } else if (/^(spine_0[12]|pelvis)$/.test(bn) && w.y > yH) {   // the waist
+      const k = 0.085 * sm(1 - Math.abs(w.y - yW) / Math.max(0.05, Math.min(yW - yH, yC - yW)));
+      w.x = cx + (w.x - cx) * (1 - k); w.z = cz + (w.z - cz) * (1 - k * 0.45);
+    }
+    w.applyMatrix4(Mi); p.setXYZ(i, w.x, w.y, w.z);
+  }
+  { // a slightly fuller bust: each side's front swelled ~7% round a centre a little behind its most forward point
+    const s2 = bw('spine_02').y, s3 = bw('spine_03').y, nkY = bw('neck_01').y, y0 = s2 + (s3 - s2) * 0.3, y1 = s3 + (nkY - s3) * 0.4, zc0 = bw('spine_03').z;
+    for (const side of [-1, 1]) {
+      let ap = null;
+      for (let i = 0; i < n; i++) { w.fromBufferAttribute(p, i).applyMatrix4(M); if (w.y < y0 || w.y > y1 || Math.sign(w.x - cx) !== side || Math.abs(w.x - cx) < 0.02) continue; if (!ap || w.z > ap.z) ap = w.clone(); }
+      if (!ap || ap.z < zc0 + 0.05) continue;
+      const c = ap.clone(); c.z -= 0.06;
+      for (let i = 0; i < n; i++) {
+        w.fromBufferAttribute(p, i).applyMatrix4(M);
+        const d = w.distanceTo(c); if (d > 0.1 || w.z < c.z - 0.015 || Math.sign(w.x - cx) !== side) continue;
+        const k = 0.1 * sm(1 - d / 0.1) * sm((w.z - c.z + 0.015) / 0.03);
+        w.sub(c).multiplyScalar(1 + k).add(c); w.applyMatrix4(Mi); p.setXYZ(i, w.x, w.y, w.z);
+      }
+    }
+  }
+  p.needsUpdate = true; g.computeBoundingSphere();
+  if (body.material.normalScale) body.material.normalScale.multiplyScalar(0.55);   // softer muscle relief
+}
+let faceNT = null;
+function senaFaceNormal(nm) {
+  if (faceNT) return faceNT;
+  const im = nm?.image; if (!im || !im.width) return null;
+  const S = im.width, k = S / 1024, cv = document.createElement('canvas'); cv.width = cv.height = S;
+  const g = cv.getContext('2d'); g.drawImage(im, 0, 0, S, S);
+  const gr = g.createRadialGradient(187 * k, 215 * k, 40 * k, 187 * k, 215 * k, 175 * k);
+  gr.addColorStop(0, 'rgba(128,128,255,0.82)'); gr.addColorStop(0.7, 'rgba(128,128,255,0.6)'); gr.addColorStop(1, 'rgba(128,128,255,0)');
+  g.save(); g.translate(187 * k, 215 * k); g.scale(1, 0.92); g.translate(-187 * k, -215 * k); g.fillStyle = gr; g.fillRect(0, 0, 400 * k, 380 * k); g.restore();
+  faceNT = new THREE.CanvasTexture(cv); faceNT.flipY = nm.flipY; faceNT.colorSpace = nm.colorSpace; faceNT.wrapS = nm.wrapS; faceNT.wrapT = nm.wrapT;
+  return faceNT;
+}
+let fairT = null;
+function senaFairSkin(img) {
+  if (fairT) return fairT;
+  const S = 1024, cv = document.createElement('canvas'); cv.width = cv.height = S;
+  const g = cv.getContext('2d', { willReadFrequently: true });
+  g.drawImage(img, 0, 0, S, S);
+  const id = g.getImageData(0, 0, S, S), px = id.data;
+  for (let y = 0; y < S; y++) for (let x = 0; x < S; x++) {
+    if (x < 400 && y < 340) continue;                // the face: its own darks are eyes and brows
+    const o = (y * S + x) * 4; if (px[o] + px[o + 1] + px[o + 2] < 300) { px[o] = 86; px[o + 1] = 58; px[o + 2] = 38; }
+  }
+  g.putImageData(id, 0, 0);
+  g.globalCompositeOperation = 'screen'; g.fillStyle = 'rgba(255, 232, 214, 0.16)'; g.fillRect(0, 0, S, S);   // a little fairer
+  { const fg = g.createRadialGradient(187, 205, 30, 187, 205, 190); fg.addColorStop(0, 'rgba(255, 236, 222, 0.16)'); fg.addColorStop(1, 'rgba(255, 236, 222, 0)'); g.fillStyle = fg; g.fillRect(0, 0, 400, 400); }   // the face a shade lighter (it sits in the hair's shade)
+  g.globalCompositeOperation = 'source-over';
+  const soft = (f) => { g.save(); g.filter = 'blur(1.2px)'; f(); g.restore(); };
+  for (const [ex, side] of [[132, -1], [244, 1]]) {
+    const ey = 182, out = side;                      // out: toward the temple
+    soft(() => {                                     // the upper lid line and a small wing
+      g.strokeStyle = 'rgba(38, 24, 20, 0.7)'; g.lineWidth = 2.2;
+      g.beginPath(); g.moveTo(ex - 22 * out, ey + 2); g.quadraticCurveTo(ex, ey - 13, ex + 22 * out, ey - 1); g.lineTo(ex + 28 * out, ey - 5); g.stroke();
+      g.strokeStyle = 'rgba(60, 38, 30, 0.35)'; g.lineWidth = 1.5;   // the lower lid, light
+      g.beginPath(); g.moveTo(ex - 18 * out, ey + 5); g.quadraticCurveTo(ex, ey + 12, ex + 20 * out, ey + 3); g.stroke();
+    });
+    const ch = g.createRadialGradient(ex + 4 * out, 224, 2, ex + 4 * out, 224, 36);   // rosy cheeks
+    ch.addColorStop(0, 'rgba(236, 120, 118, 0.30)'); ch.addColorStop(1, 'rgba(236, 120, 118, 0)');
+    g.fillStyle = ch; g.fillRect(ex - 45, 185, 90, 80);
+  }
+  soft(() => {                                       // full, rosy lips
+    g.fillStyle = 'rgba(196, 82, 92, 0.5)';
+    g.beginPath(); g.ellipse(187, 264, 33, 7.5, 0, Math.PI, 0); g.ellipse(187, 268, 32, 10, 0, 0, Math.PI); g.fill();
+    g.fillStyle = 'rgba(255, 220, 220, 0.22)'; g.beginPath(); g.ellipse(190, 273, 13, 3.2, 0, 0, Math.PI * 2); g.fill();   // the lower lip's shine
+  });
+  fairT = new THREE.CanvasTexture(cv); fairT.flipY = false; fairT.colorSpace = THREE.SRGBColorSpace;
+  return fairT;
+}
 function childSkin(url) {
   const cv = document.createElement('canvas'); cv.width = cv.height = 1024;
   const tex = new THREE.CanvasTexture(cv); tex.flipY = false; tex.colorSpace = THREE.SRGBColorSpace;
@@ -879,7 +1058,7 @@ function adultDress(model, body, bones, who, color, style = null) {
     if (!g) {
       const TOP = two ? /^(spine_0[23]|clavicle_[lr])$/ : /^(pelvis|spine_0[123]|clavicle_[lr]|upperarm_[lr])$/, yHipCut = bw('thigh_l').y - 0.04;
       const s2 = bw('spine_02').y, s3 = bw('spine_03').y, nk = bw('neck_01').y;
-      const yLo = s2 + (s3 - s2) * 0.55, yHi = s3 + (nk - s3) * 0.42;   // SENA-LOOK: the band covers the bust only; bare shoulders and midriff
+      const yLo = s2 + (s3 - s2) * 0.6, yHi = s3 + (nk - s3) * 0.36;   // SENA-LOOK: the band covers the bust only; bare shoulders and midriff (SENA-FACE: a little smaller; the bra cover below still hides every painted texel)
       const keep = (i) => TOP.test(main[i]) && !(main[i] === 'pelvis' && wy[i] < yHipCut) && (!two || (wy[i] > yLo && wy[i] < yHi));
       const off = (i) => (/^upperarm/.test(main[i]) ? 0.012 : 0.016) * unit;
       g = g0.clone(); const p = g.attributes.position, nr = g.attributes.normal;
@@ -943,13 +1122,14 @@ function adultDress(model, body, bones, who, color, style = null) {
       return [rx, (rz1 - rz0) / 2, (rz1 + rz0) / 2];
     };
     const thY = bw('thigh_l').y, hip = ext(thY - 0.08, thY + 0.03), waist = ext(yW - 0.03, yW + 0.03);
-    const fl = two ? 0.45 : fem ? 1 : 0.55, cz = hip[2];
+    const fl = two ? 0.18 : fem ? 1 : 0.55, cz = hip[2];   // SENA-FACE: the two-piece skirt fitted, not flared
     // a ring = [y, rx, rz, zc]; for the two-piece the upper rings are [fraction of the way from the top edge down to
     // the hip ring] and take their height and girth per vertex (SENA-LOOK r3, below)
     const rings = two ? [[0], [0.34], [0.67]] : [[yW, waist[0] + 0.022, waist[1] + 0.024, waist[2]]];
-    rings.push([yH, hip[0] + 0.045, hip[1] + 0.05, cz]);
+    const hx = two ? 0.03 : 0.045, hz = two ? 0.034 : 0.05;   // SENA-FACE: the two-piece sits closer over the hips
+    rings.push([yH, hip[0] + hx, hip[1] + hz, cz]);
     const nR = two ? 8 : 4;   // SENA-JOG A3r2: the two-piece has twice the rings below the hips, so the drape bends in a curve, not a hard fold
-    for (let r = 1; r <= nR; r++) { const t = r / nR; rings.push([yH + (yK - yH) * t, hip[0] + 0.045 + (0.015 + 0.075 * fl) * t, hip[1] + 0.05 + (0.025 + 0.07 * fl) * t, cz]); }
+    for (let r = 1; r <= nR; r++) { const t = r / nR; rings.push([yH + (yK - yH) * t, hip[0] + hx + (0.015 + 0.075 * fl) * t, hip[1] + hz + (0.025 + 0.07 * fl) * t, cz]); }
     const SEG = 36, vs = [], uv = [], ssi = [], ssw = [], pushM = [];   // pushM: SENA-JOG A3 morphs (below)
     const lSide = Math.sign(bw('thigh_l').x - P0.x) || 1, iS = bi('spine_01'), yS = bw('spine_01').y;
     // SENA-LOOK r3 (verifier round 2): the skirt's top edge is not level. The base mesh's brief is cut low in front and
@@ -983,7 +1163,7 @@ function adultDress(model, body, bones, who, color, style = null) {
       const a = (k / SEG) * Math.PI * 2; let [y, rx, rz, zc] = ring;
       if (ring.length === 1) { const t = ring[0]; y = topY(a) + (yH - topY(a)) * t; const e = extAt(y); rx = e[0] + 0.008 + 0.037 * t; rz = e[1] + 0.008 + 0.042 * t; zc = e[2] + (cz - e[2]) * t; }
       let x = Math.sin(a) * rx, z = zc + Math.cos(a) * rz;
-      if (two) { const up = ring.length === 1, g = up ? girth(y, zc, k % SEG, 0.015) + 0.014 + 0.016 * ring[0] : girth(y, zc, k % SEG) + 0.03 + 0.02 * Math.max(0, Math.min(1, (yH - y) / (yH - yK))), r = Math.hypot(x, z - zc); if (g > r) { x *= g / r; z = zc + (z - zc) * g / r; } }
+      if (two) { const up = ring.length === 1, g = up ? girth(y, zc, k % SEG, 0.015) + 0.014 + 0.016 * ring[0] : girth(y, zc, k % SEG) + 0.018 + 0.006 * Math.max(0, Math.min(1, (yH - y) / (yH - yK))), r = Math.hypot(x, z - zc); if (g > r) { x *= g / r; z = zc + (z - zc) * g / r; } }
       // KILT-A3 (verifier A3: a skin-coloured hole in the back of Aro's kilt mid-stride): the back panel hangs mostly
       // from the pelvis, and the leg swinging back pushed the buttock up to 3.5 cm through it just under the belt. Below
       // the belt the back now stands 4 cm further out (tapering to nothing at the sides): 0 pokes in walk, run, back,
@@ -1065,6 +1245,10 @@ function adultDress(model, body, bones, who, color, style = null) {
     if (cache.braTex) { body.userData.skinMap0 = body.material.map; body.material.map = cache.braTex; }   // skinMap0: the unpainted map (tests)
   }
   if (two) out.parts.push(...senaTrinkets(bones));     // SENA-LOOK: bone-bead necklace and arm cords
+  if (two) {                                         // SENA-STYLE: the fringe, belt, wraps and ornaments; her winter furs
+    const st = senaStyle({ body, bones, main, wy, n, pos, unit, sk, sg, cache, color });
+    out.parts.push(...st.all); out.summer = st.summer; out.winter = st.winter;
+  }
   return out;
 }
 // SENA-LOOK A3 (verifier A3, blocker: jogging toward a low camera, the base mesh's black painted brief showed between
@@ -1230,6 +1414,213 @@ function senaTrinkets(bones) {
     band.position.copy(c); band.lookAt(b); scene_attach(ua, band); parts.push(band);
   }
   return parts;
+}
+// SENA-STYLE: what makes the two-piece look finished, and her winter furs (the user's brief: open and attractive, as in
+// the old days, not covered up). Everything here is added on top of the verified skirt and band (it never moves them,
+// so nothing new can show the base mesh's brief):
+//  - summer: a cut fringe hanging below the skirt's hem, a braided belt with ties along its top edge, a hide pouch at
+//    the right hip, hide wraps at the wrists, cords at the
+//    ankles and a feather with a bead in her hair;
+//  - winter (h.setWinter): a fur collar over the shoulders, open in front (the band and midriff still show), fur
+//    wraps on the shins and feet, fur cuffs on the forearms and a fur trim along the hem instead of the fringe.
+// The fringe, belt and trim copy the skin and the thigh-push morphs of the skirt vertices they hang from, so they move
+// exactly with it; the rest rides its bone (built in world space in the bind pose, then attached).
+const STYLE_M = {};
+const styleMat = (k, f) => (STYLE_M[k] ||= f());
+let furT = null, furTS = null;
+function furTex(soft = false) {                      // short tufts: light tips over a darker under-fur (soft: low contrast, fine)
+  if (soft && furTS) return furTS;
+  if (!soft && furT) return furT;
+  const c = document.createElement('canvas'); c.width = c.height = 128; const g = c.getContext('2d');
+  g.fillStyle = soft ? '#d6d6d6' : '#c4c4c4'; g.fillRect(0, 0, 128, 128);
+  for (let i = 0; i < 1600; i++) { const x = Math.random() * 128, y = Math.random() * 128, l = (soft ? 2 : 3) + Math.random() * (soft ? 4 : 7), a = soft ? Math.random() * 6.3 : 1.35 + (Math.random() - 0.5) * 0.7, v = (soft ? 185 : 150) + Math.random() * (soft ? 70 : 105) | 0;
+    g.strokeStyle = `rgba(${v},${v},${v},0.55)`; g.lineWidth = 0.8 + Math.random() * 0.9; g.beginPath(); g.moveTo(x, y); g.lineTo(x + Math.cos(a) * l, y + Math.sin(a) * l); g.stroke(); }
+  const tx = new THREE.CanvasTexture(c); tx.wrapS = tx.wrapT = THREE.RepeatWrapping; tx.colorSpace = THREE.SRGBColorSpace;
+  if (soft) furTS = tx; else furT = tx;
+  return tx;
+}
+function senaStyle({ body, bones, main, wy, n, pos, unit, sk, sg, cache, color }) {
+  const all = [], summer = [], winter = [], V = () => new THREE.Vector3();
+  const bw = (nm) => bones[nm].getWorldPosition(V());
+  const hideCol = new THREE.Color(color);
+  const hide = (shade, rough = 0.92) => new THREE.MeshStandardMaterial({ color: hideCol.clone().multiplyScalar(shade), roughness: rough, map: hideTex(), side: THREE.DoubleSide });
+  const cordM = styleMat('cord', () => new THREE.MeshStandardMaterial({ color: 0x3e2a1c, roughness: 0.9 }));
+  const furM = styleMat('fur', () => { const m = new THREE.MeshStandardMaterial({ color: 0xe3c7a0, roughness: 1, map: furTex(), side: THREE.DoubleSide, flatShading: true }); m.map.repeat.set(4, 2); return m; });
+  const furLimb = styleMat('furL', () => { const m = new THREE.MeshStandardMaterial({ color: 0xdcc09a, roughness: 1, map: furTex(true), side: THREE.DoubleSide }); m.map.repeat.set(3, 2); return m; });   // softer: no stripes round a narrow limb
+  const furDark = styleMat('furD', () => new THREE.MeshStandardMaterial({ color: 0xa8865e, roughness: 1, map: furTex(), side: THREE.DoubleSide, flatShading: true }));
+  const add = (o, list) => { o.castShadow = true; all.push(o); if (list) list.push(o); return o; };
+
+  // ---------- skinned on the skirt: the fringe, the belt and the winter trim ----------
+  const SEG = 36, nR = sg.attributes.position.count / (SEG + 1), par = body.parent;
+  const sP = sg.attributes.position, sI = sg.attributes.skinIndex, sW = sg.attributes.skinWeight, sM = sg.morphAttributes.position || [];
+  const vi = (r, k) => r * (SEG + 1) + k;
+  const wp = (i) => par.localToWorld(V().fromBufferAttribute(sP, i));
+  const ringC = (r) => { const c = V(); for (let k = 0; k < SEG; k++) c.add(wp(vi(r, k))); return c.divideScalar(SEG); };
+  // builds a skinned strip mesh; verts: [{w: world point, src: skirt vertex to copy skin and morphs from}], tris: indices
+  const skirtPiece = (verts, tris, uvs, m, name) => {
+    const g = new THREE.BufferGeometry(), P = [], SI = [], SW = [], MP = sM.map(() => []);
+    for (const v of verts) {
+      const L = par.worldToLocal(v.w.clone()); P.push(L.x, L.y, L.z);
+      SI.push(sI.getX(v.src), sI.getY(v.src), sI.getZ(v.src), sI.getW(v.src)); SW.push(sW.getX(v.src), sW.getY(v.src), sW.getZ(v.src), sW.getW(v.src));
+      sM.forEach((a, j) => MP[j].push(a.getX(v.src), a.getY(v.src), a.getZ(v.src)));
+    }
+    g.setAttribute('position', new THREE.Float32BufferAttribute(P, 3)); g.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2));
+    g.setAttribute('skinIndex', new THREE.Uint16BufferAttribute(SI, 4)); g.setAttribute('skinWeight', new THREE.Float32BufferAttribute(SW, 4));
+    if (sM.length) { g.morphTargetsRelative = true; g.morphAttributes.position = MP.map((d) => new THREE.Float32BufferAttribute(d, 3)); }
+    g.setIndex(tris); g.computeVertexNormals();
+    const s = new THREE.SkinnedMesh(g, m); s.name = name; s.frustumCulled = false; s.receiveShadow = true;
+    par.add(s); s.updateMatrixWorld(true); s.bind(sk.skeleton, sk.bindMatrix);
+    if (sk.morphTargetInfluences && s.morphTargetInfluences) s.morphTargetInfluences = sk.morphTargetInfluences;   // the thigh pushes drive both
+    return s;
+  };
+  const hem = nR - 1, cH = ringC(hem), c0 = ringC(0);
+  const out = (w, c, d) => { const o = V().set(w.x - c.x, 0, w.z - c.z); const l = o.length() || 1; return o.multiplyScalar(d / l); };
+  { // the fringe: cut strips below the hem, a little longer at the sides, splayed a touch outward
+    const verts = [], tris = [], uvs = [];
+    for (let k = 0; k < SEG; k++) for (const [u0, u1] of [[0.05, 0.45], [0.55, 0.95]]) {
+      const a = wp(vi(hem, k)), b = wp(vi(hem, (k + 1) % SEG)), side = Math.abs(Math.sin((k + 0.5) / SEG * Math.PI * 2));
+      const len = 0.045 + 0.025 * side + 0.012 * Math.sin(k * 2.7 + u0 * 9), src = u0 < 0.5 ? vi(hem, k) : vi(hem, (k + 1) % SEG), i0 = verts.length;
+      for (const u of [u0, u1]) {
+        const top = a.clone().lerp(b, u).add(out(a, cH, 0.003)).add(V().set(0, 0.006, 0));
+        const bot = top.clone().add(V().set(0, -len, 0)).add(out(top, cH, 0.012));
+        verts.push({ w: top, src }, { w: bot, src });
+        uvs.push(u, 1, u, 0);
+      }
+      tris.push(i0, i0 + 1, i0 + 2, i0 + 2, i0 + 1, i0 + 3);
+    }
+    add(skirtPiece(verts, tris, uvs, hide(0.86), 'senaFringe'), summer);
+  }
+  { // the belt: a braided cord band just under the skirt's top edge, two ties hanging at the front left
+    const verts = [], tris = [], uvs = [], H = 0.014;
+    for (let k = 0; k <= SEG; k++) {
+      const src = vi(0, k % SEG), w = wp(src).add(out(wp(src), c0, 0.011)), i0 = verts.length;
+      verts.push({ w: w.clone().add(V().set(0, 0.004, 0)), src }, { w: w.clone().add(V().set(0, 0.004 - H, 0)).add(out(w, c0, 0.004)), src });
+      uvs.push(k / SEG * 24, 1, k / SEG * 24, 0);
+      if (k < SEG) tris.push(i0, i0 + 1, i0 + 2, i0 + 2, i0 + 1, i0 + 3);
+    }
+    let kt = 0, bx = -1e9; for (let k = 0; k < SEG; k++) { const a = k / SEG * Math.PI * 2, s = Math.cos(a) * 0.8 + Math.sin(a) * 0.6 * Math.sign(bw('thigh_l').x - bw('pelvis').x); if (s > bx) { bx = s; kt = k; } }   // front, toward her left hip
+    for (const [dx, len] of [[-0.008, 0.11], [0.007, 0.085]]) {
+      const src = vi(0, kt), w = wp(src).add(out(wp(src), c0, 0.009)), i0 = verts.length, t2 = V().set(dx, 0, 0);
+      verts.push({ w: w.clone().add(t2).add(V().set(-0.004, -0.01, 0)), src }, { w: w.clone().add(t2).add(V().set(0.004, -0.01, 0)), src }, { w: w.clone().add(t2).add(V().set(-0.003, -0.01 - len, 0.004)), src }, { w: w.clone().add(t2).add(V().set(0.003, -0.01 - len, 0.004)), src });
+      uvs.push(0, 1, 1, 1, 0, 0, 1, 0); tris.push(i0, i0 + 2, i0 + 1, i0 + 1, i0 + 2, i0 + 3);
+    }
+    const bm = styleMat('belt', () => { const c = document.createElement('canvas'); c.width = 64; c.height = 16; const g = c.getContext('2d'); g.fillStyle = '#5a3c26'; g.fillRect(0, 0, 64, 16); for (let x = -16; x < 64; x += 8) { g.fillStyle = '#7a5434'; g.beginPath(); g.moveTo(x, 0); g.lineTo(x + 6, 0); g.lineTo(x + 14, 16); g.lineTo(x + 8, 16); g.fill(); } const tx = new THREE.CanvasTexture(c); tx.wrapS = THREE.RepeatWrapping; tx.colorSpace = THREE.SRGBColorSpace; return new THREE.MeshStandardMaterial({ map: tx, roughness: 0.9, side: THREE.DoubleSide }); });
+    add(skirtPiece(verts, tris, uvs, bm, 'senaBelt'));
+  }
+  { // winter: a fur trim along the hem (over the fringe's place), ragged below
+    const verts = [], tris = [], uvs = [];
+    for (let k = 0; k <= SEG; k++) {
+      const src = vi(hem, k % SEG), w = wp(src), o = out(w, cH, 0.008), i0 = verts.length, rag = 0.012 * (0.5 + 0.5 * Math.sin(k * 5.1));
+      const puff = 1 + 0.35 * Math.sin(k * 3.7) * Math.sin(k * 1.3 + 0.5);
+      verts.push({ w: w.clone().add(o).add(V().set(0, 0.026, 0)), src }, { w: w.clone().add(o.clone().multiplyScalar(2.8 * puff)).add(V().set(0, 0.002, 0)), src }, { w: w.clone().add(o.clone().multiplyScalar(1.6)).add(V().set(0, -0.036 - rag, 0)), src });
+      uvs.push(k / SEG * 6, 1, k / SEG * 6, 0.5, k / SEG * 6, 0);
+      if (k < SEG) tris.push(i0, i0 + 1, i0 + 3, i0 + 3, i0 + 1, i0 + 4, i0 + 1, i0 + 2, i0 + 4, i0 + 4, i0 + 2, i0 + 5);
+    }
+    const tr = add(skirtPiece(verts, tris, uvs, furM, 'senaFurTrim'), winter); tr.visible = false;
+  }
+
+  // ---------- on the bones ----------
+  const att = (boneNm, o, list) => { const b = bones[boneNm]; b.updateWorldMatrix(true, false); b.attach(o); return add(o, list); };
+  // a limb's cross-section at fraction t from bone a to bone b: the centre of the body's own vertices (weighted to a) in
+  // that slice and the radius that holds most of them. Measured from the slice's centre, not the bone (the bones do
+  // not run down the middle of the limb: from the bone the calf read twice its size).
+  const limb = (a, b, t) => {
+    const A = bw(a), B = bw(b), d = B.clone().sub(A), L = d.length(); d.normalize();
+    const v = V(), pts = [];
+    for (let i = 0; i < n; i++) {
+      if (main[i] !== a) continue;
+      v.fromBufferAttribute(pos, i).applyMatrix4(body.matrixWorld);
+      const s = v.clone().sub(A).dot(d) / L; if (Math.abs(s - t) > 0.035) continue;
+      pts.push(v.clone().addScaledVector(d, (t - s) * L));          // into the slice's plane
+    }
+    const c = A.clone().addScaledVector(d, L * t);
+    if (pts.length > 3) { c.set(0, 0, 0); for (const q of pts) c.add(q); c.divideScalar(pts.length); }
+    const qs = pts.map((q) => q.distanceTo(c)).sort((x, y) => x - y);
+    const r = qs.length ? qs[Math.min(qs.length - 1, Math.floor(qs.length * 0.85))] : 0.04;
+    return { c, d, L, r };
+  };
+  const basis = (d) => { const e1 = Math.abs(d.y) < 0.9 ? V().set(0, 1, 0).cross(d).normalize() : V().set(1, 0, 0).cross(d).normalize(); return [e1, d.clone().cross(e1).normalize()]; };
+  // a tube round a limb from t0 to t1, ring by ring on the limb's own cross-sections (r + pad), soft tufts that do not
+  // wind round it; built in world space in the bind pose, then attached to the bone
+  const wrapAt = (a, b, t0, t1, pad, m, list, lump = 0.25, name = '') => {
+    const RS = 8, SG = 18, rings = [];
+    for (let j = 0; j <= RS; j++) rings.push(limb(a, b, t0 + (t1 - t0) * j / RS));
+    const rr = rings.map((l, j) => Math.max(l.r, ((rings[j - 1]?.r ?? l.r) + 2 * l.r + (rings[j + 1]?.r ?? l.r)) / 4));
+    const [e1, e2] = basis(rings[0].d), P = [], U = [], I = [];
+    for (let j = 0; j <= RS; j++) for (let k = 0; k <= SG; k++) {
+      const an = (k / SG) * Math.PI * 2, tuft = 1 + lump * (0.09 * Math.sin(an * 9 + j * 1.9) * Math.cos(j * 2.7 + an * 2) + 0.05 * Math.sin(an * 17 + j * 3.1));
+      const r = (rr[j] + pad) * tuft * (lump >= 0.8 && j === RS ? 1.1 : 1);
+      const w = rings[j].c.clone().addScaledVector(e1, Math.cos(an) * r).addScaledVector(e2, Math.sin(an) * r);
+      P.push(w.x, w.y, w.z); U.push(k / SG, j / RS);
+    }
+    for (let j = 0; j < RS; j++) for (let k = 0; k < SG; k++) { const q = j * (SG + 1) + k, q2 = q + SG + 1; I.push(q, q2, q + 1, q + 1, q2, q2 + 1); }
+    const g = new THREE.BufferGeometry(); g.setAttribute('position', new THREE.Float32BufferAttribute(P, 3)); g.setAttribute('uv', new THREE.Float32BufferAttribute(U, 2)); g.setIndex(I); g.computeVertexNormals();
+    const mesh = new THREE.Mesh(g, m); mesh.name = name;
+    return att(a, mesh, list);
+  };
+  const cordAt = (a, b, t, pad, list) => {
+    const l = limb(a, b, t), m = new THREE.Mesh(new THREE.TorusGeometry(l.r + pad, 0.0045, 6, 20), cordM);
+    m.position.copy(l.c); m.quaternion.setFromUnitVectors(V().set(0, 0, 1), l.d); return att(a, m, list);
+  };
+  for (const s of ['l', 'r']) {
+    if (!bones['lowerarm_' + s] || !bones['hand_' + s] || !bones['calf_' + s] || !bones['foot_' + s]) continue;
+    wrapAt('lowerarm_' + s, 'hand_' + s, 0.74, 0.9, 0.004, hide(0.78), summer, 0.15, 'senaWrist');   // hide wraps at the wrists
+    cordAt('lowerarm_' + s, 'hand_' + s, 0.71, 0.005, summer); cordAt('lowerarm_' + s, 'hand_' + s, 0.92, 0.004, summer);
+    cordAt('calf_' + s, 'foot_' + s, 0.86, 0.004, summer); cordAt('calf_' + s, 'foot_' + s, 0.9, 0.004, summer);   // ankle cords
+    // winter: fur cuffs, and fur wraps from below the knee to the ankle, bound with cord
+    wrapAt('lowerarm_' + s, 'hand_' + s, 0.52, 0.92, 0.011, furLimb, winter, 0.8, 'senaFurCuff');
+    wrapAt('calf_' + s, 'foot_' + s, 0.2, 0.88, 0.013, furLimb, winter, 0.8, 'senaFurLeg');
+    cordAt('calf_' + s, 'foot_' + s, 0.4, 0.016, winter); cordAt('calf_' + s, 'foot_' + s, 0.72, 0.016, winter);
+    // and a fur wrap over the foot (heel to the ball of the foot)
+    const ball = bones['ball_' + s];
+    if (ball) wrapAt('foot_' + s, 'ball_' + s, -0.05, 0.75, 0.022, furDark, winter, 0.8, 'senaFurFoot');
+  }
+  { // the pouch at her right hip, on the belt
+    const pl = bw('pelvis'), side = -Math.sign(bw('thigh_l').x - pl.x) || -1;
+    let r = 0; const v = V();
+    for (let k = 0; k < SEG; k++) { const w = wp(vi(0, k)); if (Math.sign(w.x - pl.x) === side && Math.abs(w.z - c0.z) < 0.04) { const d = Math.abs(w.x - pl.x); if (d > r) { r = d; v.copy(w); } } }
+    if (r) {
+      const g = new THREE.Group(); g.position.copy(v).add(V().set(side * 0.022, -0.045, 0.005));
+      const bag = new THREE.Mesh(new THREE.SphereGeometry(0.04, 10, 8), hide(0.62)); bag.scale.set(0.55, 1, 0.9); g.add(bag);
+      const flap = new THREE.Mesh(new THREE.SphereGeometry(0.04, 10, 6, 0, Math.PI * 2, 0, 1.2), hide(0.5)); flap.scale.set(0.6, 0.55, 0.95); flap.position.y = 0.014; g.add(flap);
+      const tie = new THREE.Mesh(new THREE.CylinderGeometry(0.003, 0.003, 0.05, 5), cordM); tie.position.set(0, 0.04, 0); g.add(tie);
+      g.rotation.z = side * 0.12;
+      att('pelvis', g, summer);
+    }
+  }
+  { // a feather and a bead tied in her hair, above the left ear
+    const hd = bw('Head'), side = Math.sign(bw('thigh_l').x - bw('pelvis').x) || 1;
+    const g = new THREE.Group(); g.position.copy(hd).add(V().set(side * 0.092, 0.055, -0.035));
+    const fm = styleMat('feather', () => { const c = document.createElement('canvas'); c.width = 32; c.height = 128; const x = c.getContext('2d'); const gr = x.createLinearGradient(0, 0, 0, 128); gr.addColorStop(0, '#2a1d14'); gr.addColorStop(0.22, '#f1e8d6'); gr.addColorStop(0.7, '#d9c8a8'); gr.addColorStop(1, '#8a6a48'); x.fillStyle = gr; x.beginPath(); x.ellipse(16, 64, 13, 62, 0, 0, 6.3); x.fill(); x.strokeStyle = 'rgba(60,40,25,0.6)'; x.lineWidth = 1.5; x.beginPath(); x.moveTo(16, 4); x.lineTo(16, 126); x.stroke(); for (let y = 10; y < 120; y += 7) { x.strokeStyle = 'rgba(80,60,40,0.18)'; x.beginPath(); x.moveTo(16, y); x.lineTo(3, y - 6); x.moveTo(16, y); x.lineTo(29, y - 6); x.stroke(); } const tx = new THREE.CanvasTexture(c); tx.colorSpace = THREE.SRGBColorSpace; return new THREE.MeshStandardMaterial({ map: tx, transparent: true, alphaTest: 0.4, side: THREE.DoubleSide, roughness: 0.8 }); });
+    const f = new THREE.Mesh(new THREE.PlaneGeometry(0.028, 0.11), fm); f.position.set(side * 0.006, 0.03, -0.012); f.rotation.set(0.5, side * 1.2, side * -0.35); g.add(f);
+    const bead = new THREE.Mesh(new THREE.SphereGeometry(0.008, 8, 6), styleMat('amber', () => new THREE.MeshStandardMaterial({ color: 0xc27a22, roughness: 0.35 }))); g.add(bead);
+    att('Head', g);
+  }
+  { // winter: the fur collar over her shoulders, open in front above the band, and a short fur cape down the upper back
+    const nk = bw('neck_01'), s3 = bw('spine_03'), ul = bw('upperarm_l'), ur = bw('upperarm_r');
+    const cx = (ul.x + ur.x) / 2, cy = nk.y - (nk.y - s3.y) * 0.3, cz = nk.z - 0.012, rx = Math.abs(ul.x - ur.x) / 2 + 0.03, rz = 0.105;
+    const seg = 30, ring = 10, open = 0.55, P = [], I = [], U = [];
+    for (let i = 0; i <= seg; i++) {
+      const a = open + (i / seg) * (Math.PI * 2 - 2 * open);               // round the back from her left collarbone to the right (a = 0: the front)
+      const front = Math.max(0, Math.cos(a)), dip = 0.035 * front, ax = Math.sin(a) * rx, az = Math.cos(a) * rz;
+      for (let j = 0; j <= ring; j++) {
+        const b = (j / ring) * Math.PI * 2, tube = 0.042 + 0.012 * Math.sin(i * 1.7 + j * 2.3) + 0.01 * (1 - front);   // thicker over the shoulders and back
+        const ox = Math.sin(a) * Math.cos(b) * tube, oz = Math.cos(a) * Math.cos(b) * tube, oy = Math.sin(b) * tube * 0.8;
+        P.push(cx + ax + ox, cy - dip + oy, cz + az + oz); U.push(i / seg * 4, j / ring);
+      }
+    }
+    for (let i = 0; i < seg; i++) for (let j = 0; j < ring; j++) { const a = i * (ring + 1) + j, b = a + ring + 1; I.push(a, b, a + 1, a + 1, b, b + 1); }
+    const g = new THREE.BufferGeometry(); g.setAttribute('position', new THREE.Float32BufferAttribute(P, 3)); g.setAttribute('uv', new THREE.Float32BufferAttribute(U, 2)); g.setIndex(I); g.computeVertexNormals();
+    const col = new THREE.Mesh(g, furM); col.name = 'senaFurCollar'; att('spine_03', col, winter).visible = false;
+    // the cape: from the collar's back half down to the shoulder blades, ragged at the hem
+    const cg = new THREE.CylinderGeometry(rz + 0.05, rz + 0.075, 0.2, 18, 3, true, Math.PI / 2 + 0.35, Math.PI - 0.7), cp = cg.attributes.position;
+    for (let i = 0; i < cp.count; i++) { const y = cp.getY(i), an = Math.atan2(cp.getX(i), cp.getZ(i)); cp.setX(i, cp.getX(i) * (rx + 0.03) / (rz + 0.06)); if (y < -0.09) cp.setY(i, y - 0.025 * (0.5 + 0.5 * Math.sin(an * 9))); }
+    cg.computeVertexNormals();
+    const cape = new THREE.Mesh(cg, furM); cape.name = 'senaFurCape'; cape.position.set(cx, cy - 0.11, cz - 0.01);
+    att('spine_03', cape, winter).visible = false;
+  }
+  for (const o of winter) o.visible = false;
+  return { all, summer, winter };
 }
 const _laceI = new THREE.Quaternion();
 function scene_attach(boneObj, o) { boneObj.updateWorldMatrix(true, false); boneObj.attach(o); o.castShadow = true; }
